@@ -1,0 +1,45 @@
+goal: "Example workflow mixing script and Claude steps"
+
+steps:
+  # Script: Check git status
+  - name: "check_status"
+    type: script
+    command: git status --short
+
+  # Claude: Analyze changes
+  - name: "review_changes"
+    type: prompt
+    prompt: |
+      Review the git changes shown above and:
+      1. Identify which files were modified
+      2. Suggest which files might need tests updated
+      3. Check if any documentation needs updating
+
+  # Script: Run linter (continue even if it fails)
+  - name: "lint"
+    type: script
+    command: npm run lint
+    continue_on_error: true
+
+  # Claude: Review lint results
+  - name: "analyze_lint"
+    type: prompt
+    prompt: |
+      If there were lint errors above:
+      1. Categorize them (style vs logic issues)
+      2. Suggest which ones are safe to auto-fix
+      3. Identify any that need manual review
+
+  # Script: Run tests
+  - name: "run_tests"
+    type: script
+    command: npm test
+
+  # Claude: Final summary
+  - name: "summary"
+    type: prompt
+    prompt: |
+      Provide a brief summary of:
+      1. What was tested
+      2. Overall code quality
+      3. Any recommended next steps

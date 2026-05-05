@@ -1,0 +1,33 @@
+# Example: Git status summary
+# Demonstrates converting a mixed bash/Claude workflow to the new format.
+#
+# Original bash equivalent:
+#   steps:
+#     - name: git_status
+#       type: script
+#       command: git status --short
+#     - name: summarize
+#       type: prompt
+#       prompt: "Summarize the git status output above"
+
+goal: "Check git status and summarize changes"
+
+steps:
+  - name: git_status
+    type: script
+    command: |
+      echo "=== Git Status ==="
+      git status --short
+      echo ""
+      echo "=== Recent commits ==="
+      git log --oneline -5
+
+  - name: summarize
+    type: prompt
+    prompt: |
+      You are reviewing the current state of a git repository.
+      Look at the git status and recent commits shown in the terminal above.
+      Provide a concise 2-3 sentence summary of:
+      1. What files have changed
+      2. What the recent work has been focused on
+      3. Whether there is anything that looks unusual or worth noting

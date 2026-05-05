@@ -1,0 +1,31 @@
+# ============================================================================
+# JUDGE RETRY CONTEXT
+# ============================================================================
+# Purpose: Prepended to a step's prompt when retrying after an LLM-as-judge
+#          rejection. Gives the model the judge's feedback and instructions
+#          on how to incorporate it before re-performing the original step.
+# Used by: src/runner.ts (llm_as_judge retry loop)
+# Triggered when: A judge evaluation returns FAIL and a retry is attempted
+#
+# Placeholders:
+#   {{FEEDBACK}} - The judge's verbatim rejection feedback from the previous attempt
+# ============================================================================
+
+Your previous attempt at this step was evaluated and rejected by the quality judge.
+
+## Judge Feedback
+
+{{FEEDBACK}}
+
+## How to Use This Feedback
+
+- **Re-perform the original step** from scratch, applying every correction and
+  suggestion noted in the judge feedback above before producing your output.
+- **Preserve the original output structure** — match the same format, sections,
+  and conventions as the original step requires; do not restructure or reframe
+  the output unless the feedback explicitly asks you to.
+- **Do not repeat the prior failed approach** — if you used a strategy or
+  pattern that the judge flagged, discard it entirely and choose an alternative
+  that directly addresses the stated concerns.
+
+Now proceed with the step as originally described, incorporating the feedback above.

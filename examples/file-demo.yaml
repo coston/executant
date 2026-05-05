@@ -1,0 +1,14 @@
+goal: "Demonstrate file operations"
+steps:
+  - name: "create"
+    prompt: |
+      Create a file at /tmp/executant-demo.txt with some sample content.
+      Include a timestamp and a short message.
+
+  - name: "read"
+    prompt: |
+      Read the file /tmp/executant-demo.txt and tell me what it contains.
+
+  - name: "cleanup"
+    prompt: |
+      Delete the file /tmp/executant-demo.txt and confirm it's gone.

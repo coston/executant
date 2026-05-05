@@ -1,0 +1,75 @@
+# ============================================================================
+# PLAN RETRY — SCHEMA ERROR
+# ============================================================================
+# Purpose: Retry task-generation when the previous response had schema errors
+# Used by: src/plan.ts (retry loop, up to 3 attempts)
+# Triggered when: Zod schema validation fails on a generated plan
+#
+# Placeholders:
+#   {{ISSUES}}      - Zod validation error details from the failed attempt
+# ============================================================================
+
+IMPORTANT CORRECTION: Your previous response was valid JSON but failed schema validation:
+
+{{ISSUES}}
+
+Fix these issues and regenerate the complete plan. Adhere to ALL of the following rules — they are identical to the rules for first-pass generation.
+
+## Output Requirements
+
+Generate a JSON object that:
+1. Has a clear, specific `goal` describing what will be accomplished
+2. Uses appropriate step types (prompt vs script) based on task nature
+3. Names steps with descriptive snake_case identifiers
+4. Structures prompts with numbered instructions for clarity (use \n for newlines)
+5. Adds `llm_as_judge: true` to quality-critical steps
+6. Adds `self_healing: true` to script steps where auto-recovery is appropriate (opt-in, not default)
+7. Uses `continue_on_error: true` for non-critical script steps
+8. Mixes step types to optimize speed and cost
+9. Is valid JSON
+10. Is ready to execute without modification
+11. Uses `forEach` for any step that processes the same operation over a list —
+    never enumerates items inline inside a single prompt step
+12. Includes lint, test, build, and/or visual check steps per the Quality Steps rules above
+13. Uses `output:` + `context:` to pass script step results to downstream prompt steps —
+    never assumes a prompt step can "read" a prior step's stdout
+14. Declares ALL file paths in `vars` — no hardcoded paths in prompts or commands
+15. Places `vars` before `steps` in the JSON output
+
+## Critical Rules
+
+- ALWAYS output valid JSON
+- Use \n for multi-line strings in prompts and commands
+- Step names MUST be unique within the task
+- Prompt steps are default — only specify `"type": "script"` for script steps
+- Only add llm_as_judge when beneficial (not every step needs it)
+- `self_healing` is opt-in — write `"self_healing": true` on script steps where auto-recovery is safe
+- When a step would enumerate N known items and repeat the same operation,
+  ALWAYS use `"forEach": ["item1", "item2", ...]` — never enumerate inline in a prompt
+- When a prompt step needs data from a prior script step, use `output:` on the script
+  step and `context:` on the prompt step — never write "read the output from the previous step"
+- Declare all intermediate file paths (reports, coverage output, test results) in `vars`
+- NEVER hardcode file paths in `prompt` or `command` fields — declare in `vars`, reference as `{{var_name}}`
+- `vars` MUST appear before `steps` in the output JSON
+
+## Output Format
+
+CRITICAL: Your response is parsed by a machine. Output ONLY a valid JSON object — nothing else.
+Do NOT include explanations, markdown code fences, summaries, tables, or any text before or after the JSON.
+The very first character of your response must be `{`.
+
+WRONG (do not do this):
+```
+Here is the task plan:
+{"goal": ...}
+```
+
+WRONG (do not do this):
+```
+I've created a plan that...
+```
+
+RIGHT (do exactly this — raw JSON, nothing else):
+```
+{"goal": "...", "steps": [{"name": "..."}]}
+```

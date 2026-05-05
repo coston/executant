@@ -1,0 +1,13 @@
+goal: "Simple hello world test task"
+steps:
+  - name: "greet"
+    prompt: |
+      Say hello and tell me a short joke about programming.
+
+  - name: "math"
+    prompt: |
+      Calculate 17 * 23 and explain the result.
+
+  - name: "list"
+    prompt: |
+      List 3 popular programming languages and one fun fact about each.

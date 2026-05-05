@@ -1,0 +1,18 @@
+# ============================================================================
+# PLAN RETRY — JUDGE REJECTION
+# ============================================================================
+# Purpose: Instructs the decomposer to revise a workflow that was rejected by
+#          the quality judge, incorporating specific actionable feedback.
+# Used by: src/plan.ts — streamPlan() judge rejection retry branch
+#
+# Placeholders:
+#   {{FEEDBACK}} - The judge's specific, actionable rejection feedback
+# ============================================================================
+
+Your previous workflow was reviewed by a quality judge and rejected. You must fix
+the issues described below before regenerating.
+
+Judge feedback:
+{{FEEDBACK}}
+
+Address every point in the feedback, then regenerate the complete workflow JSON.

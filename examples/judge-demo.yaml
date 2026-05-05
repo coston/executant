@@ -1,0 +1,36 @@
+goal: "Demo LLM as a judge feature"
+
+steps:
+  # Simple step without judge - always passes
+  - name: "setup"
+    type: prompt
+    prompt: |
+      Create a test file at /tmp/executant-judge-test.txt with the following content:
+      - Line 1: Project name
+      - Line 2: Author name
+      - Line 3: Current date
+
+  # Step with judge - will evaluate if content meets quality standards
+  - name: "write_documentation"
+    type: prompt
+    llm_as_judge: true
+    prompt: |
+      Read /tmp/executant-judge-test.txt and create documentation at /tmp/executant-judge-docs.md.
+
+      The documentation MUST include:
+      1. A clear title
+      2. An overview section (at least 3 sentences)
+      3. A features list (at least 3 bullet points)
+      4. A usage examples section with code blocks
+      5. A conclusion
+
+      Make it professional and comprehensive.
+
+  # Final verification
+  - name: "verify"
+    type: script
+    command: |
+      echo "=== Documentation Created ==="
+      cat /tmp/executant-judge-docs.md
+      echo ""
+      echo "✅ Judge-approved documentation"

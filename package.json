@@ -1,0 +1,89 @@
+{
+  "name": "executant",
+  "version": "0.1.0",
+  "description": "Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "executant": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/index.js && rm -rf dist/prompts && cp -r src/prompts dist/prompts",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "env -u NODE_TEST_CONTEXT node --import tsx/esm --test src/tests/*.test.ts",
+    "lint": "eslint src",
+    "knip": "knip"
+  },
+  "dependencies": {
+    "@coston/design-tokens": "^0.9.2",
+    "ink": "^5.0.1",
+    "js-yaml": "^4.1.0",
+    "react": "^18.3.1",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/npm": "^13.1.5",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "esbuild": "^0.28.0",
+    "eslint": "^9.39.4",
+    "husky": "^9.1.7",
+    "knip": "^5.88.1",
+    "lint-staged": "^16.4.0",
+    "semantic-release": "^24.2.9",
+    "tsx": "^4.15.7",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.58.0"
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": "eslint --fix"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      [
+        "@semantic-release/npm",
+        {
+          "npmPublish": true
+        }
+      ],
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "package.json"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+        }
+      ],
+      "@semantic-release/github"
+    ]
+  },
+  "knip": {
+    "entry": [
+      "src/index.ts"
+    ],
+    "project": [
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ]
+  }
+}

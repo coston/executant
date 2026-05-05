@@ -1,0 +1,26 @@
+goal: "Demonstrate Executant's logging feature with highlights"
+
+steps:
+  - name: "Create test file"
+    type: script
+    command: "echo 'Hello from Executant' > /tmp/executant-demo.txt && cat /tmp/executant-demo.txt"
+
+  - name: "Analyze file with Claude"
+    prompt: |
+      Read the file /tmp/executant-demo.txt and analyze its contents.
+      Then create a new file /tmp/executant-demo-analysis.txt with your analysis.
+
+  - name: "Verify file was created"
+    type: script
+    command: "cat /tmp/executant-demo-analysis.txt"
+    llm_as_judge: true
+
+  - name: "Intentional failure (self-healing demo)"
+    type: script
+    command: "cat /tmp/nonexistent-file.txt"
+    self_healing: true
+
+  - name: "Final cleanup"
+    type: script
+    command: "rm -f /tmp/executant-demo*.txt && echo 'Cleanup complete'"
+    continue_on_error: true

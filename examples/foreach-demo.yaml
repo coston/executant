@@ -1,0 +1,45 @@
+goal: "Demonstrate forEach — run a step once per item in a list"
+
+steps:
+  # --- Inline list: process each file explicitly listed ---
+  - name: check file sizes
+    forEach: [src/runner.ts, src/types.ts, src/load-workflow.ts]
+    type: script
+    command: wc -l "{{item}}"
+    continue_on_error: true
+
+  # --- Shell command: list is produced dynamically at runtime ---
+  # The command's newline-split stdout becomes the item list.
+  - name: count lines in each source file
+    forEach: "find src -name '*.ts' -not -path '*/tests/*'"
+    type: script
+    command: wc -l "{{item}}"
+    continue_on_error: true
+
+  # --- forEach with a prompt step (AI-assisted per item) ---
+  # Each TypeScript file gets its own Claude review call.
+  # Uncomment to use (costs API credits per iteration).
+
+  # Step A: create the output directory before the forEach loop writes into it.
+  - name: setup review dir
+    type: script
+    command: mkdir -p .reviews
+
+  # Step B: review each file and WRITE the findings to a file.
+  # Prompt steps must write output to files — streamed text is not persisted.
+  - name: review changed files
+    forEach: "git diff --name-only HEAD~1 -- '*.ts'"
+    prompt: |
+      Review {{item}} for potential issues:
+      1. Check for obvious bugs or type errors
+      2. Suggest any quick wins for code clarity
+      Write your findings (one paragraph) to .reviews/{{item}}.md.
+
+  # Step C: read the saved review and apply the suggested fixes.
+  # This chained forEach shows why writing to files matters — the second pass
+  # depends on the output of the first.
+  - name: apply feedback
+    forEach: "git diff --name-only HEAD~1 -- '*.ts'"
+    prompt: |
+      Read the review at .reviews/{{item}}.md and apply the suggested fixes to {{item}}.
+      Only make changes the review explicitly recommends.

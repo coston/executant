@@ -1,0 +1,23 @@
+# ============================================================================
+# PLAN RETRY PARSE ERROR
+# ============================================================================
+# Purpose: Corrective feedback injected into the retry prompt when Claude
+#          returns a response that cannot be parsed as JSON during plan generation
+# Used by: src/plan.ts:268 (streamPlan retry loop)
+# Triggered when: JSON.parse throws on Claude's output during plan generation,
+#                 up to 3 retry attempts
+#
+# Placeholders:
+#   {{ERROR}}   - The JSON parse error message string
+#   {{EXCERPT}} - First 500 characters of the unparseable output Claude returned
+# ============================================================================
+
+IMPORTANT CORRECTION: Your previous response was NOT valid JSON. JSON parse error:
+
+{{ERROR}}
+
+Excerpt of what you returned:
+
+{{EXCERPT}}
+
+You MUST output ONLY a JSON object. No markdown, no prose, no code fences. Just the raw JSON.

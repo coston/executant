@@ -1,0 +1,29 @@
+goal: "Find large files and generate a cleanup report"
+
+vars:
+  scan_results: ".claude/executant.local/large-files.txt"
+  report_file: ".claude/executant.local/cleanup-report.md"
+
+steps:
+  - name: "scan"
+    type: script
+    command: find . -not -path './.git/*' -size +100k -printf '%s\t%p\n' | sort -rn | head -20 > {{scan_results}}
+
+  - name: "analyze"
+    context: [scan_results]
+    prompt: |
+      The file above lists large files (>100KB) found in this project, sorted by size.
+
+      For each file:
+      1. Identify what type it is (binary, generated, dependency, source, etc.)
+      2. Determine if it should be in .gitignore or can be deleted
+      3. Note any quick wins for reducing repository size
+
+      Write your analysis to {{report_file}} in Markdown format with:
+      - A summary table of the top files
+      - Recommendations grouped by action (delete, gitignore, keep)
+      - Estimated space savings
+
+  - name: "show_report"
+    type: script
+    command: cat {{report_file}}

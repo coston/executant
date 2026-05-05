@@ -1,0 +1,307 @@
+// ============================================================================
+// CORE TYPES
+// ============================================================================
+// The entire system is built around these types. Every task produces a stream
+// of Events. The UI consumes events and builds ExecutionState. Nothing is
+// communicated via raw strings — all data flows through the event model.
+
+// ----------------------------------------------------------------------------
+// Tasks
+// ----------------------------------------------------------------------------
+
+/** Shared fields present on every task type. */
+interface BaseTask {
+  /** Unique identifier for this step within the workflow. */
+  name: string;
+  /** When true, a failure in this step does not abort the workflow. */
+  continueOnError?: boolean;
+}
+
+/** Emits a single log line with no side effects. Useful for progress markers. */
+export interface LogTask extends BaseTask {
+  type: 'log';
+  message: string;
+}
+
+/** Runs an arbitrary bash command. Streams stdout/stderr as output:text events. */
+export interface CommandTask extends BaseTask {
+  type: 'command';
+  command: string;
+  /**
+   * When true (default for script steps), failures trigger a multi-pass Claude
+   * repair loop. Claude gets the error output plus accumulated context from prior
+   * attempts and full tool access to diagnose and fix the issue. The command is
+   * re-run after each fix, up to maxHealingAttempts times.
+   * Set to false to disable and fail immediately on error.
+   */
+  selfHealing?: boolean;
+  /** Max self-healing attempts before giving up. Defaults to 5. */
+  maxHealingAttempts?: number;
+  /**
+   * Resolved file path where the runner writes the step's stdout after
+   * successful completion. Populated by load-workflow from the `output:` YAML
+   * field (which names a var whose value is the file path).
+   */
+  output?: string;
+}
+
+/** Invokes the Claude CLI via child_process.spawn. Streams AI output as structured events. */
+export interface ClaudeTask extends BaseTask {
+  type: 'claude';
+  prompt: string;
+  /** Subset of Claude tools to allow. Defaults to a safe general-purpose set. */
+  allowedTools?: string[];
+  /** Permission mode passed to the claude CLI. Defaults to 'bypassPermissions'. */
+  permissionMode?: 'bypassPermissions' | 'default';
+  /** JSON Schema object passed via --json-schema to enforce structured output. */
+  jsonSchema?: Record<string, unknown>;
+  /** Text appended to the system prompt via --append-system-prompt. */
+  appendSystemPrompt?: string;
+  /** Model override passed via --model. Defaults to the CLI's configured model. */
+  model?: string;
+  /**
+   * When true, after the step completes Claude evaluates its own output.
+   * If the verdict is FAIL the step retries up to 5 times.
+   */
+  llmAsJudge?: boolean;
+  /**
+   * Resolved file paths whose contents are prepended to the prompt at runtime.
+   * Populated by load-workflow from the `context:` YAML field (which names vars
+   * whose values are file paths).
+   */
+  contextFiles?: string[];
+}
+
+/**
+ * Runs a child task (command, claude, or log) once per item in a list.
+ * The list is either an inline array or a shell command whose newline-split
+ * output provides the items. `{{item}}` in the inner task's fields is
+ * substituted at runtime for each iteration.
+ */
+export interface ForEachTask extends BaseTask {
+  type: 'forEach';
+  forEach: string[] | string;
+  /**
+   * Template task — {{item}} will be substituted per iteration.
+   * Nesting ForEachTask here is intentionally excluded: recursive iteration
+   * would require multi-dimensional item substitution and loop-termination
+   * semantics that the runner does not implement.
+   */
+  inner: CommandTask | ClaudeTask | LogTask;
+}
+
+export type Task = LogTask | CommandTask | ClaudeTask | ForEachTask;
+
+// ----------------------------------------------------------------------------
+// Events  (discriminated union — the primary communication contract)
+// ----------------------------------------------------------------------------
+
+/** Fired once when the entire workflow begins. */
+export interface WorkflowStartEvent {
+  type: 'workflow:start';
+  workflow: Workflow;
+}
+
+/** Fired once when all steps have completed (or the last error was swallowed). */
+export interface WorkflowCompleteEvent {
+  type: 'workflow:complete';
+  workflow: Workflow;
+  durationMs: number;
+}
+
+/** Fired when a step begins executing. */
+export interface StepStartEvent {
+  type: 'step:start';
+  index: number;
+  name: string;
+}
+
+/** Fired when a step finishes successfully. */
+export interface StepCompleteEvent {
+  type: 'step:complete';
+  index: number;
+  name: string;
+  durationMs: number;
+}
+
+/** Fired when a step throws. If continueOnError is set, execution continues. */
+export interface StepErrorEvent {
+  type: 'step:error';
+  index: number;
+  name: string;
+  error: Error;
+}
+
+/** Fired when a step is skipped due to --step or --from-step filters. */
+export interface StepSkipEvent {
+  type: 'step:skip';
+  index: number;
+  name: string;
+}
+
+/** Fired at the start of each forEach iteration so the UI can show progress. */
+export interface StepIterationEvent {
+  type: 'step:iteration';
+  index: number;
+  item: string;
+  iteration: number;  // 1-based
+  total: number;
+}
+
+/** A line of plain text output from a command or Claude's text blocks. */
+export interface OutputTextEvent {
+  type: 'output:text';
+  /**
+   * 0-based step index. Inner generators (log, forEach iterations) emit -1 as
+   * a sentinel; runWorkflow patches this to the real step index before yielding
+   * downstream.
+   */
+  index: number;
+  text: string;
+}
+
+/**
+ * A structured tool invocation emitted by Claude.
+ * The UI can format this richly (e.g. "[Read] src/foo.ts") instead of
+ * showing the raw JSON that stream-parser.sh used to parse.
+ */
+export interface OutputToolEvent {
+  type: 'output:tool';
+  /**
+   * 0-based step index. Inner generators emit -1 as a sentinel;
+   * runWorkflow patches this to the real step index before yielding downstream.
+   */
+  index: number;
+  tool: string;
+  input: Record<string, unknown>;
+}
+
+/** API cost reported at the end of a Claude invocation. */
+export interface OutputCostEvent {
+  type: 'output:cost';
+  usd: number;
+}
+
+/** Schema-validated JSON object from a Claude invocation that used --json-schema. */
+export interface OutputStructuredEvent {
+  type: 'output:structured';
+  data: unknown;
+}
+
+/** Informational messages from the runner itself (not from commands/Claude). */
+export interface LogEvent {
+  type: 'log';
+  level: 'info' | 'warn' | 'error';
+  text: string;
+}
+
+export type Event =
+  | WorkflowStartEvent
+  | WorkflowCompleteEvent
+  | StepStartEvent
+  | StepCompleteEvent
+  | StepErrorEvent
+  | StepSkipEvent
+  | StepIterationEvent
+  | OutputTextEvent
+  | OutputToolEvent
+  | OutputCostEvent
+  | OutputStructuredEvent
+  | LogEvent;
+
+// ----------------------------------------------------------------------------
+// Run options  (CLI flags, not YAML — passed to runWorkflow)
+// ----------------------------------------------------------------------------
+
+export interface RunOptions {
+  /** Run only this step: match by name or 1-based index string. */
+  stepFilter?: string;
+  /** Skip all steps before this 1-based index. */
+  fromStep?: number;
+}
+
+// ----------------------------------------------------------------------------
+// Workflow
+// ----------------------------------------------------------------------------
+
+export interface Workflow {
+  /** Human-readable description shown in the UI header. */
+  goal: string;
+  /** Ordered list of steps. Executed sequentially by default. */
+  tasks: Task[];
+  /** Shared key/value pairs substituted into prompts and commands. */
+  vars?: Record<string, string>;
+  /** When true, after task completes Claude generates an improved version saved to tasks/backlog/. */
+  selfImprove?: boolean;
+}
+
+// ----------------------------------------------------------------------------
+// Execution State  (derived from the event stream by the UI reducer)
+// ----------------------------------------------------------------------------
+
+export type TaskStatus = 'pending' | 'running' | 'complete' | 'error' | 'skipped';
+
+export interface TaskState {
+  task: Task;
+  status: TaskStatus;
+  startTime?: number;
+  endTime?: number;
+  /** Rolling buffer of output lines rendered in the log pane. */
+  lines: string[];
+  error?: Error;
+  /** Set while a forEach step is iterating. */
+  iteration?: { current: number; total: number; item: string };
+}
+
+export interface ExecutionState {
+  workflow: Workflow;
+  tasks: TaskState[];
+  currentIndex: number;
+  startTime: number;
+  endTime?: number;
+  /** Accumulated list of file paths written via the Write tool across all steps. */
+  writtenFiles: string[];
+}
+
+// ----------------------------------------------------------------------------
+// YAML schema (what js-yaml parses from .yaml files)
+// ----------------------------------------------------------------------------
+
+/** Raw shape of a task step as written in a YAML workflow file. */
+export interface RawStep {
+  name: string;
+  /**
+   * Bash-compatible step type names. Note: forEach steps have no dedicated
+   * type value here — load-workflow.ts detects them by the presence of the
+   * `forEach` field rather than via this discriminant.
+   */
+  type?: 'prompt' | 'script' | 'log';  // bash compat names
+  prompt?: string;
+  command?: string;
+  message?: string;
+  continue_on_error?: boolean;
+  self_healing?: boolean;
+  max_healing_attempts?: number;
+  /**
+   * Var name whose value is a file path. The runner writes the step's stdout
+   * to this path after successful completion.
+   */
+  output?: string;
+  llm_as_judge?: boolean;
+  allowed_tools?: string[];
+  /** Inline list or shell command whose newline-split output provides items. */
+  forEach?: string[] | string;
+  /**
+   * List of var names whose values are file paths. The file contents are
+   * prepended to the prompt when the step runs.
+   */
+  context?: string[];
+}
+
+/** Raw shape of the top-level YAML workflow file. */
+export interface RawWorkflow {
+  goal: string;
+  steps: RawStep[];
+  vars?: Record<string, string>;
+  self_improve?: boolean;
+}
