@@ -19,16 +19,28 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: 'https://registry.npmjs.org'
           cache: npm
 
       - run: npm ci
       - run: npm run bundle
+
+      - name: Get version before release
+        run: echo "PRE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
         run: npx semantic-release
+
+      - name: Publish to npm
+        run: |
+          POST_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PRE_VERSION" != "$POST_VERSION" ]; then
+            npm publish --provenance --access public
+          fi
