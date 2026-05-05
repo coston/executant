@@ -31,6 +31,13 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
-        run: npx semantic-release
+        run: |
+          set -o pipefail
+          npx semantic-release 2>&1 | tee /tmp/sr.log
+
+      - name: Publish to npm
+        if: success()
+        run: |
+          if grep -q "The next release version is" /tmp/sr.log; then
+            npm publish --provenance --access public
+          fi
