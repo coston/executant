@@ -5,7 +5,7 @@
 Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands.
 
 ## Advisory
-Use at you're own risk. This is for Coston. It's not special. Build your own harnesses.
+Built for personal use by Coston. Public for sharing the approach. Use at your own risk. 
 
 ## Install
 
