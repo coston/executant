@@ -31,15 +31,6 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        id: release
-        run: |
-          PRE_VERSION=$(node -p "require('./package.json').version")
-          npx semantic-release
-          POST_VERSION=$(node -p "require('./package.json').version")
-          if [ "$PRE_VERSION" != "$POST_VERSION" ]; then
-            echo "released=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Publish to npm
-        if: steps.release.outputs.released == 'true'
-        run: npm publish --provenance --access public
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: npx semantic-release
