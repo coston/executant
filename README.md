@@ -1,4 +1,6 @@
-# executant
+<img width="1774" height="887" alt="e58fdd14-77a1-4207-99c2-fb8603e3f625" src="https://github.com/user-attachments/assets/8d57a6ee-0fd3-43c9-bdff-1538fe931337" />
+
+# Executant
 
 Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands.
 
