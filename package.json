@@ -1,6 +1,6 @@
 {
   "name": "executant",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands",
   "type": "module",
   "main": "dist/index.js",
@@ -55,11 +55,21 @@
     "plugins": [
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator",
-      ["@semantic-release/npm", {"npmPublish": false}],
-      ["@semantic-release/git", {
-        "assets": ["package.json"],
-        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
-      }],
+      [
+        "@semantic-release/npm",
+        {
+          "npmPublish": false
+        }
+      ],
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "package.json"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+        }
+      ],
       "@semantic-release/github"
     ]
   },
