@@ -11,14 +11,13 @@
 import { exec } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { ClaudeTask, CommandTask, Event, ForEachTask, LogTask, RunOptions, Task, Workflow } from './types.js';
 import { CommandError, runCommand } from './tasks/command.js';
 import { runClaude, runClaudeStructured } from './tasks/claude.js';
+import { loadPrompt } from './lib/utils.js';
 
-const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'prompts');
 const JUDGE_RETRY_CONTEXT = loadPrompt('judge-retry-context');
 const SELF_HEALING_PROMPT = loadPrompt('self-healing-fix');
 const JUDGE_EVALUATION_PROMPT = loadPrompt('judge-evaluation');
@@ -383,13 +382,6 @@ export function expandContext(task: ClaudeTask): ClaudeTask {
 // ============================================================================
 // Prompt builders
 // ============================================================================
-
-function loadPrompt(name: string): string {
-  const raw = readFileSync(join(PROMPTS_DIR, `${name}.txt`), 'utf8');
-  // Strip leading # comment block (documentation header) so placeholder
-  // substitution doesn't corrupt it when values contain newlines.
-  return raw.replace(/^(#[^\n]*\n)+\n?/, '');
-}
 
 function buildHealingPrompt(
   command: string,

@@ -10,24 +10,22 @@
 // via a three-pass pipeline: research → decompose → validate.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, resolve } from 'node:path';
 import { dump as dumpYaml } from 'js-yaml';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { runClaude, runClaudeStructured } from './tasks/claude.js';
-import { slugify, timestamp } from './lib/utils.js';
+import { loadPrompt, slugify, timestamp } from './lib/utils.js';
 import type { PlanEvent } from './ui/PlanApp.js';
 import type { ClaudeTask } from './types.js';
 
-const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'prompts');
-const PLAN_RESEARCH_PROMPT = readFileSync(join(PROMPTS_DIR, 'plan-research.txt'), 'utf8');
-const PLAN_DECOMPOSE_PROMPT = readFileSync(join(PROMPTS_DIR, 'plan-decompose.txt'), 'utf8');
-const PLAN_JUDGE_PROMPT = readFileSync(join(PROMPTS_DIR, 'plan-judge.txt'), 'utf8');
-const PLAN_SYSTEM_RULES = readFileSync(join(PROMPTS_DIR, 'plan-system-rules.txt'), 'utf8').trim();
-const PLAN_RETRY_PARSE_ERROR = readFileSync(join(PROMPTS_DIR, 'plan-retry-parse-error.txt'), 'utf8').trim();
-const PLAN_RETRY_SCHEMA_ERROR = readFileSync(join(PROMPTS_DIR, 'plan-retry-schema-error.txt'), 'utf8').trim();
-const PLAN_RETRY_JUDGE = readFileSync(join(PROMPTS_DIR, 'plan-retry-judge.txt'), 'utf8').trim();
+const PLAN_RESEARCH_PROMPT = loadPrompt('plan-research');
+const PLAN_DECOMPOSE_PROMPT = loadPrompt('plan-decompose');
+const PLAN_JUDGE_PROMPT = loadPrompt('plan-judge');
+const PLAN_SYSTEM_RULES = loadPrompt('plan-system-rules');
+const PLAN_RETRY_PARSE_ERROR = loadPrompt('plan-retry-parse-error');
+const PLAN_RETRY_SCHEMA_ERROR = loadPrompt('plan-retry-schema-error');
+const PLAN_RETRY_JUDGE = loadPrompt('plan-retry-judge');
 const MAX_PLAN_RETRIES = 3;
 const TOTAL_PLAN_STAGES = 3;
 

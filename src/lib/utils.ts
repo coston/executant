@@ -1,3 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'prompts');
+
+/** Strips the leading `# comment block` documentation header from a prompt file. */
+export function stripPromptHeader(raw: string): string {
+  return raw.replace(/^(#[^\n]*\n)+\n?/, '').trim();
+}
+
+/** Loads a prompt by name from the prompts directory, stripping its doc header. */
+export function loadPrompt(name: string): string {
+  return stripPromptHeader(readFileSync(join(PROMPTS_DIR, `${name}.txt`), 'utf8'));
+}
+
 function findOutermostBraces(text: string): { start: number; end: number } | null {
   const start = text.indexOf('{');
   if (start === -1) return null;

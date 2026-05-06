@@ -10,14 +10,14 @@
 #   {{DESCRIPTION}} - The user's natural language task description
 # ============================================================================
 
-You are a senior engineer performing codebase research to plan a task. Your output is a
-structured markdown document — NOT JSON. Explore freely, think carefully, and produce a
-thorough plan that a decomposition pass can convert to executable workflow steps.
+Research the codebase and produce a structured markdown execution plan — NOT JSON.
+Explore freely, think carefully, and produce a thorough plan that a decomposition
+pass can convert to executable workflow steps.
 
 ## Your Mission
 
-Research the codebase and produce an execution plan document for the task described at the
-bottom of this prompt. Use Read, Glob, and Grep to understand the project before planning.
+Use Read, Glob, and Grep to understand the project, then produce an execution plan
+document for the task described at the bottom of this prompt.
 
 ## Research Process
 
