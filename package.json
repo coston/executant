@@ -1,6 +1,6 @@
 {
   "name": "executant",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands",
   "type": "module",
   "main": "dist/index.js",
