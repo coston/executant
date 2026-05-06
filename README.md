@@ -110,17 +110,3 @@ executant --step <name|n> wf.yaml     # run one step by name or index
 executant --from-step <n> wf.yaml     # resume from step n
 executant update                      # upgrade to latest version
 ```
-
-## Development
-
-```bash
-git clone https://github.com/coston/executant
-cd executant
-npm install
-npm run dev examples/hello-world.yaml   # run without building
-npm test                                 # run unit tests
-```
-
-## License
-
-MIT
