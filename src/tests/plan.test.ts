@@ -315,6 +315,92 @@ describe('normalizeWorkflow', () => {
     assert.ok(!('forEach' in result.steps[0]!), 'forEach should be removed');
   });
 
+  test('converts forEach "seq 1 N" shell command to repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing pass {{item}}', forEach: 'seq 1 20' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 20);
+    assert.ok(!('forEach' in result.steps[0]!));
+  });
+
+  test('converts forEach "seq N" shorthand (no start arg) to repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: 'seq 3' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 3);
+    assert.ok(!('forEach' in result.steps[0]!));
+  });
+
+  test('does not convert forEach "seq" with non-1 start', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: 'seq 5 20' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { forEach?: unknown }).forEach, 'seq 5 20');
+  });
+
+  test('collapses step_1, step_2, step_3 into repeat: 3 with {{item}} name', () => {
+    const workflow = {
+      ...base,
+      steps: [
+        { name: 'lint_pass_1', prompt: 'run linter' },
+        { name: 'lint_pass_2', prompt: 'run linter' },
+        { name: 'lint_pass_3', prompt: 'run linter' },
+        { name: 'verify', type: 'script' as const, command: 'npm test' },
+      ],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal(result.steps.length, 2);
+    assert.equal(result.steps[0]!.name, 'lint_pass_{{item}}');
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 3);
+    assert.equal(result.steps[1]!.name, 'verify');
+  });
+
+  test('does not collapse sequential steps that already have forEach/repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [
+        { name: 'step_1', prompt: 'do thing', repeat: 2 },
+      ],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal(result.steps.length, 1);
+    assert.equal(result.steps[0]!.name, 'step_1');
+  });
+
+  test('does not collapse a single step_1 with no following step_2', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step_1', prompt: 'do thing' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal(result.steps[0]!.name, 'step_1');
+    assert.ok(!('repeat' in result.steps[0]!));
+  });
+
+  test('infers repeat from step name when prompt uses {{item}} but no forEach/repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'review_pass_of_5', prompt: 'Review pass {{item}} of 5.' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 5);
+  });
+
+  test('does not infer repeat when step name has no _of_N pattern', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'review_pass', prompt: 'do thing {{item}}' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.ok(!('repeat' in result.steps[0]!));
+  });
+
   test('does not convert forEach with meaningful string items', () => {
     const workflow = {
       ...base,

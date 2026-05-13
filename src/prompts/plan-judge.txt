@@ -65,6 +65,8 @@ If the user's goal mentions "N times", "repeat N", "N iterations", or "N passes"
 - Does any step use `forEach` with a sequential numeric array like `["1","2","3","4","5"]`?
 - This is always wrong — `repeat: N` must be used instead of a numeric forEach array
 - Reject and require the offending step be converted to `repeat: N`
+- Does any single step's `prompt` describe doing something "N times" or "across N passes" inline, instead of using `repeat: N`? A step that says "do this 10 times" or "perform N passes" inside its prompt text rather than setting `repeat: N` is wrong — reject it and require it to be restructured as a single-pass prompt with `repeat: N` on the step
+- Are there N consecutive steps with names like `step_1`, `step_2`, `step_3`? Sequential named steps are always wrong when they do the same thing — reject and require a single step with `repeat: N`
 
 ## Output Format
 

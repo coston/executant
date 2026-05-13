@@ -215,20 +215,89 @@ function isNumericSequence(arr: (string | unknown)[]): arr is string[] {
 }
 
 /**
+ * Extracts N from seq shell patterns the model sometimes generates instead of repeat:
+ *   "seq N"    → N   (shorthand: generates 1..N)
+ *   "seq 1 N"  → N   (explicit range starting at 1)
+ * Does NOT match "seq M N" where M ≠ 1 (arbitrary range, not a count).
+ */
+function parseSeqCommand(cmd: string): number | null {
+  const t = cmd.trim();
+  const shorthand = t.match(/^seq\s+(\d+)$/);
+  if (shorthand) return parseInt(shorthand[1]!, 10);
+  const explicit = t.match(/^seq\s+1\s+(\d+)$/);
+  if (explicit) return parseInt(explicit[1]!, 10);
+  return null;
+}
+
+/** Extracts the first integer from a step name like "audit_pass_{{item}}_of_5" → 5. */
+function extractCountFromName(name: string): number | null {
+  const m = name.match(/_of_(\d+)/);
+  return m ? parseInt(m[1]!, 10) : null;
+}
+
+/**
  * Fixes common model mistakes before writing YAML:
- * - forEach: ["1","2","3"] → repeat: 3  (model should have used repeat but didn't)
+ * - forEach: ["1","2","3"]        → repeat: 3   (numeric array)
+ * - forEach: "seq 1 20" / "seq 3" → repeat: 20  (shell seq command)
+ * - prompt uses {{item}}, no loop  → infer repeat from step name
+ * - step_1, step_2, step_3        → repeat: 3   (N identical named steps)
  */
 export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.infer<typeof WorkflowSchema> {
-  return {
-    ...workflow,
-    steps: workflow.steps.map((step) => {
-      if (Array.isArray(step.forEach) && isNumericSequence(step.forEach)) {
+  const steps = workflow.steps.map((step) => {
+    // Case 1: forEach is a numeric array ["1","2","3"]
+    if (Array.isArray(step.forEach) && isNumericSequence(step.forEach)) {
+      const { forEach, ...rest } = step;
+      return { ...rest, repeat: (forEach as string[]).length };
+    }
+    // Case 2: forEach is a "seq N" or "seq 1 N" shell command
+    if (typeof step.forEach === 'string') {
+      const n = parseSeqCommand(step.forEach);
+      if (n !== null) {
         const { forEach, ...rest } = step;
-        return { ...rest, repeat: (forEach as string[]).length };
+        return { ...rest, repeat: n };
       }
-      return step;
-    }),
-  };
+    }
+    // Case 3: prompt uses {{item}} but no forEach/repeat — infer from step name
+    const prompt = typeof step.prompt === 'string' ? step.prompt : '';
+    if (prompt.includes('{{item}}') && step.forEach === undefined && step.repeat === undefined) {
+      const n = extractCountFromName(step.name);
+      if (n !== null) return { ...step, repeat: n };
+    }
+    return step;
+  });
+
+  // Case 4: N consecutive steps whose names are "prefix_1".."prefix_N" → repeat: N
+  return { ...workflow, steps: collapseSequentialSteps(steps) };
+}
+
+/**
+ * Detects runs of steps like step_1, step_2, step_3 and collapses them into
+ * a single step with repeat: N and name "step_{{item}}".
+ */
+function collapseSequentialSteps(steps: z.infer<typeof StepSchema>[]): z.infer<typeof StepSchema>[] {
+  const result: z.infer<typeof StepSchema>[] = [];
+  let i = 0;
+  while (i < steps.length) {
+    const step = steps[i]!;
+    // Only try to collapse steps that already have no loop construct
+    if (step.forEach !== undefined || step.repeat !== undefined) {
+      result.push(step);
+      i++;
+      continue;
+    }
+    // Check if name ends with _1 and subsequent steps are _2, _3, ...
+    const m = step.name.match(/^(.+?)_1$/);
+    if (!m) { result.push(step); i++; continue; }
+    const prefix = m[1]!;
+    let n = 1;
+    while (i + n < steps.length && steps[i + n]!.name === `${prefix}_${n + 1}`) n++;
+    if (n < 2) { result.push(step); i++; continue; }
+    // Collapse: use first step as template, replace _1 suffix with _{{item}}
+    const { name, ...rest } = step;
+    result.push({ ...rest, name: `${prefix}_{{item}}`, repeat: n });
+    i += n;
+  }
+  return result;
 }
 
 /**
@@ -318,7 +387,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
       prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
       allowedTools: [],
       permissionMode: 'bypassPermissions',
-      model: 'opus',
+      model: skipResearch ? 'sonnet' : 'opus',
       appendSystemPrompt: PLAN_SYSTEM_RULES,
       jsonSchema: WORKFLOW_JSON_SCHEMA,
     };
