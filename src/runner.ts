@@ -10,7 +10,7 @@
 
 import { exec } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { ClaudeTask, CommandTask, Event, ForEachTask, LogTask, RunOptions, Task, Workflow } from './types.js';

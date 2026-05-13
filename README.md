@@ -47,6 +47,13 @@ executant plan "convert all CoffeeScript files to TypeScript and run tests"
 
 Generates a workflow YAML in your project's task directory using a three-pass Claude pipeline (research → decompose → validate). Also accepts `-f file` or stdin.
 
+For self-contained requests (repetition patterns, forEach loops, or anything that doesn't need codebase exploration), the research pass is skipped automatically — going straight to decompose + validate. Use `-q` / `--fast` to force-skip research for any request:
+
+```bash
+executant plan -q "repeat the following prompt 20 times: review src/ for issues"
+executant plan --fast "for each file in the list, run the linter"
+```
+
 ## Context & Variables
 
 Use `vars` to define shared values substituted as `{{var_name}}` in any prompt or command. Pair with `context` to inject file contents directly into a prompt at runtime, and `output` to pipe a script step's stdout into a file for downstream steps to read.
@@ -114,7 +121,8 @@ See the [`examples/`](examples/) directory.
 ## CLI
 
 ```bash
-executant plan "description"          # generate a workflow YAML
+executant plan "description"          # generate a workflow YAML (auto-detects fast path)
+executant plan -q "description"       # skip research pass (fast path)
 executant workflow.yaml               # run a workflow
 executant --ci workflow.yaml          # headless, NDJSON to stdout
 executant --step <name|n> wf.yaml     # run one step by name or index

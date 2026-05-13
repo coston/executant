@@ -229,16 +229,19 @@ The `executant plan` subcommand generates YAML task files from natural language 
 **Location**: `src/plan.ts`
 
 **Key components**:
-1. `parsePlanArgs()` - Parses CLI arguments (supports `-f file`, stdin, and direct string)
-2. `streamPlan()` - Async generator running the three-pass pipeline, yielding `PlanEvent`s to the TUI
-3. `findProjectRoot()` - Walks up the directory tree to find `.claude/executant.local/tasks`
+1. `parsePlanArgs()` - Parses CLI arguments (supports `-f file`, `-q`/`--fast`, stdin, and direct string)
+2. `streamPlan()` - Async generator running the pipeline, yielding `PlanEvent`s to the TUI
+3. `isSimpleRequest()` - Heuristic that detects self-contained requests (repetition patterns, forEach) to skip research
+4. `findProjectRoot()` - Walks up the directory tree to find `.claude/executant.local/tasks`
 
 **Flags:**
 - `-f, --file <path>` - Read prompt from specified file
+- `-q, --fast` - Skip codebase research (auto-detected for simple tasks)
 - `-h, --help` - Show help message with examples
 
 ### Generation Process
 
+**Full path (3 passes)** — when codebase exploration is needed:
 1. Parse arguments (string, `-f file`, or stdin)
 2. Find project root via `findProjectRoot()`
 3. Generate timestamped filename
@@ -246,6 +249,11 @@ The `executant plan` subcommand generates YAML task files from natural language 
 5. **Pass 2 — Decompose** (`plan-decompose.txt`): Claude converts the plan document to a structured JSON workflow (retries up to 3×)
 6. **Pass 3 — Validate** (`plan-judge.txt`): LLM-as-judge evaluates verification steps, atomicity, goal coverage; rejects drive Pass 2 retries
 7. Validate JSON output via Zod schema, convert to YAML, write to `tasks/todo/`
+
+**Fast path (2 passes)** — when `--fast` is set or `isSimpleRequest()` returns true:
+- Skips Pass 1 entirely; passes a "no research" placeholder to Pass 2
+- `isSimpleRequest()` detects: repetition (`N times`, `N iterations`, `N passes`) and `for each` patterns
+- Reduces plan generation from ~20 min to ~30 sec for self-contained requests
 
 ### Error Handling
 
