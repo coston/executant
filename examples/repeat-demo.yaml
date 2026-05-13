@@ -1,0 +1,19 @@
+goal: "Demonstrate repeat — run a step N times"
+
+steps:
+  - name: warm up
+    type: script
+    command: echo "Starting repeated task"
+
+  - name: iterative review
+    repeat: 5
+    prompt: |
+      This is iteration {{item}} of 5.
+      Read src/runner.ts and look for any edge case not covered by tests.
+      If you find one, add a test. If not, report "all clear".
+
+  - name: stress test
+    repeat: 3
+    type: script
+    command: echo "Run {{item}} of 3" && npm test
+    continue_on_error: true

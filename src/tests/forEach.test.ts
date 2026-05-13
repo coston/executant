@@ -327,3 +327,137 @@ steps:
     assert.ok(state.tasks[1].iteration !== undefined);
   });
 });
+
+// ----------------------------------------------------------------------------
+// repeat field: load-workflow and runner
+// ----------------------------------------------------------------------------
+
+describe('repeat field — loadWorkflow', () => {
+  test('repeat: 3 compiles to ForEachTask with forEach ["1","2","3"]', () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    repeat: 3
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+
+    assert.equal(task.type, 'forEach');
+    assert.deepEqual(task.forEach, ['1', '2', '3']);
+    assert.equal(task.inner.type, 'command');
+    assert.equal((task.inner as { command: string }).command, 'echo "{{item}}"');
+  });
+
+  test('repeat: 1 produces a ForEachTask with a single-element array', () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: once
+    repeat: 1
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+
+    assert.equal(task.type, 'forEach');
+    assert.deepEqual(task.forEach, ['1']);
+  });
+
+  test('repeat with prompt step creates claude inner task', () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: audit
+    repeat: 5
+    prompt: |
+      This is pass {{item}} of 5.
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+
+    assert.equal(task.inner.type, 'claude');
+    assert.ok((task.inner as { prompt: string }).prompt.includes('{{item}}'));
+  });
+
+  test('repeat and forEach on the same step throws a validation error', () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: bad
+    repeat: 3
+    forEach: [a, b, c]
+    command: echo "{{item}}"
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      (err: Error) => {
+        assert.ok(err.message.includes('cannot have both repeat and forEach'));
+        return true;
+      },
+    );
+  });
+
+  test('repeat: 0 fails Zod validation (must be positive)', () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: zero
+    repeat: 0
+    command: echo "{{item}}"
+`);
+    assert.throws(() => loadWorkflow(file));
+  });
+
+  test('repeat with negative number fails Zod validation', () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: neg
+    repeat: -1
+    command: echo "{{item}}"
+`);
+    assert.throws(() => loadWorkflow(file));
+  });
+});
+
+describe('repeat field — runner events', () => {
+  test('emits correct step:iteration events with numeric items', async () => {
+    const wf = loadWorkflow(tmpYaml(`
+goal: test
+steps:
+  - name: count
+    repeat: 3
+    command: echo "{{item}}"
+`));
+    const events = await collectEvents(wf);
+    const iterations = events.filter(
+      (e): e is StepIterationEvent => e.type === 'step:iteration',
+    );
+
+    assert.equal(iterations.length, 3);
+    assert.deepEqual(iterations.map((e) => e.item), ['1', '2', '3']);
+    assert.deepEqual(iterations.map((e) => e.iteration), [1, 2, 3]);
+    assert.deepEqual(iterations.map((e) => e.total), [3, 3, 3]);
+  });
+
+  test('{{item}} substitution produces iteration numbers in command output', async () => {
+    const wf = loadWorkflow(tmpYaml(`
+goal: test
+steps:
+  - name: stamp
+    repeat: 3
+    command: printf "pass:%s\\n" "{{item}}"
+`));
+    const events = await collectEvents(wf);
+    const textLines = events
+      .filter((e): e is { type: 'output:text'; index: number; text: string } => e.type === 'output:text')
+      .map((e) => e.text.trim())
+      .filter(Boolean);
+
+    assert.ok(textLines.some((l) => l.includes('pass:1')));
+    assert.ok(textLines.some((l) => l.includes('pass:2')));
+    assert.ok(textLines.some((l) => l.includes('pass:3')));
+  });
+});

@@ -80,6 +80,16 @@ steps:
     command: npx eslint src/{{item}}
 ```
 
+Use `repeat: N` as shorthand when there is no meaningful list — just a count. `{{item}}` is the 1-based iteration number:
+
+```yaml
+steps:
+  - name: iterative audit
+    repeat: 5
+    prompt: |
+      This is pass {{item}} of 5. Review src/runner.ts for untested edge cases.
+```
+
 ## Quality Controls
 
 - **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
@@ -97,6 +107,7 @@ steps:
 | `judge-demo.yaml` | LLM-as-judge retry loop |
 | `logging-demo.yaml` | Log steps, self-healing, judge |
 | `git-status-summary.yaml` | Real-world git workflow |
+| `repeat-demo.yaml` | Running a step N times with `repeat` |
 
 See the [`examples/`](examples/) directory.
 

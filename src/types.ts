@@ -291,6 +291,8 @@ export interface RawStep {
   allowed_tools?: string[];
   /** Inline list or shell command whose newline-split output provides items. */
   forEach?: string[] | string;
+  /** When set, runs the step N times sequentially. Compiles to ForEachTask at load time. Mutually exclusive with forEach. */
+  repeat?: number;
   /**
    * List of var names whose values are file paths. The file contents are
    * prepended to the prompt when the step runs.

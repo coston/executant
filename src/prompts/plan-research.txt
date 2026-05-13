@@ -26,6 +26,9 @@ document for the task described at the bottom of this prompt.
 3. **Plan the approach** — Order the work logically, identify dependencies between steps
 4. **Find verification commands** — Locate lint, test, and build commands in package.json,
    Makefile, pyproject.toml, or similar config files
+5. **Detect repetition intent** — If the task description says "do X N times", "repeat N times",
+   "run N iterations", or similar, note this explicitly in the Step Breakdown section so Pass 2
+   emits a `repeat: N` step rather than N separate steps.
 
 ## Required Output Sections
 
@@ -75,6 +78,7 @@ Anything the step decomposer needs to know:
 - Environment dependencies or assumptions
 - Cross-step data flow (does one step's output feed the next?)
 - Steps that are safe to skip if they fail (`continue_on_error`)
+- Repetition intent: if the description uses "N times" or "N iterations", flag it here so the decomposer uses `repeat: N`
 
 ---
 

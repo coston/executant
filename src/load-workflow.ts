@@ -34,6 +34,7 @@ const RawStepSchema = z.object({
   llm_as_judge: z.boolean().optional(),
   allowed_tools: z.array(z.string()).optional(),
   forEach: z.union([z.array(z.string()), z.string()]).optional(),
+  repeat: z.number().int().positive().optional(),
   context: z.array(z.string()).optional(),
 });
 
@@ -87,6 +88,20 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
   // NOTE: substituteVars is called inside convertInnerStep, which means only
   // workflow vars are substituted. {{item}} is intentionally left as-is here
   // because it is a runtime placeholder resolved by the runner per iteration.
+  if (step.repeat !== undefined && step.forEach !== undefined) {
+    throw new Error(`Step "${name}" cannot have both repeat and forEach`);
+  }
+  if (step.repeat !== undefined) {
+    const items = Array.from({ length: step.repeat }, (_, i) => String(i + 1));
+    const { repeat: _, ...innerStep } = step;
+    return {
+      type: 'forEach',
+      name,
+      continueOnError,
+      forEach: items,
+      inner: convertInnerStep(innerStep, vars, name, continueOnError),
+    } satisfies ForEachTask;
+  }
   if (step.forEach !== undefined) {
     const { forEach: _, ...innerStep } = step;
     return {

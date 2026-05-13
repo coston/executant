@@ -51,6 +51,11 @@ Complete structure with all available options:
       "name": "foreach_prompt_step",
       "forEach": "git diff --name-only HEAD~1",
       "prompt": "Review {{item}} for issues and suggest improvements."
+    },
+    {
+      "name": "repeated_audit",
+      "repeat": 20,
+      "prompt": "Review the codebase for issues. This is pass {{item}} of 20."
     }
   ]
 }
@@ -63,6 +68,7 @@ Optional step fields (can be combined):
 - `continue_on_error: true` — Allow failures without stopping (script steps only)
 - `output: "var_name"` — Capture script step stdout to the file path named by this var
 - `context: ["var_name"]` — Inject file contents into a prompt step (prepended before the prompt text)
+- `repeat: N` — Run this step N times sequentially (mutually exclusive with forEach). {{item}} is the 1-based iteration number.
 
 **Variable substitution**: Use `{{var_name}}` in any `prompt` or `command` to insert the variable's value.
 
@@ -113,6 +119,12 @@ If yes, extract it to `vars` and replace with `{{var_name}}`.
 - `{{item}}` in `command`, `prompt`, and `name` is replaced per iteration
 
 **REQUIRED: Always use `forEach` instead of enumerating items inline in a prompt.**
+
+**Use `repeat: N` when:**
+- The user asks to run the same prompt or command multiple times ("do this 20 times", "repeat 5 times", "run N iterations")
+- The step is identical each time — only the iteration number ({{item}}) differs
+- Prefer `repeat` over `forEach` when there is no meaningful list of items — just a count
+- NEVER expand "do X N times" into N separate steps — always use `repeat: N`
 
 ## Atomicity (MANDATORY)
 
