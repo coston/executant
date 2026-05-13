@@ -12,7 +12,7 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, chmodSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { findProjectRoot, findGitRoot, parsePlanArgs, streamPlan } from '../plan.js';
+import { findProjectRoot, findGitRoot, parsePlanArgs, streamPlan, isSimpleRequest } from '../plan.js';
 import type { PlanArgs } from '../plan.js';
 import { slugify, extractJsonObject as extractJson } from '../lib/utils.js';
 import type { PlanEvent } from '../ui/PlanApp.js';
@@ -271,6 +271,76 @@ describe('parsePlanArgs — argument errors', () => {
 });
 
 // ----------------------------------------------------------------------------
+// isSimpleRequest
+// ----------------------------------------------------------------------------
+
+describe('isSimpleRequest', () => {
+  test('detects "N times" pattern', () => {
+    assert.ok(isSimpleRequest('repeat the following prompt 20 times: check the file'));
+  });
+
+  test('detects "N iterations" pattern', () => {
+    assert.ok(isSimpleRequest('run 5 iterations of the review prompt'));
+  });
+
+  test('detects "N passes" pattern', () => {
+    assert.ok(isSimpleRequest('do 3 passes over the document'));
+  });
+
+  test('detects "for each" pattern', () => {
+    assert.ok(isSimpleRequest('for each file in the list, run the linter'));
+  });
+
+  test('returns false for typical codebase tasks', () => {
+    assert.ok(!isSimpleRequest('add user authentication to the app'));
+    assert.ok(!isSimpleRequest('refactor the database layer'));
+    assert.ok(!isSimpleRequest('fix the bug in the login flow'));
+  });
+});
+
+// ----------------------------------------------------------------------------
+// parsePlanArgs — --fast / -q flags
+// ----------------------------------------------------------------------------
+
+describe('parsePlanArgs — fast flag', () => {
+  let originalExit: typeof process.exit;
+
+  beforeEach(() => {
+    originalExit = process.exit;
+    (process as NodeJS.Process).exit = ((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as typeof process.exit;
+  });
+
+  afterEach(() => {
+    process.exit = originalExit;
+  });
+
+  test('--fast flag sets fast: true', () => {
+    const args = parsePlanArgs(['--fast', 'do something']);
+    assert.equal(args.fast, true);
+    assert.equal(args.description, 'do something');
+  });
+
+  test('-q flag sets fast: true', () => {
+    const args = parsePlanArgs(['-q', 'do something']);
+    assert.equal(args.fast, true);
+    assert.equal(args.description, 'do something');
+  });
+
+  test('fast is false by default', () => {
+    const args = parsePlanArgs(['do something']);
+    assert.equal(args.fast, false);
+  });
+
+  test('--fast can appear after the description tokens', () => {
+    const args = parsePlanArgs(['do', 'something', '--fast']);
+    assert.equal(args.fast, true);
+    assert.equal(args.description, 'do something');
+  });
+});
+
+// ----------------------------------------------------------------------------
 // findGitRoot
 // ----------------------------------------------------------------------------
 
@@ -438,11 +508,13 @@ describe('streamPlan', () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  function makePlanArgs(slug = 'test-task'): PlanArgs {
+  function makePlanArgs(slug = 'test-task', opts: Partial<PlanArgs> = {}): PlanArgs {
     return {
       description: `add ${slug.replace(/-/g, ' ')}`,
       taskFile: join(tmpRoot, 'todo', `20260503-000000-${slug}.yaml`),
       todoDir: join(tmpRoot, 'todo'),
+      fast: false,
+      ...opts,
     };
   }
 
@@ -604,6 +676,43 @@ describe('streamPlan', () => {
     );
     assert.ok(warnEvent, 'Expected a plan:warn event about judge rejection');
     assert.ok(warnEvent!.message.length > 0, 'Warn message must be non-empty');
+  });
+
+  test('fast path: only 2 invocations (decompose + judge), no research pass', async () => {
+    const { counterFile } = installPlanMock([
+      { structured: VALID_WORKFLOW, text: 'Decomposing…' }, // Pass 1 (decompose)
+      { text: JUDGE_PASS },                                 // Pass 2 (judge)
+    ]);
+
+    const args = makePlanArgs('fast-repeat', { fast: true, description: 'repeat the task 10 times' });
+    const events = await collectPlanEvents(args);
+
+    assert.equal(readFileSync(counterFile, 'utf8').trim(), '2', 'Expected exactly 2 Claude invocations for fast path');
+
+    assert.ok(existsSync(args.taskFile), 'Expected YAML file to be written');
+    assert.ok(events.some((e) => e.type === 'plan:complete'), 'Expected plan:complete event');
+    assert.ok(!events.some((e) => e.type === 'plan:error'), 'Expected no plan:error event');
+
+    const stages = stageEvents(events);
+    assert.equal(stages.length, 2, 'Expected exactly 2 stage events in fast path');
+    assert.equal(stages[0]!.name, 'Decompose to Steps');
+    assert.equal(stages[1]!.name, 'Validate');
+  });
+
+  test('auto-detects simple request and uses fast path', async () => {
+    const { counterFile } = installPlanMock([
+      { structured: VALID_WORKFLOW },  // decompose (no research)
+      { text: JUDGE_PASS },            // judge
+    ]);
+
+    const args = makePlanArgs('auto-simple', {
+      fast: false,
+      description: 'repeat the following prompt 20 times: check the file',
+    });
+    const events = await collectPlanEvents(args);
+
+    assert.equal(readFileSync(counterFile, 'utf8').trim(), '2', 'Expected 2 invocations: auto-detected simple request skips research');
+    assert.ok(events.some((e) => e.type === 'plan:complete'), 'Expected plan:complete event');
   });
 
   test('three consecutive decompose failures: yields plan:error and writes no file', async () => {

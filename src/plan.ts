@@ -93,18 +93,33 @@ export interface PlanArgs {
   description: string;
   taskFile: string;
   todoDir: string;
+  fast: boolean;
+}
+
+export function isSimpleRequest(description: string): boolean {
+  if (/\b\d+\s+(times|iterations?|passes)\b/i.test(description)) return true;
+  if (/\bfor\s+each\b/i.test(description)) return true;
+  return false;
 }
 
 export function parsePlanArgs(rawArgs: string[]): PlanArgs {
   let description = '';
+  let fast = false;
 
-  if (rawArgs[0] === '-h' || rawArgs[0] === '--help') {
+  // Filter out fast flags before other processing
+  const args = rawArgs.filter((a) => {
+    if (a === '-q' || a === '--fast') { fast = true; return false; }
+    return true;
+  });
+
+  if (args[0] === '-h' || args[0] === '--help') {
     console.log(`Usage: executant plan [OPTIONS] [DESCRIPTION]
 
 Generate a task plan from a description.
 
 Options:
   -f, --file <path>    Read prompt from file
+  -q, --fast           Skip codebase research (auto-detected for simple tasks)
   -h, --help           Show this help message
 
 Examples:
@@ -114,8 +129,8 @@ Examples:
     process.exit(0);
   }
 
-  if (rawArgs[0] === '-f' || rawArgs[0] === '--file') {
-    const filePath = rawArgs[1];
+  if (args[0] === '-f' || args[0] === '--file') {
+    const filePath = args[1];
     if (!filePath) {
       console.error('Error: -f/--file requires a file path argument');
       process.exit(1);
@@ -130,8 +145,8 @@ Examples:
       console.error(`Error: Cannot read file: ${filePath}`);
       process.exit(1);
     }
-  } else if (rawArgs.length > 0) {
-    description = rawArgs.join(' ').trim();
+  } else if (args.length > 0) {
+    description = args.join(' ').trim();
   } else if (!process.stdin.isTTY) {
     try {
       description = readFileSync('/dev/stdin', 'utf8').trim();
@@ -162,7 +177,7 @@ Examples:
   const ts = timestamp();
   const taskFile = join(todoDir, `${ts}-${slug}.yaml`);
 
-  return { description, taskFile, todoDir };
+  return { description, taskFile, todoDir, fast };
 }
 
 // ---------------------------------------------------------------------------
@@ -195,51 +210,67 @@ async function runPass3Judge(
 // ---------------------------------------------------------------------------
 
 /**
- * Runs a three-pass pipeline to generate a plan:
- *   Pass 1 — Research & Planning: Claude explores the codebase, produces a plan document
- *   Pass 2 — Decompose to Steps: Claude converts the plan to an atomic JSON workflow
- *   Pass 3 — Validate: LLM-as-judge checks verification steps, atomicity, and goal coverage
+ * Runs a plan generation pipeline:
+ *   Fast path (2 passes) — when the request is self-contained or --fast is set:
+ *     Pass 1 — Decompose to Steps, Pass 2 — Validate
+ *   Full path (3 passes) — when codebase research is needed:
+ *     Pass 1 — Research & Planning, Pass 2 — Decompose to Steps, Pass 3 — Validate
  */
 export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
   const { description, taskFile } = args;
+  const skipResearch = args.fast || isSimpleRequest(description);
+
   yield { type: 'plan:start', description };
-  yield { type: 'plan:stages', names: ['Research & Planning', 'Decompose to Steps', 'Validate'] };
 
-  // --- Pass 1: Research & Planning ---
-  yield { type: 'plan:stage', stage: 1, total: TOTAL_PLAN_STAGES, name: 'Research & Planning' };
+  let researchDoc: string;
 
-  const researchLines: string[] = [];
-  try {
-    const researchTask: ClaudeTask = {
-      type: 'claude',
-      name: 'plan:research',
-      prompt: PLAN_RESEARCH_PROMPT.replace('{{DESCRIPTION}}', description),
-      allowedTools: ['Read', 'Glob', 'Grep'],
-      permissionMode: 'bypassPermissions',
-      model: 'opus',
-    };
-    for await (const event of runClaude(researchTask)) {
-      if (event.type === 'output:tool') {
-        yield { type: 'plan:tool', tool: event.tool, input: event.input };
-      } else if (event.type === 'output:text') {
-        researchLines.push(event.text);
-        yield { type: 'plan:text', text: event.text };
+  if (skipResearch) {
+    yield { type: 'plan:stages', names: ['Decompose to Steps', 'Validate'] };
+    researchDoc = 'No codebase research performed — the task is self-contained. Work directly from the user\'s original goal.';
+  } else {
+    yield { type: 'plan:stages', names: ['Research & Planning', 'Decompose to Steps', 'Validate'] };
+
+    // --- Pass 1: Research & Planning ---
+    yield { type: 'plan:stage', stage: 1, total: TOTAL_PLAN_STAGES, name: 'Research & Planning' };
+
+    const researchLines: string[] = [];
+    try {
+      const researchTask: ClaudeTask = {
+        type: 'claude',
+        name: 'plan:research',
+        prompt: PLAN_RESEARCH_PROMPT.replace('{{DESCRIPTION}}', description),
+        allowedTools: ['Read', 'Glob', 'Grep'],
+        permissionMode: 'bypassPermissions',
+        model: 'opus',
+      };
+      for await (const event of runClaude(researchTask)) {
+        if (event.type === 'output:tool') {
+          yield { type: 'plan:tool', tool: event.tool, input: event.input };
+        } else if (event.type === 'output:text') {
+          researchLines.push(event.text);
+          yield { type: 'plan:text', text: event.text };
+        }
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield { type: 'plan:error', message: `Research pass failed: ${msg}` };
+      return;
     }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    yield { type: 'plan:error', message: `Research pass failed: ${msg}` };
-    return;
+
+    researchDoc = researchLines.join('\n');
+    if (!researchDoc.trim()) {
+      yield { type: 'plan:error', message: 'Research pass produced no output — cannot decompose' };
+      return;
+    }
   }
 
-  const researchDoc = researchLines.join('\n');
-  if (!researchDoc.trim()) {
-    yield { type: 'plan:error', message: 'Research pass produced no output — cannot decompose' };
-    return;
-  }
+  // Stage index offset: 1 when research was skipped, 2 when research ran
+  const decomposeStage = skipResearch ? 1 : 2;
+  const validateStage = skipResearch ? 2 : 3;
+  const totalStages = skipResearch ? 2 : TOTAL_PLAN_STAGES;
 
-  // --- Pass 2: Decompose to Steps (with retries) ---
-  yield { type: 'plan:stage', stage: 2, total: TOTAL_PLAN_STAGES, name: 'Decompose to Steps' };
+  // --- Pass 2 (or 1 in fast mode): Decompose to Steps (with retries) ---
+  yield { type: 'plan:stage', stage: decomposeStage, total: totalStages, name: 'Decompose to Steps' };
 
   let retryPrefix = '';
 
@@ -251,8 +282,8 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         maxAttempts: MAX_PLAN_RETRIES,
         reason: retryPrefix.replace(/\n/g, ' '),
       };
-      // Re-emit stage 2 so the TUI reflects the retry (judge rejection re-enters decompose)
-      yield { type: 'plan:stage', stage: 2, total: TOTAL_PLAN_STAGES, name: 'Decompose to Steps' };
+      // Re-emit decompose stage so the TUI reflects the retry (judge rejection re-enters decompose)
+      yield { type: 'plan:stage', stage: decomposeStage, total: totalStages, name: 'Decompose to Steps' };
     }
 
     const basePrompt = PLAN_DECOMPOSE_PROMPT
@@ -317,8 +348,8 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
       continue;
     }
 
-    // --- Pass 3: Validate ---
-    yield { type: 'plan:stage', stage: 3, total: TOTAL_PLAN_STAGES, name: 'Validate' };
+    // --- Pass 3 (or 2 in fast mode): Validate ---
+    yield { type: 'plan:stage', stage: validateStage, total: totalStages, name: 'Validate' };
 
     const judgeResult = await runPass3Judge(description, zodResult.data);
 
