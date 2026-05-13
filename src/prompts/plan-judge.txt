@@ -59,6 +59,13 @@ Are all file paths declared in `vars`?
 - Do any `prompt` or `command` fields contain hardcoded file paths or directory paths?
 - Hardcoded paths in steps (not in `vars`) are a violation
 
+### 5. Repeat Misuse (if applicable)
+If the user's goal mentions "N times", "repeat N", "N iterations", or "N passes":
+
+- Does any step use `forEach` with a sequential numeric array like `["1","2","3","4","5"]`?
+- This is always wrong — `repeat: N` must be used instead of a numeric forEach array
+- Reject and require the offending step be converted to `repeat: N`
+
 ## Output Format
 
 Respond with ONLY a JSON object in this exact shape:

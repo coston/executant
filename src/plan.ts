@@ -209,6 +209,28 @@ async function runPass3Judge(
 // Streaming plan generation — async generator yielding PlanEvents
 // ---------------------------------------------------------------------------
 
+/** Returns true when arr is exactly ["1","2",..."N"] — a numeric count disguised as a list. */
+function isNumericSequence(arr: (string | unknown)[]): arr is string[] {
+  return arr.every((item, i) => item === String(i + 1));
+}
+
+/**
+ * Fixes common model mistakes before writing YAML:
+ * - forEach: ["1","2","3"] → repeat: 3  (model should have used repeat but didn't)
+ */
+export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.infer<typeof WorkflowSchema> {
+  return {
+    ...workflow,
+    steps: workflow.steps.map((step) => {
+      if (Array.isArray(step.forEach) && isNumericSequence(step.forEach)) {
+        const { forEach, ...rest } = step;
+        return { ...rest, repeat: (forEach as string[]).length };
+      }
+      return step;
+    }),
+  };
+}
+
 /**
  * Runs a plan generation pipeline:
  *   Fast path (2 passes) — when the request is self-contained or --fast is set:
@@ -369,7 +391,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     }
 
     // All passes succeeded (or judge override on final attempt) — write YAML
-    const { goal, vars, steps, ...rest } = zodResult.data;
+    const { goal, vars, steps, ...rest } = normalizeWorkflow(zodResult.data);
     const ordered = { goal, ...(vars && { vars }), steps, ...rest };
 
     const yamlContent = dumpYaml(ordered, {

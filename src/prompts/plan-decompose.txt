@@ -97,6 +97,11 @@ Before finalising your JSON, scan every `prompt` and `command` field you wrote.
 For each field, ask: "Does this contain a file path or directory path as a string literal?"
 If yes, extract it to `vars` and replace with `{{var_name}}`.
 
+**Pre-Output Self-Review — Repeat (MANDATORY):**
+Scan every `forEach` field you wrote.
+Ask: "Is this array just sequential numbers like `["1","2","3"]` with no meaningful items?"
+If yes, replace the entire `forEach` with `repeat: N` where N is the count. Sequential-number forEach arrays are ALWAYS wrong — they are a misuse of forEach and must be converted to `repeat: N`.
+
 ## When to Use Each Step Type
 
 **Use `prompt` steps (AI-assisted) for:**

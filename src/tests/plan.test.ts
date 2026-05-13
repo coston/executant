@@ -12,7 +12,7 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, chmodSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { findProjectRoot, findGitRoot, parsePlanArgs, streamPlan, isSimpleRequest } from '../plan.js';
+import { findProjectRoot, findGitRoot, parsePlanArgs, streamPlan, isSimpleRequest, normalizeWorkflow } from '../plan.js';
 import type { PlanArgs } from '../plan.js';
 import { slugify, extractJsonObject as extractJson } from '../lib/utils.js';
 import type { PlanEvent } from '../ui/PlanApp.js';
@@ -295,6 +295,61 @@ describe('isSimpleRequest', () => {
     assert.ok(!isSimpleRequest('add user authentication to the app'));
     assert.ok(!isSimpleRequest('refactor the database layer'));
     assert.ok(!isSimpleRequest('fix the bug in the login flow'));
+  });
+});
+
+// ----------------------------------------------------------------------------
+// normalizeWorkflow — forEach numeric array → repeat
+// ----------------------------------------------------------------------------
+
+describe('normalizeWorkflow', () => {
+  const base = { goal: 'test', steps: [] };
+
+  test('converts forEach numeric sequence to repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: ['1', '2', '3', '4', '5'] as string[] }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 5);
+    assert.ok(!('forEach' in result.steps[0]!), 'forEach should be removed');
+  });
+
+  test('does not convert forEach with meaningful string items', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: ['foo.ts', 'bar.ts'] as string[] }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.deepEqual((result.steps[0] as { forEach?: unknown }).forEach, ['foo.ts', 'bar.ts']);
+    assert.ok(!('repeat' in result.steps[0]!));
+  });
+
+  test('does not convert forEach shell command string', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: 'git diff --name-only HEAD~1' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { forEach?: unknown }).forEach, 'git diff --name-only HEAD~1');
+  });
+
+  test('handles single-item numeric forEach', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: ['1'] as string[] }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 1);
+  });
+
+  test('leaves steps without forEach unchanged', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing' }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.deepEqual(result.steps[0], { name: 'step', prompt: 'do thing' });
   });
 });
 
