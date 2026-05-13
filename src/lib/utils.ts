@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'prompts');
+// In dev: __dir = src/lib  → prompts are at src/prompts  (go up one)
+// Bundled: __dir = dist     → prompts are at dist/prompts (stay)
+const __dir = dirname(fileURLToPath(import.meta.url));
+const PROMPTS_DIR = basename(__dir) === 'lib'
+  ? join(__dir, '..', 'prompts')
+  : join(__dir, 'prompts');
 
 /** Strips the leading `# comment block` documentation header from a prompt file. */
 export function stripPromptHeader(raw: string): string {
