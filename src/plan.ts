@@ -46,6 +46,7 @@ const StepSchema = z.object({
   llm_as_judge: z.boolean().optional(),
   allowed_tools: z.array(z.string()).optional(),
   forEach: z.union([z.array(z.string()), z.string()]).optional(),
+  repeat: z.number().int().positive().optional(),
   context: z.array(z.string()).optional(),
 });
 
