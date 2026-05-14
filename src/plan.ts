@@ -215,6 +215,18 @@ function isNumericSequence(arr: (string | unknown)[]): arr is string[] {
 }
 
 /**
+ * Returns N if arr is a labeled sequential list like ["pass 1","pass 2","pass 3"].
+ * Detects any pattern where items share a common prefix followed by sequential integers.
+ */
+function isLabeledSequence(arr: string[]): number | null {
+  if (arr.length < 2) return null;
+  const m = arr[0]!.match(/^(.+\s)(\d+)$/);
+  if (!m) return null;
+  const prefix = m[1]!;
+  return arr.every((item, i) => item === `${prefix}${i + 1}`) ? arr.length : null;
+}
+
+/**
  * Extracts N from seq shell patterns the model sometimes generates instead of repeat:
  *   "seq N"    → N   (shorthand: generates 1..N)
  *   "seq 1 N"  → N   (explicit range starting at 1)
@@ -244,10 +256,16 @@ function extractCountFromName(name: string): number | null {
  */
 export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.infer<typeof WorkflowSchema> {
   const steps = workflow.steps.map((step) => {
-    // Case 1: forEach is a numeric array ["1","2","3"]
-    if (Array.isArray(step.forEach) && isNumericSequence(step.forEach)) {
-      const { forEach, ...rest } = step;
-      return { ...rest, repeat: (forEach as string[]).length };
+    // Case 1a: forEach is a numeric array ["1","2","3"]
+    // Case 1b: forEach is a labeled sequence ["pass 1","pass 2","pass 3"]
+    if (Array.isArray(step.forEach)) {
+      const arr = step.forEach as string[];
+      const isNumeric = isNumericSequence(arr);
+      const labeledN = !isNumeric ? isLabeledSequence(arr) : null;
+      if (isNumeric || labeledN !== null) {
+        const { forEach, ...rest } = step;
+        return { ...rest, repeat: isNumeric ? arr.length : labeledN! };
+      }
     }
     // Case 2: forEach is a "seq N" or "seq 1 N" shell command
     if (typeof step.forEach === 'string') {

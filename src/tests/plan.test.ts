@@ -325,6 +325,34 @@ describe('normalizeWorkflow', () => {
     assert.ok(!('forEach' in result.steps[0]!));
   });
 
+  test('converts labeled sequential forEach ["pass 1","pass 2","pass 3"] to repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing {{item}}', forEach: ['pass 1', 'pass 2', 'pass 3', 'pass 4'] as string[] }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 4);
+    assert.ok(!('forEach' in result.steps[0]!));
+  });
+
+  test('converts labeled sequential forEach ["iteration 1","iteration 2"] to repeat', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: ['iteration 1', 'iteration 2', 'iteration 3'] as string[] }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.equal((result.steps[0] as { repeat?: number }).repeat, 3);
+  });
+
+  test('does not convert forEach with non-sequential labeled items', () => {
+    const workflow = {
+      ...base,
+      steps: [{ name: 'step', prompt: 'do thing', forEach: ['pass 1', 'pass 3'] as string[] }],
+    };
+    const result = normalizeWorkflow(workflow);
+    assert.deepEqual((result.steps[0] as { forEach?: unknown }).forEach, ['pass 1', 'pass 3']);
+  });
+
   test('converts forEach "seq N" shorthand (no start arg) to repeat', () => {
     const workflow = {
       ...base,
