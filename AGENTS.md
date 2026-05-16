@@ -72,7 +72,25 @@ src/
 │   ├── judge-evaluation.txt     # LLM-as-judge evaluation prompt
 │   ├── self-healing-fix.txt     # Self-healing error analysis prompt
 │   └── retrospective-analysis.txt  # Self-improvement analysis prompt
+├── eval/                 # Internal eval dev tooling (npm run eval)
+│   ├── index.ts          # CLI entry: arg parsing, orchestration
+│   ├── types.ts          # EvalFile, TestCase, CriterionResult, EvalRun
+│   ├── load.ts           # YAML → EvalFile (Zod validation, fixture resolution)
+│   ├── runner.ts         # runPrompt(): substitute vars, run Claude, return text
+│   ├── judge.ts          # judgeOutput(): score output against a criterion
+│   ├── refine.ts         # refinePrompt(): rewrite template to fix failures
+│   ├── report.ts         # Terminal output: pass/fail table with reasons
+│   └── prompts/          # Eval-specific prompt templates
+│       ├── criterion-judge.txt   # Judge: output × criterion → {pass, reason}
+│       └── prompt-refiner.txt    # Refiner: template × failures → improved template
 └── plan.ts               # `executant plan` subcommand
+
+evals/                    # Eval test case definitions (run via npm run eval)
+├── plan-decompose.eval.yaml
+└── fixtures/             # Reusable input fixtures for test cases
+    ├── research-doc-simple.md
+    ├── research-doc-complex.md
+    └── research-doc-repeat.md
 ```
 
 #### Prompts (`src/prompts/*.txt`)
@@ -140,6 +158,64 @@ steps:
 ```
 
 `context` is a list of var names (not file paths directly). Each named var's value must be a file path in the `vars` section. The file contents are prepended to the prompt as labelled code fences before Claude runs. Throws at load time if a var name is missing from `vars`.
+
+## Eval System (Internal Dev Tooling)
+
+The eval system tests and refines executant's own prompt templates (`src/prompts/*.txt`). It is not a user-facing feature — run via `npm run eval` during development.
+
+### Eval YAML format (`evals/*.eval.yaml`)
+
+```yaml
+name: plan-decompose
+prompt: src/prompts/plan-decompose.txt   # template to test (relative to CWD)
+placeholders:
+  - DESCRIPTION                          # {{PLACEHOLDER}} names expected in template
+  - RESEARCH_DOC
+test_cases:
+  - id: simple-feature
+    vars:
+      DESCRIPTION: "add rate limiting to all API endpoints"
+      RESEARCH_DOC: fixtures/research-doc-simple.md  # path → file content is read
+    criteria:
+      - "Output is valid JSON with a 'goal' field and a 'steps' array"
+      - "No hardcoded file paths in any prompt or command field"
+      - "Includes at least one script step running tests or lint"
+```
+
+### Running evals
+
+```bash
+# Score all test cases, no changes to prompt files
+npm run eval -- evals/plan-decompose.eval.yaml
+
+# Refine the prompt until all cases pass (modifies src/prompts/plan-decompose.txt)
+npm run eval -- --refine evals/plan-decompose.eval.yaml
+
+# Cap refinement iterations
+npm run eval -- --refine --max-iter 3 evals/plan-decompose.eval.yaml
+```
+
+### How refinement works
+
+1. Run all test cases → score each criterion via Claude judge
+2. Collect failures (cases + failed criteria + reasons)
+3. Call refinement agent → rewrites prompt template to fix failures
+4. Save improved template to `src/prompts/<name>.txt`
+5. Re-run eval to verify improvement
+6. Repeat up to `--max-iter` times (default 5)
+
+### Adding a new eval
+
+1. Create `evals/your-prompt.eval.yaml` with test cases + criteria
+2. Add fixtures to `evals/fixtures/` if needed (realistic inputs for the prompt)
+3. Run `npm run eval evals/your-prompt.eval.yaml` to baseline
+
+### Key files
+
+- `src/eval/load.ts` — `loadEvalFile()`: Zod schema + fixture path resolution
+- `src/eval/runner.ts` — `runPrompt()`: substitute vars, run Claude with no tools
+- `src/eval/judge.ts` — `judgeOutput()`: score output against a single criterion
+- `src/eval/refine.ts` — `refinePrompt()`: rewrite template based on failures
 
 ## Common Commands
 

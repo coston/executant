@@ -264,7 +264,7 @@ export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.i
       const isNumeric = isNumericSequence(arr);
       const labeledN = !isNumeric ? isLabeledSequence(arr) : null;
       if (isNumeric || labeledN !== null) {
-        const { forEach, ...rest } = step;
+        const { forEach: _forEach, ...rest } = step;
         return { ...rest, repeat: isNumeric ? arr.length : labeledN! };
       }
     }
@@ -272,7 +272,7 @@ export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.i
     if (typeof step.forEach === 'string') {
       const n = parseSeqCommand(step.forEach);
       if (n !== null) {
-        const { forEach, ...rest } = step;
+        const { forEach: _forEach, ...rest } = step;
         return { ...rest, repeat: n };
       }
     }
@@ -312,7 +312,7 @@ function collapseSequentialSteps(steps: z.infer<typeof StepSchema>[]): z.infer<t
     while (i + n < steps.length && steps[i + n]!.name === `${prefix}_${n + 1}`) n++;
     if (n < 2) { result.push(step); i++; continue; }
     // Collapse: use first step as template, replace _1 suffix with _{{item}}
-    const { name, ...rest } = step;
+    const { name: _name, ...rest } = step;
     result.push({ ...rest, name: `${prefix}_{{item}}`, repeat: n });
     i += n;
   }

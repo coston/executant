@@ -93,14 +93,47 @@ or commands.
 `vars` MUST appear before `steps` in the JSON output.
 
 **Pre-Output Self-Review — Vars (MANDATORY):**
-Before finalising your JSON, scan every `prompt` and `command` field you wrote.
-For each field, ask: "Does this contain a file path or directory path as a string literal?"
-If yes, extract it to `vars` and replace with `{{var_name}}`.
+Before finalising your JSON, scan every `prompt` and `command` field you wrote — every sentence, every numbered instruction, every parenthetical.
+For each field, identify ALL occurrences of paths, including:
+- Direct path references (e.g., `src/middleware/rate-limit.ts`)
+- Paths mentioned in narrative context (e.g., "match the style of tests in `src/tests/`")
+- Relative import paths used as examples (e.g., `../models/User`, `./utils`)
+- Any string segment containing `/` that represents a file or directory location
+
+For EVERY path found in ANY context, extract it to `vars` and replace ALL occurrences with `{{var_name}}`. There are no exceptions — even paths used only as style references or examples must use `{{var_name}}`.
+
+**Pay special attention to `command` fields in script steps.** Short package/directory paths like `packages/api` or `packages/web` appearing in commands are paths and MUST be in `vars`.
+
+❌ WRONG — hardcoded directory path in a command:
+```json
+{"name": "test_api", "type": "script", "command": "cd packages/api && npm test"}
+```
+
+✅ CORRECT — directory path extracted to vars:
+```json
+{"name": "test_api", "type": "script", "command": "cd {{api_package}} && npm test"}
+```
+(with `"api_package": "packages/api"` declared in `vars`)
 
 **Pre-Output Self-Review — Repeat (MANDATORY):**
 Scan every `forEach` field you wrote.
 Ask: "Is this array just sequential numbers like `["1","2","3"]` with no meaningful items?"
 If yes, replace the entire `forEach` with `repeat: N` where N is the count. Sequential-number forEach arrays are ALWAYS wrong — they are a misuse of forEach and must be converted to `repeat: N`.
+
+**Pre-Output Self-Review — Verification (MANDATORY):**
+Before finalising your JSON, check your last steps.
+Ask: "Do my final steps include `"type": "script"` steps that run the lint, test, and/or build commands from the research document's Verification Plan?"
+If no, add them now. A `llm_as_judge: true` prompt step does NOT count as a verification step and does NOT replace them.
+Verification steps MUST be `"type": "script"` — not prompt steps.
+
+Example of correct verification steps at the end of `steps`:
+```json
+{"name": "lint", "type": "script", "command": "npm run lint"},
+{"name": "test", "type": "script", "command": "npm test"},
+{"name": "typecheck", "type": "script", "command": "npm run build"}
+```
+
+Use the EXACT commands from the research document. Only skip a category if the research document explicitly says "none found" for it.
 
 ## When to Use Each Step Type
 
@@ -133,7 +166,7 @@ If yes, replace the entire `forEach` with `repeat: N` where N is the count. Sequ
 
 ## Atomicity (MANDATORY)
 
-Each step must do ONE focused thing. If a step description contains "and" — split it.
+Each step must do ONE focused thing. If a step description contains "and" connecting two distinct actions — split it.
 
 ❌ WRONG — too many concerns in one step:
 ```json
@@ -146,6 +179,18 @@ Each step must do ONE focused thing. If a step description contains "and" — sp
   {"name": "implement", "llm_as_judge": true, "prompt": "Implement the feature."},
   {"name": "write_tests", "llm_as_judge": true, "prompt": "Write tests for the feature."}
 ]
+```
+
+This rule also applies within numbered sub-instructions inside a prompt. Each numbered instruction must describe a single action. If a numbered instruction uses "and" to connect two distinct actions, split it into two separate numbered instructions.
+
+❌ WRONG — "and" connects distinct actions inside a numbered instruction:
+```
+"1. Create and export the configured limiter as the default export"
+```
+
+✅ CORRECT — each numbered instruction is a single action:
+```
+"1. Create the configured limiter with the required options\n2. Export the limiter as the default export"
 ```
 
 Prefer 8 small, focused steps over 3 large, vague ones.
@@ -166,6 +211,8 @@ Required verification step order (include each that the research document confir
 Use the EXACT commands from the "Verification Plan" section of the research document.
 Do NOT invent commands. If the research document says "none found" for a category, skip it.
 
+**These steps MUST be `"type": "script"` steps.** A prompt step with `llm_as_judge: true` is not a verification step and does not satisfy this requirement.
+
 If the project has no verified lint/test/build commands, include at least one visual check
 prompt step as the final step (with `llm_as_judge: true`) to review the changes.
 
@@ -177,12 +224,12 @@ Generate a JSON object that:
 3. Names steps with descriptive snake_case identifiers (unique within the task)
 4. Structures prompts with numbered instructions for clarity (use \n for newlines)
 5. Decomposes to the smallest logical unit — one concern per step
-6. Ends with ALL verification steps confirmed in the research document
+6. Ends with ALL verification steps confirmed in the research document as `"type": "script"` steps
 7. Adds `llm_as_judge: true` to quality-critical implementation and writing steps
 8. Adds `self_healing: true` to script steps where auto-recovery is safe (opt-in, not default)
 9. Uses `continue_on_error: true` for non-critical script steps
 10. Uses `output:` + `context:` to pass script step results to downstream prompt steps
-11. Declares ALL file paths in `vars` — no hardcoded paths in prompts or commands
+11. Declares ALL file paths in `vars` — no hardcoded paths in prompts or commands, including paths in narrative or example context
 12. Places `vars` before `steps` in the JSON output
 
 ## Critical Rules
@@ -192,8 +239,8 @@ Generate a JSON object that:
 - Step names MUST be unique within the task
 - Prompt steps are default — only specify `"type": "script"` for script steps
 - `vars` MUST appear before `steps` in the output JSON
-- The final steps MUST be the verification steps (lint, test, build) from the research document
-- NEVER hardcode file paths in `prompt` or `command` fields
+- The final steps MUST be the verification steps (lint, test, build) from the research document, each as `"type": "script"`
+- NEVER hardcode file paths in `prompt` or `command` fields — this includes paths mentioned as style references, examples, or relative imports
 
 ## Output Format
 

@@ -85,6 +85,37 @@ Key event types in the union:
 
 Large text passed to Claude lives in `src/prompts/*.txt`. They use `{{PLACEHOLDER}}` substitution and are loaded with `readFileSync` at call time. The prompts directory is copied into `dist/` at bundle time.
 
+## Eval System (Internal Dev Tooling)
+
+The eval system tests and iteratively refines the prompt templates in `src/prompts/`. It is not user-facing — run via `npm run eval` during development.
+
+**`src/eval/index.ts`** — CLI entry point. Parses `--refine` and `--max-iter` flags, orchestrates the score → collect-failures → refine → re-score loop, and delegates rendering to `report.ts`.
+
+**`src/eval/load.ts`** — Parses `evals/*.eval.yaml` via Zod. Resolves fixture paths (values in `vars` that end in `.md` / `.txt` are read and substituted with file contents).
+
+**`src/eval/runner.ts`** — `runPrompt()`: substitutes `{{PLACEHOLDER}}` vars into a prompt template, calls Claude with no tools, and returns the raw text output.
+
+**`src/eval/judge.ts`** — `judgeOutput()`: takes a single output string and a criterion string, calls Claude with the criterion-judge prompt, and returns `{ pass: boolean, reason: string }`.
+
+**`src/eval/refine.ts`** — `refinePrompt()`: given the current template and a list of failures (case id + criterion + reason), calls Claude with the prompt-refiner prompt and returns a rewritten template.
+
+**`src/eval/report.ts`** — Terminal output: renders a per-case pass/fail table with criterion reasons.
+
+**`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
+
+**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents.
+
+### Refinement loop
+
+```
+score all cases
+   │
+   ├─ all pass? → done
+   │
+   └─ failures → refinePrompt() → overwrite src/prompts/<name>.txt → re-score
+                                                   (up to --max-iter, default 5)
+```
+
 ## Quality Control Features
 
 - **LLM-as-judge** (`llm_as_judge: true`) — after a step completes, a separate Claude call evaluates output quality. On `FAIL`, the step retries with feedback appended, up to 5 times.

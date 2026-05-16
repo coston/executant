@@ -1,0 +1,38 @@
+name: plan-decompose
+prompt: src/prompts/plan-decompose.txt
+placeholders:
+  - DESCRIPTION
+  - RESEARCH_DOC
+
+test_cases:
+  - id: simple-feature
+    vars:
+      DESCRIPTION: "add rate limiting to all API endpoints"
+      RESEARCH_DOC: fixtures/research-doc-simple.md
+    criteria:
+      - "Output is valid JSON with a 'goal' field and a 'steps' array"
+      - "No hardcoded file paths in any prompt or command field — all paths use {{var_name}} substitution"
+      - "Includes at least one script step whose command runs tests (npm test or similar)"
+      - "Includes at least one script step whose command runs lint or build"
+      - "vars block is present and appears before the steps block in the JSON"
+      - "Steps are atomic — no single step description includes 'and' connecting two distinct actions"
+
+  - id: repeat-pattern
+    vars:
+      DESCRIPTION: "run the codebase audit 10 times to surface flaky quality issues"
+      RESEARCH_DOC: fixtures/research-doc-repeat.md
+    criteria:
+      - "Output is valid JSON"
+      - "Uses repeat: 10 (not forEach with a numeric array like ['1','2',...,'10'])"
+      - "Does not expand into 10 separate named steps"
+
+  - id: complex-multi-package
+    vars:
+      DESCRIPTION: "add user profile pages with photo upload support"
+      RESEARCH_DOC: fixtures/research-doc-complex.md
+    criteria:
+      - "Output is valid JSON with a 'goal' field and a 'steps' array"
+      - "No hardcoded file paths in any prompt field — all file references use {{var_name}} substitution (workspace flags and package names in script command fields are acceptable)"
+      - "Includes verification script steps matching commands from the research doc"
+      - "vars block is present and all file paths in steps use {{var_name}} syntax"
+      - "Step count is 6 or more — complex task should not be collapsed into too few steps"

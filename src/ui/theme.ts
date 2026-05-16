@@ -32,5 +32,3 @@ export const theme = {
   warning:      hex('warning'),              // warnings, retries, updates
   border:       hex('border'),               // log pane border
 } as const;
-
-export type Theme = typeof theme;

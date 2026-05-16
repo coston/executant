@@ -129,3 +129,13 @@ executant --step <name|n> wf.yaml     # run one step by name or index
 executant --from-step <n> wf.yaml     # resume from step n
 executant update                      # upgrade to latest version
 ```
+
+## Development
+
+```bash
+npm test                                          # run tests
+npm run eval evals/plan-decompose.eval.yaml       # score prompt templates
+npm run eval -- --refine evals/plan-decompose.eval.yaml  # refine until all cases pass
+```
+
+The eval system tests and iteratively refines the prompt templates in `src/prompts/`. Eval definitions live in `evals/*.eval.yaml`; see `AGENTS.md` for the full format.
