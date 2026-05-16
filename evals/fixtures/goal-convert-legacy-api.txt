@@ -1,0 +1,1 @@
+Convert the legacy REST API endpoints to use async/await and add error handling

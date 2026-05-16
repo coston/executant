@@ -86,11 +86,29 @@ src/
 └── plan.ts               # `executant plan` subcommand
 
 evals/                    # Eval test case definitions (run via npm run eval)
-├── plan-decompose.eval.yaml
+├── plan-decompose.eval.yaml          # plan-decompose.txt (Pass 2)
+├── judge-evaluation.eval.yaml        # judge-evaluation.txt (llm_as_judge)
+├── self-healing-fix.eval.yaml        # self-healing-fix.txt (self_healing)
+├── plan-judge.eval.yaml              # plan-judge.txt (Pass 3)
+├── retrospective-analysis.eval.yaml  # retrospective-analysis.txt (self_improve)
 └── fixtures/             # Reusable input fixtures for test cases
     ├── research-doc-simple.md
     ├── research-doc-complex.md
-    └── research-doc-repeat.md
+    ├── research-doc-repeat.md
+    ├── self-healing-npm-start-output.txt
+    ├── self-healing-npm-test-output.txt
+    ├── self-healing-npm-build-output.txt
+    ├── plan-judge-good-workflow.json
+    ├── plan-judge-no-verification.json
+    ├── plan-judge-hardcoded-paths.json
+    ├── plan-judge-repeat-misuse.json
+    ├── goal-convert-legacy-api.txt
+    ├── retrospective-judge-fail-original.yaml
+    ├── retrospective-judge-fail-highlights.txt
+    ├── retrospective-self-heal-original.yaml
+    ├── retrospective-self-heal-highlights.txt
+    ├── retrospective-multi-issue-original.yaml
+    └── retrospective-multi-issue-highlights.txt
 ```
 
 #### Prompts (`src/prompts/*.txt`)

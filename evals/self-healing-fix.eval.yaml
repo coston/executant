@@ -1,0 +1,54 @@
+name: self-healing-fix
+prompt: src/prompts/self-healing-fix.txt
+placeholders:
+  - COMMAND
+  - EXIT_CODE
+  - OUTPUT
+  - ATTEMPT_HISTORY
+
+test_cases:
+  - id: missing-env-var
+    vars:
+      COMMAND: npm start
+      EXIT_CODE: "1"
+      OUTPUT: fixtures/self-healing-npm-start-output.txt
+      ATTEMPT_HISTORY: ""
+    criteria:
+      - "Response contains a '**Diagnosis:**' section"
+      - "Response contains a '**Fix:**' section"
+      - "Response contains a '**Verification:**' section"
+      - "Response contains a 'RETRY:' line"
+      - "Diagnosis identifies a missing environment variable as the root cause"
+      - "The RETRY: line differs from the original command — it includes the missing environment variable or a setup step"
+
+  - id: test-failure
+    vars:
+      COMMAND: npm test
+      EXIT_CODE: "1"
+      OUTPUT: fixtures/self-healing-npm-test-output.txt
+      ATTEMPT_HISTORY: ""
+    criteria:
+      - "Response contains a '**Diagnosis:**' section"
+      - "Response contains a '**Fix:**' section"
+      - "Response contains a '**Verification:**' section"
+      - "Response contains a 'RETRY:' line"
+      - "Diagnosis identifies the failing test and incorrect status code as the root cause"
+
+  - id: with-attempt-history
+    vars:
+      COMMAND: npm run build
+      EXIT_CODE: "2"
+      OUTPUT: fixtures/self-healing-npm-build-output.txt
+      ATTEMPT_HISTORY: |
+        ## Prior Fix Attempts
+
+        ### Attempt 1 (failed)
+        Fix tried: Added a type cast on line 45 — changed req.body.count to (req.body.count as number)
+        Result: Build failed again with the same type error. The cast did not resolve the
+        underlying mismatch. The second error on line 67 was not addressed.
+    criteria:
+      - "Response contains a '**Diagnosis:**' section"
+      - "Response contains a '**Fix:**' section"
+      - "Response contains a '**Verification:**' section"
+      - "Response contains a 'RETRY:' line"
+      - "Response does not repeat the type cast approach from the prior attempt, instead proposing a different fix"

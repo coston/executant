@@ -1,0 +1,19 @@
+{
+  "goal": "Update the user authentication module",
+  "vars": {},
+  "steps": [
+    {
+      "name": "analyze auth code",
+      "prompt": "Read /home/user/project/src/auth/login.ts and /home/user/project/src/auth/session.ts to understand the current authentication flow."
+    },
+    {
+      "name": "add JWT refresh tokens",
+      "prompt": "In /home/user/project/src/auth/session.ts, add a refreshToken function that issues a new JWT when the current one is within 5 minutes of expiry."
+    },
+    {
+      "name": "run tests",
+      "type": "script",
+      "command": "npm test"
+    }
+  ]
+}

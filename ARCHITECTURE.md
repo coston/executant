@@ -103,7 +103,7 @@ The eval system tests and iteratively refines the prompt templates in `src/promp
 
 **`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
 
-**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents.
+**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents. Covers `plan-decompose.txt`, `judge-evaluation.txt`, `self-healing-fix.txt`, `plan-judge.txt`, and `retrospective-analysis.txt`.
 
 ### Refinement loop
 

@@ -1,0 +1,17 @@
+goal: "Convert the legacy REST API endpoints to use async/await and add error handling"
+self_improve: true
+
+steps:
+  - name: update-endpoints
+    prompt: |
+      Convert the REST API endpoints in src/api/ to use async/await.
+      Replace all callback-based code with async/await syntax.
+      Add try-catch blocks for error handling in every route handler.
+
+  - name: validate-conversion
+    llm_as_judge: true
+    prompt: "Validate the conversion results"
+
+  - name: run-tests
+    type: script
+    command: npm test

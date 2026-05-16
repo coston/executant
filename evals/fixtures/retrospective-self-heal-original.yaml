@@ -1,0 +1,20 @@
+goal: "Add end-to-end tests for the checkout flow using Playwright"
+self_improve: true
+
+steps:
+  - name: write-tests
+    prompt: |
+      Write Playwright end-to-end tests for the checkout flow:
+      1. Navigate to /checkout
+      2. Fill in shipping details
+      3. Enter payment information
+      4. Submit and verify order confirmation page loads
+
+  - name: run-tests
+    type: script
+    self_healing: true
+    command: npx playwright test tests/checkout.spec.ts
+
+  - name: run-lint
+    type: script
+    command: npm run lint

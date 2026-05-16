@@ -1,0 +1,14 @@
+> my-app@1.0.0 start
+> node dist/server.js
+
+/app/dist/server.js:12
+  throw new Error('DATABASE_URL environment variable is not set');
+        ^
+
+Error: DATABASE_URL environment variable is not set
+    at Object.<anonymous> (/app/dist/server.js:12:9)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Object.Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+
+Node.js v20.11.0

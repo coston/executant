@@ -1,0 +1,32 @@
+{
+  "goal": "Add rate limiting to all API endpoints",
+  "vars": {
+    "app_file": "src/app.ts",
+    "middleware_dir": "src/middleware"
+  },
+  "steps": [
+    {
+      "name": "install rate limit package",
+      "type": "script",
+      "command": "npm install express-rate-limit"
+    },
+    {
+      "name": "create rate limiter middleware",
+      "prompt": "Create a rate limiting middleware in {{middleware_dir}}/rateLimiter.ts. Configure a limit of 100 requests per 15 minutes per IP. Export it as the default export."
+    },
+    {
+      "name": "apply middleware globally",
+      "prompt": "In {{app_file}}, import the rateLimiter middleware and apply it globally before all route registrations."
+    },
+    {
+      "name": "run lint",
+      "type": "script",
+      "command": "npm run lint"
+    },
+    {
+      "name": "run tests",
+      "type": "script",
+      "command": "npm test"
+    }
+  ]
+}

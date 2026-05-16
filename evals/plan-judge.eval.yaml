@@ -1,0 +1,46 @@
+name: plan-judge
+prompt: src/prompts/plan-judge.txt
+placeholders:
+  - DESCRIPTION
+  - WORKFLOW_JSON
+
+test_cases:
+  - id: valid-workflow
+    vars:
+      DESCRIPTION: "add rate limiting to all API endpoints"
+      WORKFLOW_JSON: fixtures/plan-judge-good-workflow.json
+    criteria:
+      - "Output is valid JSON with 'pass' and 'feedback' fields"
+      - "The first character of the output is '{'"
+      - "The 'pass' field is true — workflow has verification steps, uses vars, and has atomic steps"
+      - "The 'feedback' field is an empty string"
+
+  - id: missing-verification
+    vars:
+      DESCRIPTION: "refactor the database connection module"
+      WORKFLOW_JSON: fixtures/plan-judge-no-verification.json
+    criteria:
+      - "Output is valid JSON with 'pass' and 'feedback' fields"
+      - "The first character of the output is '{'"
+      - "The 'pass' field is false — no lint, test, or build step is present"
+      - "The 'feedback' field contains at least one of the words 'lint', 'test', or 'build'"
+
+  - id: repeat-misuse
+    vars:
+      DESCRIPTION: "run the security audit 5 times to surface flaky findings"
+      WORKFLOW_JSON: fixtures/plan-judge-repeat-misuse.json
+    criteria:
+      - "Output is valid JSON with 'pass' and 'feedback' fields"
+      - "The first character of the output is '{'"
+      - "The 'pass' field is false — the step uses forEach with a numeric array instead of repeat: 5"
+      - "The 'feedback' field mentions repeat or forEach and requires the step be converted to repeat: 5"
+
+  - id: hardcoded-paths
+    vars:
+      DESCRIPTION: "update the user authentication module"
+      WORKFLOW_JSON: fixtures/plan-judge-hardcoded-paths.json
+    criteria:
+      - "Output is valid JSON with 'pass' and 'feedback' fields"
+      - "The first character of the output is '{'"
+      - "The 'pass' field is false — prompt fields contain hardcoded absolute file paths"
+      - "The 'feedback' field mentions hardcoded paths or the missing vars block"

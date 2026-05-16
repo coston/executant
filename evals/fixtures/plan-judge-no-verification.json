@@ -1,0 +1,20 @@
+{
+  "goal": "Refactor the database connection module",
+  "vars": {
+    "db_file": "src/db/connection.ts"
+  },
+  "steps": [
+    {
+      "name": "analyze current implementation",
+      "prompt": "Read {{db_file}} and identify areas for improvement: connection pooling, error handling, and retry logic."
+    },
+    {
+      "name": "refactor connection module",
+      "prompt": "Refactor {{db_file}} to use a connection pool of size 10, add exponential backoff retry logic with 3 attempts, and improve error messages."
+    },
+    {
+      "name": "update dependent imports",
+      "prompt": "Find all files that import from {{db_file}} and update them if the exported API changed."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+> my-app@1.0.0 build
+> tsc --noEmit
+
+src/api/handler.ts(45,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/api/handler.ts(67,9): error TS2339: Property 'userId' does not exist on type 'Request'.
+
+Found 2 errors.
+npm error Lifecycle script `build` failed with error:
+npm error code 2

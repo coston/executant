@@ -1,0 +1,23 @@
+{
+  "goal": "Run the security audit 5 times to surface flaky findings",
+  "vars": {
+    "audit_script": "scripts/audit.ts"
+  },
+  "steps": [
+    {
+      "name": "run security audit",
+      "forEach": ["1", "2", "3", "4", "5"],
+      "prompt": "Run the security audit defined in {{audit_script}} and report any findings."
+    },
+    {
+      "name": "summarize findings",
+      "prompt": "Summarize all security findings from the 5 audit runs above.",
+      "llm_as_judge": true
+    },
+    {
+      "name": "run tests",
+      "type": "script",
+      "command": "npm test"
+    }
+  ]
+}

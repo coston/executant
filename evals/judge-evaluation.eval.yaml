@@ -1,0 +1,83 @@
+name: judge-evaluation
+prompt: src/prompts/judge-evaluation.txt
+placeholders:
+  - STEP_NAME
+  - STEP_INSTRUCTIONS
+  - OUTPUT
+
+test_cases:
+  - id: clear-pass
+    vars:
+      STEP_NAME: "add request validation"
+      STEP_INSTRUCTIONS: |
+        Add input validation to the user registration endpoint:
+        1. Validate email is present and in valid email format
+        2. Validate password is at least 8 characters long
+        3. Validate username is between 3 and 20 alphanumeric characters
+        4. Return HTTP 400 with field-level error messages for any invalid input
+        5. Run the test suite to confirm all existing tests still pass
+      OUTPUT: |
+        Added a Zod validation schema for registration input. Email validates format
+        with the built-in email validator. Password enforces an 8-character minimum.
+        Username validates 3 to 20 alphanumeric characters. Returns HTTP 400 with
+        structured per-field error messages when validation fails. Ran npm test —
+        52 tests passing, 0 failing.
+    criteria:
+      - "Output is valid JSON with 'pass', 'reasoning', and 'feedback' fields"
+      - "The 'pass' field is true — all five instructions were completed"
+      - "The 'feedback' field is an empty string since the step passed"
+
+  - id: clear-fail
+    vars:
+      STEP_NAME: "write integration tests"
+      STEP_INSTRUCTIONS: |
+        Write integration tests for the order processing workflow covering:
+        1. Successful order creation with valid payment
+        2. Rejection of orders with out-of-stock items
+        3. Handling of declined payment cards
+        4. Order cancellation within the 24-hour refund window
+        Run the tests and confirm all four scenarios pass.
+      OUTPUT: |
+        I reviewed the order processing module. The logic appears to handle the main
+        flows correctly. The payment integration uses Stripe test mode and stock
+        checking is done synchronously before charging. The cancellation window is
+        configured at 24 hours in the application settings.
+    criteria:
+      - "Output is valid JSON with 'pass', 'reasoning', and 'feedback' fields"
+      - "The 'pass' field is false — no tests were written, only a code review was performed"
+      - "The 'feedback' field is non-empty and specifies that tests need to be written"
+
+  - id: claimed-verification
+    vars:
+      STEP_NAME: "run test suite and verify coverage"
+      STEP_INSTRUCTIONS: |
+        Run npm test and confirm all tests pass.
+        Run npm run coverage and verify coverage is above 80%.
+        Report the exact test count and the exact coverage percentage.
+      OUTPUT: |
+        I ran the test suite and all tests passed. Coverage is above 80%.
+        The implementation looks complete and correct.
+    criteria:
+      - "Output is valid JSON with 'pass', 'reasoning', and 'feedback' fields"
+      - "The 'pass' field is false — output claims completion but provides no specific test count or coverage percentage"
+      - "The 'feedback' field asks for the specific numbers required by the instructions"
+
+  - id: partial-completion
+    vars:
+      STEP_NAME: "add error handling to API endpoints"
+      STEP_INSTRUCTIONS: |
+        Add try-catch error handling to these 5 API endpoint handlers:
+        1. createOrder — catch unexpected errors, return HTTP 500
+        2. updateOrder — catch unexpected errors, return HTTP 500
+        3. cancelOrder — catch unexpected errors, return HTTP 500
+        4. getOrderById — catch not-found errors with 404, unexpected errors with 500
+        5. listOrders — catch unexpected errors, return HTTP 500
+        Run the lint check when done.
+      OUTPUT: |
+        Added try-catch error handling to createOrder, updateOrder, and cancelOrder.
+        Each now returns HTTP 500 with a generic error message on unexpected failures.
+        Did not add error handling to getOrderById or listOrders. Did not run lint.
+    criteria:
+      - "Output is valid JSON with 'pass', 'reasoning', and 'feedback' fields"
+      - "The 'pass' field is false — 2 of 5 endpoints were not updated and lint was skipped"
+      - "The 'feedback' field names the missing endpoints or the skipped lint check"

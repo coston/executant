@@ -1,0 +1,19 @@
+goal: "Migrate the users table to add a profile_image column with a default value"
+self_improve: true
+
+steps:
+  - name: write-migration
+    prompt: "Write a database migration to add a profile_image column"
+
+  - name: run-migration
+    type: script
+    self_healing: true
+    command: npm run db:migrate
+
+  - name: validate-migration
+    llm_as_judge: true
+    prompt: "Check the migration"
+
+  - name: run-tests
+    type: script
+    command: npm test
