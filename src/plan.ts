@@ -15,7 +15,7 @@ import { dump as dumpYaml } from 'js-yaml';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { runClaude, runClaudeStructured } from './tasks/claude.js';
-import { loadPrompt, slugify, timestamp } from './lib/utils.js';
+import { loadPrompt, slugify, timestamp, getErrorMessage, fillTemplate } from './lib/utils.js';
 import type { PlanEvent } from './ui/PlanApp.js';
 import type { ClaudeTask } from './types.js';
 
@@ -193,9 +193,10 @@ async function runPass3Judge(
     const task: Omit<ClaudeTask, 'jsonSchema'> = {
       type: 'claude',
       name: 'plan:judge',
-      prompt: PLAN_JUDGE_PROMPT
-        .replace('{{DESCRIPTION}}', description)
-        .replace('{{WORKFLOW_JSON}}', JSON.stringify(workflow, null, 2)),
+      prompt: fillTemplate(PLAN_JUDGE_PROMPT, {
+        DESCRIPTION: description,
+        WORKFLOW_JSON: JSON.stringify(workflow, null, 2),
+      }),
       allowedTools: [],
       permissionMode: 'default',
       model: 'sonnet',
@@ -348,7 +349,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
       const researchTask: ClaudeTask = {
         type: 'claude',
         name: 'plan:research',
-        prompt: PLAN_RESEARCH_PROMPT.replace('{{DESCRIPTION}}', description),
+        prompt: fillTemplate(PLAN_RESEARCH_PROMPT, { DESCRIPTION: description }),
         allowedTools: ['Read', 'Glob', 'Grep'],
         permissionMode: 'bypassPermissions',
         model: 'opus',
@@ -362,8 +363,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      yield { type: 'plan:error', message: `Research pass failed: ${msg}` };
+      yield { type: 'plan:error', message: `Research pass failed: ${getErrorMessage(err)}` };
       return;
     }
 
@@ -396,9 +396,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
       yield { type: 'plan:stage', stage: decomposeStage, total: totalStages, name: 'Decompose to Steps' };
     }
 
-    const basePrompt = PLAN_DECOMPOSE_PROMPT
-      .replace('{{DESCRIPTION}}', description)
-      .replace('{{RESEARCH_DOC}}', researchDoc);
+    const basePrompt = fillTemplate(PLAN_DECOMPOSE_PROMPT, { DESCRIPTION: description, RESEARCH_DOC: researchDoc });
 
     const decomposeTask: ClaudeTask = {
       type: 'claude',
@@ -426,14 +424,12 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       if (attempt === MAX_PLAN_RETRIES - 1) {
         yield { type: 'plan:error', message: msg };
         return;
       }
-      retryPrefix = PLAN_RETRY_PARSE_ERROR
-        .replace('{{ERROR}}', msg)
-        .replace('{{EXCERPT}}', decomposeTextLines.join('\n'));
+      retryPrefix = fillTemplate(PLAN_RETRY_PARSE_ERROR, { ERROR: msg, EXCERPT: decomposeTextLines.join('\n') });
       continue;
     }
 
@@ -443,7 +439,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         yield { type: 'plan:error', message: issues };
         return;
       }
-      retryPrefix = PLAN_RETRY_SCHEMA_ERROR.replace('{{ISSUES}}', issues);
+      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
       continue;
     }
 
@@ -454,7 +450,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         yield { type: 'plan:error', message: `Plan did not match expected schema:\n${issues}` };
         return;
       }
-      retryPrefix = PLAN_RETRY_SCHEMA_ERROR.replace('{{ISSUES}}', issues);
+      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
       continue;
     }
 
@@ -470,7 +466,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     // Judge is non-blocking: if it rejects on the final attempt the workflow is
     // written anyway — retries are exhausted and discarding the work would be worse.
     if (!judgeResult.pass && attempt < MAX_PLAN_RETRIES - 1) {
-      retryPrefix = PLAN_RETRY_JUDGE.replace('{{FEEDBACK}}', judgeResult.feedback);
+      retryPrefix = fillTemplate(PLAN_RETRY_JUDGE, { FEEDBACK: judgeResult.feedback });
       continue;
     }
 

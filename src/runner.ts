@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { ClaudeTask, CommandTask, Event, ForEachTask, LogTask, RunOptions, Task, Workflow } from './types.js';
 import { CommandError, runCommand } from './tasks/command.js';
 import { runClaude, runClaudeStructured } from './tasks/claude.js';
-import { loadPrompt } from './lib/utils.js';
+import { loadPrompt, getErrorMessage, fillTemplate } from './lib/utils.js';
 
 const JUDGE_RETRY_CONTEXT = loadPrompt('judge-retry-context');
 const SELF_HEALING_PROMPT = loadPrompt('self-healing-fix');
@@ -175,8 +175,7 @@ async function resolveItems(forEach: string[] | string): Promise<string[]> {
     const { stdout } = await execPromise(forEach, { shell: '/bin/sh', timeout: 30_000 });
     return stdout.split('\n').filter((l: string) => l.trim().length > 0);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`forEach shell command failed: ${msg}\nCommand: ${forEach}`);
+    throw new Error(`forEach shell command failed: ${getErrorMessage(err)}\nCommand: ${forEach}`);
   }
 }
 
@@ -286,7 +285,7 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
     const prompt =
       attempt === 0
         ? task.prompt
-        : `${task.prompt}\n\n${JUDGE_RETRY_CONTEXT.replace('{{FEEDBACK}}', judgeContext)}`;
+        : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, { FEEDBACK: judgeContext })}`;
 
     const lines: string[] = [];
     yield* collectLines(runClaude({ ...task, prompt }), lines);
@@ -366,8 +365,7 @@ function readContextFile(filePath: string): string {
   try {
     return readFileSync(filePath, 'utf8');
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Context file "${filePath}" could not be read: ${msg}`);
+    throw new Error(`Context file "${filePath}" could not be read: ${getErrorMessage(err)}`);
   }
 }
 
@@ -383,24 +381,12 @@ export function expandContext(task: ClaudeTask): ClaudeTask {
 // Prompt builders
 // ============================================================================
 
-function buildHealingPrompt(
-  command: string,
-  exitCode: number,
-  output: string,
-  attemptHistory: string,
-): string {
-  return SELF_HEALING_PROMPT
-    .replaceAll('{{COMMAND}}', command)
-    .replaceAll('{{EXIT_CODE}}', String(exitCode))
-    .replaceAll('{{OUTPUT}}', output)
-    .replaceAll('{{ATTEMPT_HISTORY}}', attemptHistory);
+function buildHealingPrompt(command: string, exitCode: number, output: string, attemptHistory: string): string {
+  return fillTemplate(SELF_HEALING_PROMPT, { COMMAND: command, EXIT_CODE: String(exitCode), OUTPUT: output, ATTEMPT_HISTORY: attemptHistory });
 }
 
 function buildJudgePrompt(stepName: string, instructions: string, output: string): string {
-  return JUDGE_EVALUATION_PROMPT
-    .replace('{{STEP_NAME}}', stepName)
-    .replace('{{STEP_INSTRUCTIONS}}', instructions)
-    .replace('{{OUTPUT}}', output);
+  return fillTemplate(JUDGE_EVALUATION_PROMPT, { STEP_NAME: stepName, STEP_INSTRUCTIONS: instructions, OUTPUT: output });
 }
 
 function formatToolCall(tool: string, input: Record<string, unknown>): string {

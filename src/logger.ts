@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Event } from './types.js';
-import { slugify, formatTimestamp } from './lib/utils.js';
+import { slugify, formatTimestamp, getErrorMessage } from './lib/utils.js';
 
 // ============================================================================
 // Helpers
@@ -106,6 +106,10 @@ export class Logger {
   getHighlightsDir(): string { return this.highlightsDir; }
   getTimestamp(): string { return this.timestamp; }
 
+  private highlightPath(suffix: string): string {
+    return join(this.highlightsDir, `${this.timestamp}_step${this.stepIndex + 1}_${suffix}.md`);
+  }
+
   /** Feed each event from the runner into the logger. */
   observe(event: Event): void {
     if (!this.enabled) return;
@@ -113,7 +117,7 @@ export class Logger {
       this.dispatch(event);
     } catch (err) {
       // Logging must never crash the workflow, but surface the failure.
-      console.warn(`[logger] error: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[logger] error: ${getErrorMessage(err)}`);
     }
   }
 
@@ -209,10 +213,7 @@ export class Logger {
 
     if (this.toolCount === 3) {
       // Create the complex-sequence highlight file on the third tool call.
-      this.complexSequenceFile = join(
-        this.highlightsDir,
-        `${this.timestamp}_step${this.stepIndex + 1}_complex_sequence.md`,
-      );
+      this.complexSequenceFile = this.highlightPath('complex_sequence');
       writeFileSync(
         this.complexSequenceFile,
         [
@@ -285,10 +286,7 @@ export class Logger {
   // --------------------------------------------------------------------------
 
   private saveJudgeHighlight(verdict: 'PASS' | 'FAIL', output: string): void {
-    const file = join(
-      this.highlightsDir,
-      `${this.timestamp}_step${this.stepIndex + 1}_judge_${verdict}.md`,
-    );
+    const file = this.highlightPath(`judge_${verdict}`);
     writeFileSync(
       file,
       [
@@ -312,10 +310,7 @@ export class Logger {
   }
 
   private startSelfHealingHighlight(exitCode: string): void {
-    this.selfHealingFile = join(
-      this.highlightsDir,
-      `${this.timestamp}_step${this.stepIndex + 1}_self_healing.md`,
-    );
+    this.selfHealingFile = this.highlightPath('self_healing');
     const errorOutput = this.recentOutput.join('\n');
     this.recentOutput = [];
     writeFileSync(

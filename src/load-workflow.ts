@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import { load as parseYaml } from 'js-yaml';
+import { getErrorMessage } from './lib/utils.js';
 import { z } from 'zod';
 import type {
   ClaudeTask,
@@ -52,8 +53,7 @@ export function loadWorkflow(filePath: string): Workflow {
   try {
     raw = readFileSync(filePath, 'utf8');
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Cannot read workflow file "${filePath}": ${msg}`);
+    throw new Error(`Cannot read workflow file "${filePath}": ${getErrorMessage(err)}`);
   }
 
   let doc: z.infer<typeof RawWorkflowSchema>;

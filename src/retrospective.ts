@@ -18,7 +18,7 @@ import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
 import type { Workflow } from './types.js';
 import { findExecutantLocalDir } from './logger.js';
-import { slugify, formatTimestamp } from './lib/utils.js';
+import { slugify, formatTimestamp, getErrorMessage, fillTemplate } from './lib/utils.js';
 
 const RetrospectiveOutputSchema = z.object({
   improved_yaml: z.string(),
@@ -48,8 +48,7 @@ export async function runRetrospective(
   try {
     await doRetrospective(workflowFilePath, workflow, highlightsDir, runTimestamp);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`\nSelf-improvement: retrospective failed: ${msg}`);
+    console.warn(`\nSelf-improvement: retrospective failed: ${getErrorMessage(err)}`);
   }
 }
 
@@ -113,12 +112,13 @@ async function doRetrospective(
   const taskName = basename(workflowFilePath, '.yaml');
 
   // Build prompt from template
-  const prompt = RETROSPECTIVE_PROMPT
-    .replaceAll('{{TASK_NAME}}', taskName)
-    .replaceAll('{{ORIGINAL_GOAL}}', workflow.goal)
-    .replaceAll('{{ORIGINAL_YAML}}', originalYaml)
-    .replaceAll('{{HIGHLIGHTS}}', highlightContents)
-    .replaceAll('{{METRICS}}', metrics);
+  const prompt = fillTemplate(RETROSPECTIVE_PROMPT, {
+    TASK_NAME: taskName,
+    ORIGINAL_GOAL: workflow.goal,
+    ORIGINAL_YAML: originalYaml,
+    HIGHLIGHTS: highlightContents,
+    METRICS: metrics,
+  });
 
   // Call Claude — no filesystem tools needed, all context is in the prompt
   const result = spawnSync(
@@ -163,8 +163,7 @@ async function doRetrospective(
   try {
     parseYaml(improvedYaml);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`Self-improvement: generated YAML is invalid (${msg}), skipping save.`);
+    console.warn(`Self-improvement: generated YAML is invalid (${getErrorMessage(err)}), skipping save.`);
     return;
   }
 

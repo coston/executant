@@ -41,6 +41,17 @@ export function extractJsonObject(text: string): string {
   return bounds ? text.slice(bounds.start, bounds.end + 1) : text.trim();
 }
 
+export function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function fillTemplate(template: string, vars: Record<string, string>): string {
+  return Object.entries(vars).reduce(
+    (acc, [key, val]) => acc.replaceAll(`{{${key}}}`, val),
+    template,
+  );
+}
+
 export function slugify(text: string, maxLen = 20): string {
   return text
     .toLowerCase()

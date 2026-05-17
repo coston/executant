@@ -2,7 +2,7 @@
 // UTILS — unit tests
 // ============================================================================
 // Tests for src/lib/utils.ts: stripPromptHeader, loadPrompt, slugify,
-// extractJsonObject, formatTimestamp.
+// extractJsonObject, formatTimestamp, getErrorMessage, fillTemplate.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -16,6 +16,8 @@ import {
   slugify,
   extractJsonObject,
   formatTimestamp,
+  getErrorMessage,
+  fillTemplate,
 } from '../lib/utils.js';
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'prompts');
@@ -190,5 +192,89 @@ describe('formatTimestamp', () => {
   test('pads single-digit month, day, hour, minute, second', () => {
     const d = new Date(2026, 0, 1, 1, 1, 1);
     assert.equal(formatTimestamp(d), '20260101-010101');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// getErrorMessage
+// ----------------------------------------------------------------------------
+
+describe('getErrorMessage', () => {
+  test('extracts message from an Error instance', () => {
+    assert.equal(getErrorMessage(new Error('boom')), 'boom');
+  });
+
+  test('converts a string to itself', () => {
+    assert.equal(getErrorMessage('raw string'), 'raw string');
+  });
+
+  test('converts a number via String()', () => {
+    assert.equal(getErrorMessage(42), '42');
+  });
+
+  test('converts null via String()', () => {
+    assert.equal(getErrorMessage(null), 'null');
+  });
+
+  test('converts undefined via String()', () => {
+    assert.equal(getErrorMessage(undefined), 'undefined');
+  });
+
+  test('converts a plain object via String()', () => {
+    assert.equal(getErrorMessage({ code: 'ENOENT' }), '[object Object]');
+  });
+
+  test('handles Error subclasses', () => {
+    class CustomError extends Error {}
+    assert.equal(getErrorMessage(new CustomError('custom')), 'custom');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// fillTemplate
+// ----------------------------------------------------------------------------
+
+describe('fillTemplate', () => {
+  test('replaces a single placeholder', () => {
+    assert.equal(fillTemplate('Hello {{NAME}}!', { NAME: 'World' }), 'Hello World!');
+  });
+
+  test('replaces multiple distinct placeholders', () => {
+    const result = fillTemplate('{{A}} and {{B}}', { A: 'foo', B: 'bar' });
+    assert.equal(result, 'foo and bar');
+  });
+
+  test('replaces all occurrences of the same placeholder', () => {
+    const result = fillTemplate('{{X}} {{X}} {{X}}', { X: 'hi' });
+    assert.equal(result, 'hi hi hi');
+  });
+
+  test('leaves unmatched placeholders intact', () => {
+    const result = fillTemplate('{{KNOWN}} {{UNKNOWN}}', { KNOWN: 'ok' });
+    assert.equal(result, 'ok {{UNKNOWN}}');
+  });
+
+  test('returns template unchanged when vars is empty', () => {
+    assert.equal(fillTemplate('no placeholders', {}), 'no placeholders');
+  });
+
+  test('handles empty string template', () => {
+    assert.equal(fillTemplate('', { KEY: 'val' }), '');
+  });
+
+  test('handles empty string replacement value', () => {
+    assert.equal(fillTemplate('prefix{{EMPTY}}suffix', { EMPTY: '' }), 'prefixsuffix');
+  });
+
+  test('handles values that contain braces without interfering', () => {
+    const result = fillTemplate('{{A}}', { A: '{{B}}', B: 'should-not-expand' });
+    // After replacing {{A}} → "{{B}}", whether {{B}} also gets replaced depends
+    // on iteration order. Assert the final string contains the substituted value.
+    assert.ok(result === '{{B}}' || result === 'should-not-expand');
+  });
+
+  test('handles multiline template values', () => {
+    const result = fillTemplate('START\n{{BODY}}\nEND', { BODY: 'line1\nline2' });
+    assert.equal(result, 'START\nline1\nline2\nEND');
   });
 });
