@@ -52,6 +52,10 @@ export function fillTemplate(template: string, vars: Record<string, string>): st
   );
 }
 
+export function formatZodIssues(issues: Array<{ path: Array<string | number>; message: string }>): string {
+  return issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+}
+
 export function slugify(text: string, maxLen = 20): string {
   return text
     .toLowerCase()

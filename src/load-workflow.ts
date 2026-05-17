@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import { load as parseYaml } from 'js-yaml';
-import { getErrorMessage } from './lib/utils.js';
+import { getErrorMessage, fillTemplate, formatZodIssues } from './lib/utils.js';
 import { z } from 'zod';
 import type {
   ClaudeTask,
@@ -60,9 +60,7 @@ export function loadWorkflow(filePath: string): Workflow {
   try {
     doc = RawWorkflowSchema.parse(parseYaml(raw));
   } catch (err) {
-    const detail = err instanceof z.ZodError
-      ? err.errors.map((e) => `  ${e.path.join('.')}: ${e.message}`).join('\n')
-      : String(err);
+    const detail = err instanceof z.ZodError ? formatZodIssues(err.errors) : String(err);
     throw new Error(`Invalid workflow file "${filePath}":\n${detail}`);
   }
 
@@ -81,8 +79,7 @@ export function loadWorkflow(filePath: string): Workflow {
 // ----------------------------------------------------------------------------
 
 function convertStep(step: RawStep, vars: Record<string, string>): Task {
-  const name = step.name;
-  const continueOnError = step.continue_on_error ?? false;
+  const { name, continue_on_error: continueOnError = false } = step;
 
   // forEach wraps the inner step — detect before type switch.
   // NOTE: substituteVars is called inside convertInnerStep, which means only
@@ -91,24 +88,16 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
   if (step.repeat !== undefined && step.forEach !== undefined) {
     throw new Error(`Step "${name}" cannot have both repeat and forEach`);
   }
-  if (step.repeat !== undefined) {
-    const items = Array.from({ length: step.repeat }, (_, i) => String(i + 1));
-    const { repeat: _, ...innerStep } = step;
+  if (step.repeat !== undefined || step.forEach !== undefined) {
+    const forEachValue = step.repeat !== undefined
+      ? Array.from({ length: step.repeat }, (_, i) => String(i + 1))
+      : step.forEach!;
+    const { repeat: _r, forEach: _f, ...innerStep } = step;
     return {
       type: 'forEach',
       name,
       continueOnError,
-      forEach: items,
-      inner: convertInnerStep(innerStep, vars, name, continueOnError),
-    } satisfies ForEachTask;
-  }
-  if (step.forEach !== undefined) {
-    const { forEach: _, ...innerStep } = step;
-    return {
-      type: 'forEach',
-      name,
-      continueOnError,
-      forEach: step.forEach,
+      forEach: forEachValue,
       inner: convertInnerStep(innerStep, vars, name, continueOnError),
     } satisfies ForEachTask;
   }
@@ -194,10 +183,7 @@ function resolveOutputFile(varName: string, vars: Record<string, string>, stepNa
 /** Replaces {{var_name}} placeholders using the vars map.
  * Throws at load time if any unknown placeholder (other than {{item}}) remains. */
 function substituteVars(text: string, vars: Record<string, string>, stepName: string, field: string): string {
-  const result = Object.entries(vars).reduce(
-    (acc, [key, value]) => acc.replaceAll(`{{${key}}}`, value),
-    text,
-  );
+  const result = fillTemplate(text, vars);
 
   const unknownTokens = [...result.matchAll(/\{\{(\w+)\}\}/g)]
     .map((m) => m[1])

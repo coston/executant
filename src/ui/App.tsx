@@ -9,6 +9,7 @@ import React, { useEffect, useReducer, useState } from 'react';
 import { Box, Text, useApp, useStdin } from 'ink';
 import { KeyboardHandler } from './KeyboardHandler.js';
 import type { Event, RunOptions, Workflow } from '../types.js';
+import { getErrorMessage } from '../lib/utils.js';
 import { reducer, buildInitialState } from './reducer.js';
 import { TaskRow } from './TaskRow.js';
 import { LogPane } from './LogPane.js';
@@ -44,12 +45,8 @@ export function App({ workflow, events, options, updateCheck }: Props) {
         }
       } catch (err) {
         if (!active) return;
-        dispatch({
-          type: 'log',
-          level: 'error',
-          text: err instanceof Error ? err.message : String(err),
-        });
-        setTimeout(() => exit(err instanceof Error ? err : new Error(String(err))), EXIT_DELAY_MS);
+        dispatch({ type: 'log', level: 'error', text: getErrorMessage(err) });
+        setTimeout(() => exit(err instanceof Error ? err : new Error(getErrorMessage(err))), EXIT_DELAY_MS);
       }
     })();
 

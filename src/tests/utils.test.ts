@@ -18,6 +18,7 @@ import {
   formatTimestamp,
   getErrorMessage,
   fillTemplate,
+  formatZodIssues,
 } from '../lib/utils.js';
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'prompts');
@@ -276,5 +277,33 @@ describe('fillTemplate', () => {
   test('handles multiline template values', () => {
     const result = fillTemplate('START\n{{BODY}}\nEND', { BODY: 'line1\nline2' });
     assert.equal(result, 'START\nline1\nline2\nEND');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// formatZodIssues
+// ----------------------------------------------------------------------------
+
+describe('formatZodIssues', () => {
+  test('formats a single issue', () => {
+    const issues = [{ path: ['goal'], message: 'Required' }];
+    assert.equal(formatZodIssues(issues), '  goal: Required');
+  });
+
+  test('formats multiple issues separated by newlines', () => {
+    const issues = [
+      { path: ['goal'], message: 'Required' },
+      { path: ['steps', 0, 'name'], message: 'Expected string' },
+    ];
+    assert.equal(formatZodIssues(issues), '  goal: Required\n  steps.0.name: Expected string');
+  });
+
+  test('handles a top-level issue with empty path', () => {
+    const issues = [{ path: [], message: 'Invalid input' }];
+    assert.equal(formatZodIssues(issues), '  : Invalid input');
+  });
+
+  test('returns empty string for no issues', () => {
+    assert.equal(formatZodIssues([]), '');
   });
 });

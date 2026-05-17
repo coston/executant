@@ -21,9 +21,10 @@ import { checkForUpdate } from './update.js';
 import { App } from './ui/App.js';
 import { parsePlanArgs, streamPlan } from './plan.js';
 import { PlanApp } from './ui/PlanApp.js';
-import { Logger, resolveLogDir, withLogger } from './logger.js';
+import { type Logger, createLogger, resolveLogDir, withLogger } from './logger.js';
 import { runRetrospective } from './retrospective.js';
 import type { RunOptions, Workflow } from './types.js';
+import { getErrorMessage } from './lib/utils.js';
 
 const CURRENT_VERSION = (JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
@@ -55,7 +56,7 @@ if (rawArgs[0] === 'update') {
     await doUpdate();
     console.log('Done.');
   } catch (err) {
-    console.error('Update failed:', err instanceof Error ? err.message : String(err));
+    console.error('Update failed:', getErrorMessage(err));
     process.exit(1);
   }
   process.exit(0);
@@ -158,12 +159,12 @@ let workflow: Workflow;
 try {
   workflow = loadWorkflow(filePath);
 } catch (err) {
-  console.error(err instanceof Error ? err.message : String(err));
+  console.error(getErrorMessage(err));
   process.exit(1);
 }
 const options: RunOptions = { stepFilter, fromStep };
 const rawEvents = runWorkflow(workflow, options);
-const logger = new Logger(resolveLogDir(filePath), workflow.goal);
+const logger = createLogger(resolveLogDir(filePath), workflow.goal);
 const events = withLogger(rawEvents, logger);
 const updateCheck = checkForUpdate(CURRENT_VERSION);
 
@@ -183,7 +184,7 @@ async function maybeRunRetrospective(filePath: string, workflow: Workflow, logge
   try {
     await runRetrospective(filePath, workflow, logger.getHighlightsDir(), logger.getTimestamp());
   } catch (err) {
-    console.warn('[executant] retrospective failed (non-fatal):', err instanceof Error ? err.message : err);
+    console.warn('[executant] retrospective failed (non-fatal):', getErrorMessage(err));
   }
 }
 

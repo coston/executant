@@ -865,7 +865,11 @@ describe('streamPlan', () => {
     const stages = stageEvents(events);
     assert.equal(stages.length, 2, 'Expected exactly 2 stage events in fast path');
     assert.equal(stages[0]!.name, 'Decompose to Steps');
+    assert.equal(stages[0]!.stage, 1, 'Decompose should be stage 1 in fast path');
+    assert.equal(stages[0]!.total, 2, 'Total should be 2 in fast path');
     assert.equal(stages[1]!.name, 'Validate');
+    assert.equal(stages[1]!.stage, 2, 'Validate should be stage 2 in fast path');
+    assert.equal(stages[1]!.total, 2, 'Total should be 2 in fast path');
   });
 
   test('auto-detects simple request and uses fast path', async () => {

@@ -9,7 +9,7 @@ import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { findExecutantLocalDir, Logger, withLogger } from '../logger.js';
+import { findExecutantLocalDir, createLogger, type Logger, withLogger } from '../logger.js';
 import type { Event, Workflow } from '../types.js';
 
 // ----------------------------------------------------------------------------
@@ -87,14 +87,14 @@ describe('Logger', () => {
   });
 
   test('workflow:start creates logDir and highlightsDir', () => {
-    const logger = new Logger(logDir, 'my-task');
+    const logger = createLogger(logDir, 'my-task');
     logger.observe({ type: 'workflow:start', workflow: FAKE_WORKFLOW });
     assert.ok(existsSync(logDir));
     assert.ok(existsSync(join(logDir, 'highlights')));
   });
 
   test('workflow:start creates log file with header', () => {
-    const logger = new Logger(logDir, 'my-task');
+    const logger = createLogger(logDir, 'my-task');
     logger.observe({ type: 'workflow:start', workflow: FAKE_WORKFLOW });
     const content = readLogFile(logDir);
     assert.ok(content.includes('# Execution Log'));
@@ -102,7 +102,7 @@ describe('Logger', () => {
   });
 
   test('step:start appends step header to log', () => {
-    const logger = new Logger(logDir, 'test-task');
+    const logger = createLogger(logDir, 'test-task');
     logger.observe({ type: 'workflow:start', workflow: FAKE_WORKFLOW });
     logger.observe({ type: 'step:start', index: 0, name: 'my-step' });
     const content = readLogFile(logDir);
@@ -110,7 +110,7 @@ describe('Logger', () => {
   });
 
   test('output:text is appended to log file', () => {
-    const logger = new Logger(logDir, 'test-task');
+    const logger = createLogger(logDir, 'test-task');
     logger.observe({ type: 'workflow:start', workflow: FAKE_WORKFLOW });
     logger.observe({ type: 'step:start', index: 0, name: 'step-a' });
     logger.observe({ type: 'output:text', index: 0, text: 'hello world' });
@@ -119,7 +119,7 @@ describe('Logger', () => {
   });
 
   test('output:tool is appended with tool summary', () => {
-    const logger = new Logger(logDir, 'test-task');
+    const logger = createLogger(logDir, 'test-task');
     logger.observe({ type: 'workflow:start', workflow: FAKE_WORKFLOW });
     logger.observe({ type: 'step:start', index: 0, name: 'step-b' });
     logger.observe({ type: 'output:tool', index: 0, tool: 'Read', input: { file_path: '/foo/bar.ts' } });
@@ -130,14 +130,14 @@ describe('Logger', () => {
 
   test('EXECUTANT_LOG=0 makes observe a no-op — log file never created', () => {
     process.env['EXECUTANT_LOG'] = '0';
-    const logger = new Logger(logDir, 'test-task');
+    const logger = createLogger(logDir, 'test-task');
     logger.observe({ type: 'workflow:start', workflow: FAKE_WORKFLOW });
     const logFiles = readdirSync(logDir).filter((f) => f.endsWith('.log'));
     assert.equal(logFiles.length, 0);
   });
 
   test('observe swallows errors and does not throw', () => {
-    const logger = new Logger(logDir, 'test-task');
+    const logger = createLogger(logDir, 'test-task');
     // Skip workflow:start so logFile is not set — appendLog silently returns
     assert.doesNotThrow(() =>
       logger.observe({ type: 'output:text', index: -1, text: 'ignored' }),
@@ -160,7 +160,7 @@ describe('withLogger', () => {
       { type: 'workflow:start', workflow: FAKE_WORKFLOW },
       { type: 'log', level: 'info', text: 'hello' },
     ];
-    const logger = new Logger(logDir, 'passthrough-test');
+    const logger = createLogger(logDir, 'passthrough-test');
     const collected: Event[] = [];
     for await (const e of withLogger(makeGen(events), logger)) collected.push(e);
     assert.deepEqual(collected, events);
@@ -201,7 +201,7 @@ describe('Logger highlight pipeline (via withLogger)', () => {
   });
 
   async function drainWithLogger(events: Event[], taskName: string): Promise<string> {
-    const logger = new Logger(logDir, taskName);
+    const logger = createLogger(logDir, taskName);
     for await (const _ of withLogger(makeGen(events), logger)) { /* drain */ }
     return join(logDir, 'highlights');
   }

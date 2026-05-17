@@ -12,21 +12,19 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
 import type { Workflow } from './types.js';
 import { findExecutantLocalDir } from './logger.js';
-import { slugify, formatTimestamp, getErrorMessage, fillTemplate } from './lib/utils.js';
+import { slugify, formatTimestamp, getErrorMessage, fillTemplate, loadPrompt } from './lib/utils.js';
 
 const RetrospectiveOutputSchema = z.object({
   improved_yaml: z.string(),
   changelog: z.string(),
 });
 
-const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'prompts');
-const RETROSPECTIVE_PROMPT = readFileSync(join(PROMPTS_DIR, 'retrospective-analysis.txt'), 'utf8');
+const RETROSPECTIVE_PROMPT = loadPrompt('retrospective-analysis');
 
 // ============================================================================
 // Public API

@@ -15,7 +15,7 @@ import { dump as dumpYaml } from 'js-yaml';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { runClaude, runClaudeStructured } from './tasks/claude.js';
-import { loadPrompt, slugify, timestamp, getErrorMessage, fillTemplate } from './lib/utils.js';
+import { loadPrompt, slugify, timestamp, getErrorMessage, fillTemplate, formatZodIssues } from './lib/utils.js';
 import type { PlanEvent } from './ui/PlanApp.js';
 import type { ClaudeTask } from './types.js';
 
@@ -374,13 +374,12 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     }
   }
 
-  // Stage index offset: 1 when research was skipped, 2 when research ran
-  const decomposeStage = skipResearch ? 1 : 2;
-  const validateStage = skipResearch ? 2 : 3;
-  const totalStages = skipResearch ? 2 : TOTAL_PLAN_STAGES;
+  const stages = skipResearch
+    ? { decompose: 1, validate: 2, total: 2 }
+    : { decompose: 2, validate: 3, total: TOTAL_PLAN_STAGES };
 
   // --- Pass 2 (or 1 in fast mode): Decompose to Steps (with retries) ---
-  yield { type: 'plan:stage', stage: decomposeStage, total: totalStages, name: 'Decompose to Steps' };
+  yield { type: 'plan:stage', stage: stages.decompose, total: stages.total, name: 'Decompose to Steps' };
 
   let retryPrefix = '';
 
@@ -393,7 +392,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         reason: retryPrefix.replace(/\n/g, ' '),
       };
       // Re-emit decompose stage so the TUI reflects the retry (judge rejection re-enters decompose)
-      yield { type: 'plan:stage', stage: decomposeStage, total: totalStages, name: 'Decompose to Steps' };
+      yield { type: 'plan:stage', stage: stages.decompose, total: stages.total, name: 'Decompose to Steps' };
     }
 
     const basePrompt = fillTemplate(PLAN_DECOMPOSE_PROMPT, { DESCRIPTION: description, RESEARCH_DOC: researchDoc });
@@ -445,7 +444,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
 
     const zodResult = WorkflowSchema.safeParse(structuredOutput);
     if (!zodResult.success) {
-      const issues = zodResult.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+      const issues = formatZodIssues(zodResult.error.issues);
       if (attempt === MAX_PLAN_RETRIES - 1) {
         yield { type: 'plan:error', message: `Plan did not match expected schema:\n${issues}` };
         return;
@@ -455,7 +454,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     }
 
     // --- Pass 3 (or 2 in fast mode): Validate ---
-    yield { type: 'plan:stage', stage: validateStage, total: totalStages, name: 'Validate' };
+    yield { type: 'plan:stage', stage: stages.validate, total: stages.total, name: 'Validate' };
 
     const judgeResult = await runPass3Judge(description, zodResult.data);
 
@@ -487,8 +486,8 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
 
     writeFileSync(taskFile, yamlContent + '\n', 'utf8');
 
-    const preview = yamlContent.split('\n').slice(0, 30).join('\n')
-      + (yamlContent.split('\n').length > 30 ? '\n...' : '');
+    const yamlLines = yamlContent.split('\n');
+    const preview = yamlLines.slice(0, 30).join('\n') + (yamlLines.length > 30 ? '\n...' : '');
 
     yield { type: 'plan:complete', taskFile, preview };
     return;

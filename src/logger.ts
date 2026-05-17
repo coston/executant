@@ -22,7 +22,65 @@ import type { Event } from './types.js';
 import { slugify, formatTimestamp, getErrorMessage } from './lib/utils.js';
 
 // ============================================================================
-// Helpers
+// Log directory resolution
+// ============================================================================
+
+export function findExecutantLocalDir(startDir: string): string | null {
+  let dir = resolve(startDir);
+  while (true) {
+    const candidate = join(dir, '.claude', 'executant.local');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+export function resolveLogDir(workflowFilePath: string): string {
+  const startDir = dirname(resolve(workflowFilePath));
+  const executantLocal = findExecutantLocalDir(startDir);
+  return executantLocal ? join(executantLocal, 'logs') : join(startDir, 'logs');
+}
+
+// ============================================================================
+// State machine
+// ============================================================================
+
+/** Fixed values determined at logger creation — never change across events. */
+interface LogContext {
+  readonly logDir: string;
+  readonly highlightsDir: string;
+  readonly ts: string;
+  readonly slug: string;
+}
+
+/** Mutable snapshot replaced (not mutated) on each event. */
+interface LogState {
+  readonly logFile: string;
+  readonly stepIndex: number;
+  readonly stepName: string;
+  readonly stepStartMs: number;
+  readonly toolCount: number;
+  readonly complexSequenceFile: string;
+  readonly selfHealingFile: string;
+  readonly judgeAttempt: number;
+  readonly recentOutput: readonly string[];
+}
+
+const INIT_STATE: LogState = {
+  logFile: '',
+  stepIndex: -1,
+  stepName: '',
+  stepStartMs: 0,
+  toolCount: 0,
+  complexSequenceFile: '',
+  selfHealingFile: '',
+  judgeAttempt: 0,
+  recentOutput: [],
+};
+
+// ============================================================================
+// Pure handlers — each performs its side-effects and returns the new state
 // ============================================================================
 
 const TOOL_SUMMARY: Record<string, (i: Record<string, unknown>) => string> = {
@@ -38,389 +96,218 @@ function toolSummary(tool: string, input: Record<string, unknown>): string {
   return (TOOL_SUMMARY[tool] ?? ((i: Record<string, unknown>) => JSON.stringify(i)))(input);
 }
 
-// ============================================================================
-// Log directory resolution
-// ============================================================================
+function appendLog(logFile: string, text: string): void {
+  if (logFile) appendFileSync(logFile, text + '\n');
+}
 
-/**
- * Walks up from startDir looking for `.claude/executant.local/`.
- * Returns the executant.local path if found, otherwise null.
- */
-export function findExecutantLocalDir(startDir: string): string | null {
-  let dir = resolve(startDir);
-  while (true) {
-    const candidate = join(dir, '.claude', 'executant.local');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+function highlightPath(ctx: LogContext, stepIndex: number, suffix: string): string {
+  return join(ctx.highlightsDir, `${ctx.ts}_step${stepIndex + 1}_${suffix}.md`);
+}
+
+function onWorkflowStart(ctx: LogContext, s: LogState): LogState {
+  mkdirSync(ctx.logDir, { recursive: true });
+  mkdirSync(ctx.highlightsDir, { recursive: true });
+  const logFile = join(ctx.logDir, `${ctx.ts}_${ctx.slug}.log`);
+  writeFileSync(logFile, `# Execution Log\nTask: ${ctx.slug}\nStarted: ${new Date().toISOString()}\n${'━'.repeat(51)}\n\n`);
+  return { ...s, logFile };
+}
+
+function onStepStart(ctx: LogContext, s: LogState, index: number, name: string): LogState {
+  const next: LogState = { ...INIT_STATE, logFile: s.logFile, stepIndex: index, stepName: name, stepStartMs: Date.now() };
+  appendLog(next.logFile, `\n${'━'.repeat(51)}\nStep ${index + 1}: ${name}\nStarted: ${new Date().toISOString()}\n${'━'.repeat(51)}\n`);
+  return next;
+}
+
+function finalizeComplexSequence(s: LogState): void {
+  if (s.toolCount >= 3 && s.complexSequenceFile) {
+    appendFileSync(s.complexSequenceFile, `\n---\n\n*Total tools used: ${s.toolCount}*\n\n*Captured by Executant Logger*\n`);
   }
 }
 
-/**
- * Given a workflow file path, returns the log directory:
- *   .claude/executant.local/logs/
- *
- * If the file is not inside an executant project, falls back to a `logs/`
- * directory next to the workflow file.
- */
-export function resolveLogDir(workflowFilePath: string): string {
-  const startDir = dirname(resolve(workflowFilePath));
-  const executantLocal = findExecutantLocalDir(startDir);
-  if (executantLocal) return join(executantLocal, 'logs');
-  return join(startDir, 'logs');
+function onStepComplete(s: LogState): LogState {
+  appendLog(s.logFile, `\nStep completed in ${((Date.now() - s.stepStartMs) / 1000).toFixed(1)}s\n`);
+  finalizeComplexSequence(s);
+  return s;
 }
 
-// ============================================================================
-// Logger class
-// ============================================================================
+function onStepError(s: LogState, error: Error): LogState {
+  appendLog(s.logFile, `\nStep failed: ${error.message}\n`);
+  finalizeComplexSequence(s);
+  return s;
+}
 
-export class Logger {
+function complexSequenceHeader(ctx: LogContext, s: LogState): string {
+  return [
+    '# Complex Tool Sequence', '',
+    `**Task:** ${ctx.slug}`, `**Step:** ${s.stepName}`,
+    `**Timestamp:** ${new Date().toISOString()}`, '', '---', '',
+    "## Claude's Tool Orchestration", '', 'Claude used multiple tools to complete this step:', '',
+  ].join('\n');
+}
 
-  private readonly enabled: boolean;
-  private readonly logDir: string;
-  private readonly highlightsDir: string;
-  private readonly timestamp: string;
-  private readonly taskName: string;
+function createComplexSequenceFile(ctx: LogContext, s: LogState): string {
+  const path = highlightPath(ctx, s.stepIndex, 'complex_sequence');
+  writeFileSync(path, complexSequenceHeader(ctx, s));
+  return path;
+}
 
-  private logFile: string = '';
-
-  // Per-step state
-  private stepIndex: number = -1;
-  private stepName: string = '';
-  private stepStartMs: number = 0;
-  private toolCount: number = 0;
-  private complexSequenceFile: string = '';
-  private selfHealingFile: string = '';
-  private judgeAttempt: number = 0;
-  private recentOutput: string[] = [];
-
-  constructor(logDir: string, taskName: string) {
-    this.enabled = process.env['EXECUTANT_LOG'] !== '0';
-    this.logDir = logDir;
-    this.highlightsDir = join(logDir, 'highlights');
-    this.timestamp = formatTimestamp(new Date());
-    this.taskName = slugify(taskName, 40) || 'task';
+function onTool(ctx: LogContext, s: LogState, tool: string, input: Record<string, unknown>): LogState {
+  const desc = toolSummary(tool, input);
+  appendLog(s.logFile, `   [${tool}] ${desc}`);
+  const toolCount = s.toolCount + 1;
+  const complexSequenceFile = toolCount === 3 ? createComplexSequenceFile(ctx, s) : s.complexSequenceFile;
+  if (toolCount >= 3 && complexSequenceFile) {
+    appendFileSync(complexSequenceFile, `${toolCount}. **${tool}** - ${desc}\n`);
   }
+  return { ...s, toolCount, complexSequenceFile };
+}
 
-  getHighlightsDir(): string { return this.highlightsDir; }
-  getTimestamp(): string { return this.timestamp; }
+function saveJudgeHighlight(ctx: LogContext, s: LogState, verdict: 'PASS' | 'FAIL', text: string): void {
+  writeFileSync(highlightPath(ctx, s.stepIndex, `judge_${verdict}`), [
+    `# Judge Verdict: ${verdict}`, '',
+    `**Task:** ${ctx.slug}`, `**Step:** ${s.stepName}`,
+    `**Attempt:** ${s.judgeAttempt}`, `**Timestamp:** ${new Date().toISOString()}`,
+    '', '---', '', text, '', '---', '', '*Auto-captured*', '',
+  ].join('\n'));
+}
 
-  private highlightPath(suffix: string): string {
-    return join(this.highlightsDir, `${this.timestamp}_step${this.stepIndex + 1}_${suffix}.md`);
-  }
+interface LogMatcher {
+  readonly pattern: RegExp;
+  readonly apply: (ctx: LogContext, s: LogState, text: string, match: RegExpExecArray) => LogState;
+}
 
-  /** Feed each event from the runner into the logger. */
-  observe(event: Event): void {
-    if (!this.enabled) return;
-    try {
-      this.dispatch(event);
-    } catch (err) {
-      // Logging must never crash the workflow, but surface the failure.
-      console.warn(`[logger] error: ${getErrorMessage(err)}`);
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Event dispatch
-  // --------------------------------------------------------------------------
-
-  private dispatch(event: Event): void {
-    switch (event.type) {
-      case 'workflow:start':
-        this.initDirs();
-        break;
-      case 'step:start':
-        this.onStepStart(event.index, event.name);
-        break;
-      case 'step:complete':
-        this.onStepComplete();
-        break;
-      case 'step:error':
-        this.onStepError(event.error);
-        break;
-      case 'output:text':
-        this.appendLog(event.text);
-        this.recentOutput.push(event.text);
-        break;
-      case 'output:tool':
-        this.onTool(event.tool, event.input);
-        break;
-      case 'log':
-        this.onLogMessage(event.level, event.text);
-        break;
-      case 'workflow:complete':
-        this.onWorkflowComplete();
-        break;
-      // step:skip / step:iteration / output:cost — no specific action needed
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Initialisation
-  // --------------------------------------------------------------------------
-
-  private initDirs(): void {
-    mkdirSync(this.logDir, { recursive: true });
-    mkdirSync(this.highlightsDir, { recursive: true });
-    this.logFile = join(this.logDir, `${this.timestamp}_${this.taskName}.log`);
-    writeFileSync(
-      this.logFile,
-      `# Execution Log\nTask: ${this.taskName}\nStarted: ${new Date().toISOString()}\n${'━'.repeat(51)}\n\n`,
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // Step lifecycle
-  // --------------------------------------------------------------------------
-
-  private onStepStart(index: number, name: string): void {
-    Object.assign(this, {
-      stepIndex: index,
-      stepName: name,
-      stepStartMs: Date.now(),
-      toolCount: 0,
-      complexSequenceFile: '',
-      selfHealingFile: '',
-      judgeAttempt: 0,
-      recentOutput: [],
-    });
-    this.appendLog(
-      `\n${'━'.repeat(51)}\nStep ${index + 1}: ${name}\nStarted: ${new Date().toISOString()}\n${'━'.repeat(51)}\n`,
-    );
-  }
-
-  private onStepComplete(): void {
-    const durS = ((Date.now() - this.stepStartMs) / 1000).toFixed(1);
-    this.appendLog(`\nStep completed in ${durS}s\n`);
-    this.finalizeComplexSequence();
-  }
-
-  private onStepError(error: Error): void {
-    this.appendLog(`\nStep failed: ${error.message}\n`);
-    this.finalizeComplexSequence();
-  }
-
-  // --------------------------------------------------------------------------
-  // Tool calls → complex sequence highlights
-  // --------------------------------------------------------------------------
-
-  private onTool(tool: string, input: Record<string, unknown>): void {
-    const desc = toolSummary(tool, input);
-    this.appendLog(`   [${tool}] ${desc}`);
-
-    this.toolCount++;
-
-    if (this.toolCount === 3) {
-      // Create the complex-sequence highlight file on the third tool call.
-      this.complexSequenceFile = this.highlightPath('complex_sequence');
-      writeFileSync(
-        this.complexSequenceFile,
-        [
-          '# Complex Tool Sequence',
-          '',
-          `**Task:** ${this.taskName}`,
-          `**Step:** ${this.stepName}`,
-          `**Timestamp:** ${new Date().toISOString()}`,
-          '',
-          '---',
-          '',
-          "## Claude's Tool Orchestration",
-          '',
-          'Claude used multiple tools to complete this step:',
-          '',
-        ].join('\n'),
-      );
-    }
-
-    if (this.toolCount >= 3 && this.complexSequenceFile) {
-      appendFileSync(this.complexSequenceFile, `${this.toolCount}. **${tool}** - ${desc}\n`);
-    }
-  }
-
-  private finalizeComplexSequence(): void {
-    if (this.toolCount >= 3 && this.complexSequenceFile) {
-      appendFileSync(
-        this.complexSequenceFile,
-        `\n---\n\n*Total tools used: ${this.toolCount}*\n\n*Captured by Executant Logger*\n`,
-      );
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Log events → judge / self-healing highlights
-  // --------------------------------------------------------------------------
-
-  private onLogMessage(level: string, text: string): void {
-    this.appendLog(`[${level}] ${text}`);
-
-    // Judge PASS
-    if (/\[judge\]\s+PASS/i.test(text)) {
-      this.judgeAttempt++;
-      this.saveJudgeHighlight('PASS', text);
-      return;
-    }
-
-    // Judge FAIL
-    if (/\[judge\]\s+FAIL/i.test(text)) {
-      this.judgeAttempt++;
-      this.saveJudgeHighlight('FAIL', text);
-      return;
-    }
-
-    // Self-healing start (multi-pass: "[self-healing] Attempt X/Y failed (exit N)")
-    const healingMatch = text.match(/\[self-healing\].*failed.*exit\s+(\d+)/i);
-    if (healingMatch) {
-      this.startSelfHealingHighlight(healingMatch[1]);
-      return;
-    }
-
-    // Self-healing complete (re-running after fix)
-    if (/\[self-healing\].*Re-running/i.test(text)) {
-      this.completeSelfHealingHighlight();
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Highlight writers
-  // --------------------------------------------------------------------------
-
-  private saveJudgeHighlight(verdict: 'PASS' | 'FAIL', output: string): void {
-    const file = this.highlightPath(`judge_${verdict}`);
-    writeFileSync(
-      file,
-      [
-        `# Judge Verdict: ${verdict}`,
-        '',
-        `**Task:** ${this.taskName}`,
-        `**Step:** ${this.stepName}`,
-        `**Attempt:** ${this.judgeAttempt}`,
-        `**Timestamp:** ${new Date().toISOString()}`,
-        '',
-        '---',
-        '',
-        output,
-        '',
-        '---',
-        '',
-        '*Auto-captured*',
-        '',
-      ].join('\n'),
-    );
-  }
-
-  private startSelfHealingHighlight(exitCode: string): void {
-    this.selfHealingFile = this.highlightPath('self_healing');
-    const errorOutput = this.recentOutput.join('\n');
-    this.recentOutput = [];
-    writeFileSync(
-      this.selfHealingFile,
-      [
-        '# Self-Healing Activation',
-        '',
-        `**Task:** ${this.taskName}`,
-        `**Step:** ${this.stepName}`,
-        `**Timestamp:** ${new Date().toISOString()}`,
-        '',
-        '---',
-        '',
-        '## ❌ Failure Detected',
-        '',
-        `**Exit Code:** ${exitCode}`,
-        '',
-        '**Recent Output:**',
-        '```',
-        errorOutput,
-        '```',
-        '',
-        '---',
-        '',
-        "## 🔧 Claude's Healing Process",
-        '',
-      ].join('\n'),
-    );
-  }
-
-  private completeSelfHealingHighlight(): void {
-    if (!this.selfHealingFile) return;
-    appendFileSync(
-      this.selfHealingFile,
-      [
-        '',
-        "*(See full log for Claude's diagnostic process)*",
-        '',
-        '---',
-        '',
-        '## ✅ Resolution Applied',
-        '',
+const LOG_MATCHERS: readonly LogMatcher[] = [
+  {
+    pattern: /\[judge\]\s+(PASS|FAIL)/i,
+    apply: (ctx, s, text, match) => {
+      const verdict = match[1].toUpperCase() as 'PASS' | 'FAIL';
+      const judgeAttempt = s.judgeAttempt + 1;
+      saveJudgeHighlight(ctx, { ...s, judgeAttempt }, verdict, text);
+      return { ...s, judgeAttempt };
+    },
+  },
+  {
+    pattern: /\[self-healing\].*failed.*exit\s+(\d+)/i,
+    apply: (ctx, s, text, match) => {
+      const selfHealingFile = highlightPath(ctx, s.stepIndex, 'self_healing');
+      writeFileSync(selfHealingFile, [
+        '# Self-Healing Activation', '',
+        `**Task:** ${ctx.slug}`, `**Step:** ${s.stepName}`,
+        `**Timestamp:** ${new Date().toISOString()}`, '', '---', '',
+        '## ❌ Failure Detected', '', `**Exit Code:** ${match[1]}`, '',
+        '**Recent Output:**', '```', s.recentOutput.join('\n'), '```', '', '---', '',
+        "## 🔧 Claude's Healing Process", '',
+      ].join('\n'));
+      return { ...s, selfHealingFile, recentOutput: [] };
+    },
+  },
+  {
+    pattern: /\[self-healing\].*Re-running/i,
+    apply: (_ctx, s) => {
+      if (!s.selfHealingFile) return s;
+      appendFileSync(s.selfHealingFile, [
+        '', "*(See full log for Claude's diagnostic process)*", '', '---', '',
+        '## ✅ Resolution Applied', '',
         "The self-healing process completed. Check the full execution log to see Claude's analysis and fix.",
-        '',
-        '---',
-        '',
-        '*Auto-captured*',
-        '',
-      ].join('\n'),
-    );
-    this.selfHealingFile = '';
+        '', '---', '', '*Auto-captured*', '',
+      ].join('\n'));
+      return { ...s, selfHealingFile: '' };
+    },
+  },
+];
+
+function onLogMessage(ctx: LogContext, s: LogState, level: string, text: string): LogState {
+  appendLog(s.logFile, `[${level}] ${text}`);
+  return LOG_MATCHERS.reduce<{ matched: boolean; state: LogState }>(
+    ({ matched, state }, { pattern, apply }) => {
+      if (matched) return { matched, state };
+      const m = pattern.exec(text);
+      return m ? { matched: true, state: apply(ctx, state, text, m) } : { matched, state };
+    },
+    { matched: false, state: s },
+  ).state;
+}
+
+function onWorkflowComplete(ctx: LogContext, s: LogState): LogState {
+  appendLog(s.logFile, `\n${'━'.repeat(51)}\nTask Complete: ${ctx.slug}\nFinished: ${new Date().toISOString()}\n${'━'.repeat(51)}\n`);
+
+  const indexFile = join(ctx.highlightsDir, 'README.md');
+  if (!existsSync(indexFile)) {
+    writeFileSync(indexFile, [
+      '# Execution Highlights', '',
+      'This directory contains automatically extracted highlight moments from task executions.',
+      '', '## Latest Highlights', '',
+    ].join('\n'));
+  }
+  const highlights = (readdirSync(ctx.highlightsDir) as string[])
+    .filter((f) => f.startsWith(ctx.ts) && f.endsWith('.md'))
+    .sort();
+  if (highlights.length > 0) {
+    const entries = highlights.map((f) => `- [${f.replace(/\.md$/, '')}](./${f})`).join('\n');
+    appendFileSync(indexFile, `\n### ${ctx.slug} (${new Date().toISOString()})\n${entries}\n`);
   }
 
-  // --------------------------------------------------------------------------
-  // Workflow complete → index
-  // --------------------------------------------------------------------------
+  return s;
+}
 
-  private onWorkflowComplete(): void {
-    this.appendLog(
-      `\n${'━'.repeat(51)}\nTask Complete: ${this.taskName}\nFinished: ${new Date().toISOString()}\n${'━'.repeat(51)}\n`,
-    );
-    this.writeHighlightsIndex();
+function onOutputText(s: LogState, text: string): LogState {
+  appendLog(s.logFile, text);
+  return { ...s, recentOutput: [...s.recentOutput, text] };
+}
+
+// ============================================================================
+// Reducer — routes each event to its handler
+// ============================================================================
+
+function reduce(ctx: LogContext, s: LogState, event: Event): LogState {
+  switch (event.type) {
+    case 'workflow:start':    return onWorkflowStart(ctx, s);
+    case 'step:start':        return onStepStart(ctx, s, event.index, event.name);
+    case 'step:complete':     return onStepComplete(s);
+    case 'step:error':        return onStepError(s, event.error);
+    case 'output:text':       return onOutputText(s, event.text);
+    case 'output:tool':       return onTool(ctx, s, event.tool, event.input);
+    case 'log':               return onLogMessage(ctx, s, event.level, event.text);
+    case 'workflow:complete': return onWorkflowComplete(ctx, s);
+    default:                  return s;
   }
+}
 
-  private writeHighlightsIndex(): void {
-    const indexFile = join(this.highlightsDir, 'README.md');
+// ============================================================================
+// Public API
+// ============================================================================
 
-    if (!existsSync(indexFile)) {
-      writeFileSync(
-        indexFile,
-        [
-          '# Execution Highlights',
-          '',
-          'This directory contains automatically extracted highlight moments from task executions.',
-          '',
-          '## Latest Highlights',
-          '',
-        ].join('\n'),
-      );
-    }
+export interface Logger {
+  observe(event: Event): void;
+  getHighlightsDir(): string;
+  getTimestamp(): string;
+}
 
-    const files = readdirSync(this.highlightsDir) as string[];
-    const taskHighlights = files
-      .filter((f) => f.startsWith(this.timestamp) && f.endsWith('.md'))
-      .sort();
+export function createLogger(logDir: string, taskName: string): Logger {
+  const ctx: LogContext = {
+    logDir,
+    highlightsDir: join(logDir, 'highlights'),
+    ts: formatTimestamp(new Date()),
+    slug: slugify(taskName, 40) || 'task',
+  };
+  const enabled = process.env['EXECUTANT_LOG'] !== '0';
+  let state = INIT_STATE;
 
-    if (taskHighlights.length > 0) {
-      const entries = taskHighlights.map((f) => `- [${f.replace(/\.md$/, '')}](./${f})`).join('\n');
-      appendFileSync(indexFile, `\n### ${this.taskName} (${new Date().toISOString()})\n${entries}\n`);
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Log file writes
-  // --------------------------------------------------------------------------
-
-  private appendLog(text: string): void {
-    if (!this.logFile) return;
-    appendFileSync(this.logFile, text + '\n');
-  }
+  return {
+    getHighlightsDir: () => ctx.highlightsDir,
+    getTimestamp: () => ctx.ts,
+    observe(event: Event): void {
+      if (!enabled) return;
+      try { state = reduce(ctx, state, event); }
+      catch (err) { console.warn(`[logger] error: ${getErrorMessage(err)}`); }
+    },
+  };
 }
 
 // ============================================================================
 // Event stream tee
 // ============================================================================
 
-/**
- * Wraps an event generator so every event is also passed to the Logger.
- * The Logger is a transparent observer — it does not alter the event stream.
- */
 export async function* withLogger(
   gen: AsyncGenerator<Event>,
   logger: Logger,

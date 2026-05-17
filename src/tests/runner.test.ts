@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import type { Event, StepSkipEvent, StepStartEvent, Workflow } from '../types.js';
 import { collectEvents, collectEventsUntilError, tmpYaml } from './helpers.js';
 import { loadWorkflow } from '../load-workflow.js';
-import { runWorkflow } from '../runner.js';
+import { runWorkflow, shouldSkipStep } from '../runner.js';
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -45,6 +45,48 @@ async function collectWithOptions(
   for await (const e of runWorkflow(workflow, options)) events.push(e);
   return events;
 }
+
+// ----------------------------------------------------------------------------
+// shouldSkipStep — unit tests
+// ----------------------------------------------------------------------------
+
+describe('shouldSkipStep', () => {
+  test('returns false when no options are set', () => {
+    assert.equal(shouldSkipStep(1, 'any', {}), false);
+  });
+
+  test('stepFilter: skips a step whose name does not match', () => {
+    assert.equal(shouldSkipStep(2, 'build', { stepFilter: 'test' }), true);
+  });
+
+  test('stepFilter: does not skip a step whose name matches', () => {
+    assert.equal(shouldSkipStep(2, 'test', { stepFilter: 'test' }), false);
+  });
+
+  test('stepFilter: matches by 1-based index string', () => {
+    assert.equal(shouldSkipStep(3, 'build', { stepFilter: '3' }), false);
+  });
+
+  test('stepFilter: skips when index does not match and name does not match', () => {
+    assert.equal(shouldSkipStep(2, 'build', { stepFilter: '3' }), true);
+  });
+
+  test('stepFilter: numeric string "0" never matches (1-based)', () => {
+    assert.equal(shouldSkipStep(1, 'first', { stepFilter: '0' }), true);
+  });
+
+  test('fromStep: skips steps before the threshold', () => {
+    assert.equal(shouldSkipStep(2, 'step', { fromStep: 3 }), true);
+  });
+
+  test('fromStep: does not skip the threshold step itself', () => {
+    assert.equal(shouldSkipStep(3, 'step', { fromStep: 3 }), false);
+  });
+
+  test('fromStep: does not skip steps after the threshold', () => {
+    assert.equal(shouldSkipStep(4, 'step', { fromStep: 3 }), false);
+  });
+});
 
 // ----------------------------------------------------------------------------
 // stepFilter — by name

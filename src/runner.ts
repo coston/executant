@@ -33,6 +33,14 @@ const JudgeOutputSchema = z.object({
   feedback: z.string(),
 });
 
+export function shouldSkipStep(stepNumber: number, name: string, options: RunOptions): boolean {
+  if (options.stepFilter !== undefined) {
+    const matchByIndex = /^\d+$/.test(options.stepFilter) && parseInt(options.stepFilter, 10) === stepNumber;
+    return !matchByIndex && name !== options.stepFilter;
+  }
+  return options.fromStep !== undefined && stepNumber < options.fromStep;
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -55,20 +63,7 @@ export async function* runWorkflow(
   for (const [i, task] of workflow.tasks.entries()) {
     const stepNumber = i + 1; // 1-based
 
-    // --step filter: run only a single step matched by name or 1-based index
-    if (options.stepFilter !== undefined) {
-      const matchByIndex =
-        /^\d+$/.test(options.stepFilter) &&
-        parseInt(options.stepFilter, 10) === stepNumber;
-      const matchByName = task.name === options.stepFilter;
-      if (!matchByIndex && !matchByName) {
-        yield { type: 'step:skip', index: i, name: task.name };
-        continue;
-      }
-    }
-
-    // --from-step filter: skip all steps before N
-    if (options.fromStep !== undefined && stepNumber < options.fromStep) {
+    if (shouldSkipStep(stepNumber, task.name, options)) {
       yield { type: 'step:skip', index: i, name: task.name };
       continue;
     }

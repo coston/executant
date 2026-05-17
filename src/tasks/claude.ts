@@ -11,7 +11,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodType } from 'zod';
 import type { ClaudeTask, Event } from '../types.js';
 import { mergeStreamsToLines, waitForExit } from './stream.js';
-import { extractJsonObject } from '../lib/utils.js';
+import { extractJsonObject, getErrorMessage } from '../lib/utils.js';
 
 const DEFAULT_TOOLS = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'];
 
@@ -65,8 +65,7 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
       env: { ...process.env },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to spawn claude (${claudeBin}): ${msg}`);
+    throw new Error(`Failed to spawn claude (${claudeBin}): ${getErrorMessage(err)}`);
   }
 
   // Kill the subprocess if the parent process is signalled.
