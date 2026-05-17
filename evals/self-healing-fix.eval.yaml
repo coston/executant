@@ -19,7 +19,7 @@ test_cases:
       - "Response contains a '**Verification:**' section"
       - "Response contains a 'RETRY:' line"
       - "Diagnosis identifies a missing environment variable as the root cause"
-      - "The RETRY: line differs from the original command — it includes the missing environment variable or a setup step"
+      - "The Fix section describes how to set DATABASE_URL — either via a .env file, shell export, or by prepending it to the command"
 
   - id: test-failure
     vars:

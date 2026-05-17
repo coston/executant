@@ -1,7 +1,7 @@
-> my-app@1.0.0 test
-> jest --testPathPattern src/auth
+> app@1.0.0 test
+> jest
 
- FAIL  src/auth/__tests__/login.test.ts
+ FAIL  tests/auth/login.test.js
   Authentication
     ✓ returns 200 for valid credentials (43 ms)
     ✗ returns 401 for invalid password (8 ms)
