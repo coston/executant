@@ -37,7 +37,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 - **prompt** — runs Claude with full tool access (or a restricted `allowed_tools` list)
 - **script** — runs bash directly (no AI cost)
 - **log** — emits a plain progress marker
-- **forEach** — repeats an inner step for each item in a list or shell command output; `repeat: N` is shorthand for a forEach with a generated numeric list `["1"..."N"]` — `{{item}}` gives the 1-based iteration number
+- **forEach** — repeats one or more child steps for each item in a list or shell command output; use a `steps:` array on the forEach step to run multiple child steps per iteration; `repeat: N` is shorthand for a forEach with a generated numeric list `["1"..."N"]` — `{{item}}` gives the 1-based iteration number in all child steps
 
 ### Quality Controls
 - **`llm_as_judge`** — evaluates step output and retries on FAIL (up to 5x)

@@ -87,6 +87,24 @@ steps:
     command: npx eslint src/{{item}}
 ```
 
+Use `steps:` inside a `forEach` or `repeat` to run **multiple child steps per iteration**:
+
+```yaml
+steps:
+  - name: verify each package
+    forEach: [packages/api, packages/web, packages/shared]
+    steps:
+      - name: lint {{item}}
+        type: script
+        command: npm run lint --workspace={{item}}
+      - name: test {{item}}
+        type: script
+        command: npm test --workspace={{item}}
+      - name: build {{item}}
+        type: script
+        command: npm run build --workspace={{item}}
+```
+
 Use `repeat: N` as shorthand when there is no meaningful list — just a count. `{{item}}` is the 1-based iteration number:
 
 ```yaml
@@ -110,6 +128,7 @@ steps:
 | `hello-world.yaml` | Simple prompt steps |
 | `mixed-workflow.yaml` | Script + prompt steps together |
 | `foreach-demo.yaml` | Inline lists and shell command iteration |
+| `nested-steps-demo.yaml` | Multiple child steps per forEach / repeat iteration |
 | `vars-demo.yaml` | Variable substitution |
 | `judge-demo.yaml` | LLM-as-judge retry loop |
 | `logging-demo.yaml` | Log steps, self-healing, judge |

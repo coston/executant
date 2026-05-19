@@ -5,16 +5,15 @@
 // from the workflow runner is dispatched into this reducer — keeping all state
 // transitions in one predictable, testable place.
 
-import type { Event, ExecutionState, TaskState, Workflow } from '../types.js';
-import { formatToolCall } from './formatTool.js';
-
+import type { Event, ExecutionState, TaskState, Workflow } from "../types.js";
+import { formatToolCall } from "./formatTool.js";
 
 export function buildInitialState(workflow: Workflow): ExecutionState {
   return {
     workflow,
     tasks: workflow.tasks.map((task) => ({
       task,
-      status: 'pending',
+      status: "pending",
       lines: [],
     })),
     currentIndex: 0,
@@ -25,75 +24,95 @@ export function buildInitialState(workflow: Workflow): ExecutionState {
 
 export function reducer(state: ExecutionState, event: Event): ExecutionState {
   switch (event.type) {
-    case 'workflow:start':
+    case "workflow:start":
       return { ...state, startTime: Date.now() };
 
-    case 'workflow:complete':
+    case "workflow:complete":
       return { ...state, endTime: Date.now() };
 
-    case 'step:start':
+    case "step:start":
       return updateTask(state, event.index, {
-        status: 'running',
+        status: "running",
         startTime: Date.now(),
       });
 
-    case 'step:complete':
+    case "step:complete":
       return {
         ...updateTask(state, event.index, {
-          status: 'complete',
+          status: "complete",
           endTime: Date.now(),
         }),
         currentIndex: event.index + 1,
       };
 
-    case 'step:error':
+    case "step:error":
       // Advance currentIndex even on error so subsequent output events land on
       // the correct task. continueOnError steps resume at the next step rather
       // than replaying output into the failed one.
       return {
         ...updateTask(state, event.index, {
-          status: 'error',
+          status: "error",
           endTime: Date.now(),
           error: event.error,
         }),
         currentIndex: event.index + 1,
       };
 
-    case 'step:skip':
+    case "step:skip":
       return {
-        ...updateTask(state, event.index, { status: 'skipped' }),
+        ...updateTask(state, event.index, { status: "skipped" }),
         currentIndex: event.index + 1,
       };
 
-    case 'step:iteration':
+    case "step:iteration":
       return updateTask(state, event.index, {
-        iteration: { current: event.iteration, total: event.total, item: event.item },
+        iteration: {
+          current: event.iteration,
+          total: event.total,
+          item: event.item,
+        },
+        inner: undefined,
       });
 
-    case 'output:text': {
+    case "step:inner":
+      return updateTask(state, event.index, {
+        inner: {
+          index: event.innerIndex,
+          total: event.innerTotal,
+          name: event.name,
+        },
+      });
+
+    case "output:text": {
       const idx = event.index;
       if (idx >= state.tasks.length) return state;
       return appendLine(state, idx, event.text);
     }
 
-    case 'output:tool': {
+    case "output:tool": {
       const idx = event.index;
       if (idx >= state.tasks.length) return state;
       const formatted = formatToolCall(event.tool, event.input);
       const next = formatted ? appendLine(state, idx, formatted) : state;
-      if (event.tool === 'Write' && typeof event.input['file_path'] === 'string') {
-        return { ...next, writtenFiles: [...next.writtenFiles, event.input['file_path']] };
+      if (
+        event.tool === "Write" &&
+        typeof event.input["file_path"] === "string"
+      ) {
+        return {
+          ...next,
+          writtenFiles: [...next.writtenFiles, event.input["file_path"]],
+        };
       }
       return next;
     }
 
-    case 'output:cost':
+    case "output:cost":
       return state; // cost events are intentionally not shown in the TUI
 
-    case 'output:structured':
+    case "output:structured":
       return state; // structured output is consumed by callers, not shown in the TUI
 
-    case 'log': {
+    case "log": {
       const idx = state.currentIndex;
       if (idx >= state.tasks.length) return state;
       return appendLine(state, idx, `[${event.level}] ${event.text}`);
@@ -118,11 +137,17 @@ function updateTask(
   index: number,
   patch: Partial<TaskState>,
 ): ExecutionState {
-  const tasks = state.tasks.map((t, i) => (i === index ? { ...t, ...patch } : t));
+  const tasks = state.tasks.map((t, i) =>
+    i === index ? { ...t, ...patch } : t,
+  );
   return { ...state, tasks };
 }
 
-function appendLine(state: ExecutionState, index: number, line: string): ExecutionState {
+function appendLine(
+  state: ExecutionState,
+  index: number,
+  line: string,
+): ExecutionState {
   const tasks = state.tasks.map((t, i) => {
     if (i !== index) return t;
     const lines = [...t.lines, line];

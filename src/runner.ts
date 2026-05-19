@@ -8,19 +8,28 @@
 // sequencing and quality-control logic. Task runners (command.ts, claude.ts)
 // only know how to execute a single step.
 
-import { exec } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { promisify } from 'node:util';
-import { z } from 'zod';
-import type { ClaudeTask, CommandTask, Event, ForEachTask, LogTask, RunOptions, Task, Workflow } from './types.js';
-import { CommandError, runCommand } from './tasks/command.js';
-import { runClaude, runClaudeStructured } from './tasks/claude.js';
-import { loadPrompt, getErrorMessage, fillTemplate } from './lib/utils.js';
+import { exec } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { promisify } from "node:util";
+import { z } from "zod";
+import type {
+  ClaudeTask,
+  CommandTask,
+  Event,
+  ForEachTask,
+  LogTask,
+  RunOptions,
+  Task,
+  Workflow,
+} from "./types.js";
+import { CommandError, runCommand } from "./tasks/command.js";
+import { runClaude, runClaudeStructured } from "./tasks/claude.js";
+import { loadPrompt, getErrorMessage, fillTemplate } from "./lib/utils.js";
 
-const JUDGE_RETRY_CONTEXT = loadPrompt('judge-retry-context');
-const SELF_HEALING_PROMPT = loadPrompt('self-healing-fix');
-const JUDGE_EVALUATION_PROMPT = loadPrompt('judge-evaluation');
+const JUDGE_RETRY_CONTEXT = loadPrompt("judge-retry-context");
+const SELF_HEALING_PROMPT = loadPrompt("self-healing-fix");
+const JUDGE_EVALUATION_PROMPT = loadPrompt("judge-evaluation");
 
 const execPromise = promisify(exec);
 
@@ -33,9 +42,15 @@ const JudgeOutputSchema = z.object({
   feedback: z.string(),
 });
 
-export function shouldSkipStep(stepNumber: number, name: string, options: RunOptions): boolean {
+export function shouldSkipStep(
+  stepNumber: number,
+  name: string,
+  options: RunOptions,
+): boolean {
   if (options.stepFilter !== undefined) {
-    const matchByIndex = /^\d+$/.test(options.stepFilter) && parseInt(options.stepFilter, 10) === stepNumber;
+    const matchByIndex =
+      /^\d+$/.test(options.stepFilter) &&
+      parseInt(options.stepFilter, 10) === stepNumber;
     return !matchByIndex && name !== options.stepFilter;
   }
   return options.fromStep !== undefined && stepNumber < options.fromStep;
@@ -58,42 +73,47 @@ export async function* runWorkflow(
   options: RunOptions = {},
 ): AsyncGenerator<Event> {
   const workflowStart = Date.now();
-  yield { type: 'workflow:start', workflow };
+  yield { type: "workflow:start", workflow };
 
   for (const [i, task] of workflow.tasks.entries()) {
     const stepNumber = i + 1; // 1-based
 
     if (shouldSkipStep(stepNumber, task.name, options)) {
-      yield { type: 'step:skip', index: i, name: task.name };
+      yield { type: "step:skip", index: i, name: task.name };
       continue;
     }
 
     const stepStart = Date.now();
-    yield { type: 'step:start', index: i, name: task.name };
+    yield { type: "step:start", index: i, name: task.name };
 
     try {
       for await (const event of runStep(task)) {
-        if (event.type === 'step:iteration' || event.type === 'output:text' || event.type === 'output:tool') {
+        if (
+          event.type === "step:iteration" ||
+          event.type === "step:inner" ||
+          event.type === "output:text" ||
+          event.type === "output:tool"
+        ) {
           yield { ...event, index: i };
         } else {
           yield event;
         }
       }
       yield {
-        type: 'step:complete',
+        type: "step:complete",
         index: i,
         name: task.name,
         durationMs: Date.now() - stepStart,
       };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      yield { type: 'step:error', index: i, name: task.name, error };
+      yield { type: "step:error", index: i, name: task.name, error };
       if (!task.continueOnError) throw error;
     }
   }
 
   yield {
-    type: 'workflow:complete',
+    type: "workflow:complete",
     workflow,
     durationMs: Date.now() - workflowStart,
   };
@@ -105,27 +125,31 @@ export async function* runWorkflow(
 
 async function* runStep(task: Task): AsyncGenerator<Event> {
   switch (task.type) {
-    case 'log':
+    case "log":
       yield* runLog(task);
       break;
-    case 'command': {
-      const gen = task.selfHealing ? runCommandWithHealing(task) : runCommand(task);
+    case "command": {
+      const gen = task.selfHealing
+        ? runCommandWithHealing(task)
+        : runCommand(task);
       if (task.output) {
         const lines: string[] = [];
         yield* collectLines(gen, lines);
         mkdirSync(dirname(task.output), { recursive: true });
-        writeFileSync(task.output, lines.join('\n'), 'utf8');
+        writeFileSync(task.output, lines.join("\n"), "utf8");
       } else {
         yield* gen;
       }
       break;
     }
-    case 'claude': {
+    case "claude": {
       const expanded = expandContext(task);
-      yield* expanded.llmAsJudge ? runClaudeWithJudge(expanded) : runClaude(expanded);
+      yield* expanded.llmAsJudge
+        ? runClaudeWithJudge(expanded)
+        : runClaude(expanded);
       break;
     }
-    case 'forEach':
+    case "forEach":
       yield* runForEach(task);
       break;
     default: {
@@ -139,7 +163,7 @@ async function* runStep(task: Task): AsyncGenerator<Event> {
 
 async function* runLog(task: LogTask): AsyncGenerator<Event> {
   // index: -1 here — runWorkflow patches it to the real step index
-  yield { type: 'output:text', index: -1, text: task.message };
+  yield { type: "output:text", index: -1, text: task.message };
 }
 
 // ============================================================================
@@ -149,13 +173,43 @@ async function* runLog(task: LogTask): AsyncGenerator<Event> {
 async function* runForEach(task: ForEachTask): AsyncGenerator<Event> {
   const items = await resolveItems(task.forEach);
   const total = items.length;
+  const innerTotal = task.inner.length;
 
   for (const [i, item] of items.entries()) {
     // index: -1 here — runWorkflow patches it to the real step index
-    yield { type: 'step:iteration', index: -1, item, iteration: i + 1, total };
+    yield { type: "step:iteration", index: -1, item, iteration: i + 1, total };
 
-    const substituted = substituteItem(task.inner, item);
-    yield* runStep(substituted);
+    for (const [j, innerTask] of task.inner.entries()) {
+      const substituted = substituteItem(innerTask, item);
+      if (innerTotal > 1) {
+        yield {
+          type: "step:inner",
+          index: -1,
+          iteration: i + 1,
+          innerIndex: j,
+          innerTotal,
+          name: substituted.name,
+        };
+      }
+      try {
+        yield* runStep(substituted);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        if (!substituted.continueOnError) {
+          yield {
+            type: "log",
+            level: "warn",
+            text: `[forEach] Step "${substituted.name}" failed — aborting remaining children and iterations`,
+          };
+          throw error;
+        }
+        yield {
+          type: "log",
+          level: "warn",
+          text: `[forEach] Step "${substituted.name}" failed (continuing): ${error.message}`,
+        };
+      }
+    }
   }
 }
 
@@ -167,26 +221,43 @@ async function* runForEach(task: ForEachTask): AsyncGenerator<Event> {
 async function resolveItems(forEach: string[] | string): Promise<string[]> {
   if (Array.isArray(forEach)) return forEach.filter(Boolean);
   try {
-    const { stdout } = await execPromise(forEach, { shell: '/bin/sh', timeout: 30_000 });
-    return stdout.split('\n').filter((l: string) => l.trim().length > 0);
+    const { stdout } = await execPromise(forEach, {
+      shell: "/bin/sh",
+      timeout: 30_000,
+    });
+    return stdout.split("\n").filter((l: string) => l.trim().length > 0);
   } catch (err) {
-    throw new Error(`forEach shell command failed: ${getErrorMessage(err)}\nCommand: ${forEach}`);
+    throw new Error(
+      `forEach shell command failed: ${getErrorMessage(err)}\nCommand: ${forEach}`,
+    );
   }
 }
 
-/** Replaces `{{item}}` placeholders in the inner task's template fields. */
-function substituteItem(
-  task: CommandTask | ClaudeTask | LogTask,
-  item: string,
-): CommandTask | ClaudeTask | LogTask {
+/** Replaces `{{item}}` placeholders in a task's template fields. */
+function substituteItem(task: Task, item: string): Task {
   const sub = (s: string) => s.replace(/\{\{item\}\}/g, item);
   switch (task.type) {
-    case 'command': return { ...task, name: sub(task.name), command: sub(task.command) };
-    case 'claude':  return { ...task, name: sub(task.name), prompt: sub(task.prompt), allowedTools: task.allowedTools?.map(sub) };
-    case 'log':     return { ...task, name: sub(task.name), message: sub(task.message) };
+    case "command":
+      return { ...task, name: sub(task.name), command: sub(task.command) };
+    case "claude":
+      return {
+        ...task,
+        name: sub(task.name),
+        prompt: sub(task.prompt),
+        allowedTools: task.allowedTools?.map(sub),
+      };
+    case "log":
+      return { ...task, name: sub(task.name), message: sub(task.message) };
+    case "forEach":
+      return {
+        ...task,
+        name: sub(task.name),
+        forEach: Array.isArray(task.forEach) ? task.forEach : sub(task.forEach),
+        inner: task.inner.map((t) => substituteItem(t, item)),
+      };
     default: {
       const _: never = task;
-      throw new Error(`Unknown inner task type: ${JSON.stringify(_)}`);
+      throw new Error(`Unknown task type: ${JSON.stringify(_)}`);
     }
   }
 }
@@ -201,9 +272,15 @@ function substituteItem(
  * fix the underlying issue. The command exit code is the judge: 0 = pass.
  * Retries up to maxHealingAttempts (default 5).
  */
-async function* runCommandWithHealing(task: CommandTask): AsyncGenerator<Event> {
+async function* runCommandWithHealing(
+  task: CommandTask,
+): AsyncGenerator<Event> {
   const maxAttempts = task.maxHealingAttempts ?? MAX_HEALING_ATTEMPTS;
-  const attemptHistory: Array<{ fixSummary: string; exitCode: number; cmdOutput: string }> = [];
+  const attemptHistory: Array<{
+    fixSummary: string;
+    exitCode: number;
+    cmdOutput: string;
+  }> = [];
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const lines: string[] = [];
@@ -212,42 +289,56 @@ async function* runCommandWithHealing(task: CommandTask): AsyncGenerator<Event> 
       yield* collectLines(runCommand(task), lines);
       // Command succeeded.
       if (attempt > 0) {
-        yield { type: 'log', level: 'info', text: `[self-healing] Command passed after ${attempt + 1} attempts` };
+        yield {
+          type: "log",
+          level: "info",
+          text: `[self-healing] Command passed after ${attempt + 1} attempts`,
+        };
       }
       return;
     } catch (err) {
       const exitCode = err instanceof CommandError ? err.exitCode : 1;
-      const output = lines.join('\n');
+      const output = lines.join("\n");
 
       const remaining = maxAttempts - attempt - 1;
       if (remaining === 0) {
-        yield { type: 'log', level: 'warn', text: `[self-healing] Exhausted ${maxAttempts} attempts` };
+        yield {
+          type: "log",
+          level: "warn",
+          text: `[self-healing] Exhausted ${maxAttempts} attempts`,
+        };
         throw new Error(
           `Step "${task.name}" failed after ${maxAttempts} self-healing attempts (last exit code: ${exitCode})`,
         );
       }
 
       yield {
-        type: 'log',
-        level: 'warn',
+        type: "log",
+        level: "warn",
         text: `[self-healing] Attempt ${attempt + 1}/${maxAttempts} failed (exit ${exitCode}), invoking Claude to fix…`,
       };
 
       const historyBlock = buildAttemptHistory(attemptHistory);
-      const healPrompt = buildHealingPrompt(task.command, exitCode, output, historyBlock);
+      const healPrompt = buildHealingPrompt(
+        task.command,
+        exitCode,
+        output,
+        historyBlock,
+      );
 
       const healTask: ClaudeTask = {
-        type: 'claude',
+        type: "claude",
         name: `${task.name}:heal-${attempt + 1}`,
         prompt: healPrompt,
-        allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'],
+        allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
       };
 
       const toolCalls: string[] = [];
       const claudeLines: string[] = [];
       for await (const event of runClaude(healTask)) {
-        if (event.type === 'output:text') claudeLines.push(event.text);
-        else if (event.type === 'output:tool') toolCalls.push(formatToolCall(event.tool, event.input));
+        if (event.type === "output:text") claudeLines.push(event.text);
+        else if (event.type === "output:tool")
+          toolCalls.push(formatToolCall(event.tool, event.input));
         yield event;
       }
 
@@ -258,7 +349,11 @@ async function* runCommandWithHealing(task: CommandTask): AsyncGenerator<Event> 
         cmdOutput: output,
       });
 
-      yield { type: 'log', level: 'info', text: `[self-healing] Re-running command (${remaining} attempt(s) left)…` };
+      yield {
+        type: "log",
+        level: "info",
+        text: `[self-healing] Re-running command (${remaining} attempt(s) left)…`,
+      };
     }
   }
 }
@@ -273,7 +368,7 @@ async function* runCommandWithHealing(task: CommandTask): AsyncGenerator<Event> 
  * feedback appended to the original prompt. Maximum MAX_JUDGE_RETRIES attempts.
  */
 async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
-  let judgeContext = '';
+  let judgeContext = "";
 
   for (let attempt = 0; attempt < MAX_JUDGE_RETRIES; attempt++) {
     // On retries, append judge feedback so Claude can address it.
@@ -286,16 +381,28 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
     yield* collectLines(runClaude({ ...task, prompt }), lines);
 
     // Evaluate output quality.
-    yield { type: 'log', level: 'info', text: `[judge] Evaluating "${task.name}"…` };
-    const verdict = await evaluateWithJudge(task.name, task.prompt, lines.join('\n'));
+    yield {
+      type: "log",
+      level: "info",
+      text: `[judge] Evaluating "${task.name}"…`,
+    };
+    const verdict = await evaluateWithJudge(
+      task.name,
+      task.prompt,
+      lines.join("\n"),
+    );
 
     if (verdict.pass) {
-      yield { type: 'log', level: 'info', text: '[judge] PASS' };
+      yield { type: "log", level: "info", text: "[judge] PASS" };
       return;
     }
 
     judgeContext = verdict.feedback;
-    yield { type: 'log', level: 'warn', text: `[judge] FAIL — ${verdict.feedback}` };
+    yield {
+      type: "log",
+      level: "warn",
+      text: `[judge] FAIL — ${verdict.feedback}`,
+    };
 
     const remaining = MAX_JUDGE_RETRIES - attempt - 1;
     if (remaining === 0) {
@@ -303,7 +410,11 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
         `Step "${task.name}" failed judge evaluation after ${MAX_JUDGE_RETRIES} attempts`,
       );
     }
-    yield { type: 'log', level: 'info', text: `[judge] Retrying (${remaining} attempt(s) left)…` };
+    yield {
+      type: "log",
+      level: "info",
+      text: `[judge] Retrying (${remaining} attempt(s) left)…`,
+    };
   }
 }
 
@@ -318,11 +429,11 @@ export async function evaluateWithJudge(
 ): Promise<{ pass: boolean; feedback: string }> {
   const result = await runClaudeStructured(
     {
-      type: 'claude',
+      type: "claude",
       name: `judge:${stepName}`,
       prompt: buildJudgePrompt(stepName, stepInstructions, output),
       allowedTools: [],
-      permissionMode: 'default', // judge only reads text — no tool access needed
+      permissionMode: "default", // judge only reads text — no tool access needed
     },
     JudgeOutputSchema,
   );
@@ -342,7 +453,7 @@ async function* collectLines(
   lines: string[],
 ): AsyncGenerator<Event> {
   for await (const event of gen) {
-    if (event.type === 'output:text') lines.push(event.text);
+    if (event.type === "output:text") lines.push(event.text);
     yield event;
   }
 }
@@ -358,9 +469,11 @@ async function* collectLines(
  */
 function readContextFile(filePath: string): string {
   try {
-    return readFileSync(filePath, 'utf8');
+    return readFileSync(filePath, "utf8");
   } catch (err) {
-    throw new Error(`Context file "${filePath}" could not be read: ${getErrorMessage(err)}`);
+    throw new Error(
+      `Context file "${filePath}" could not be read: ${getErrorMessage(err)}`,
+    );
   }
 }
 
@@ -368,7 +481,7 @@ export function expandContext(task: ClaudeTask): ClaudeTask {
   if (!task.contextFiles || task.contextFiles.length === 0) return task;
   const header = task.contextFiles
     .map((fp) => `### ${fp}\n\`\`\`\n${readContextFile(fp)}\n\`\`\``)
-    .join('\n\n');
+    .join("\n\n");
   return { ...task, prompt: `${header}\n\n${task.prompt}` };
 }
 
@@ -376,31 +489,51 @@ export function expandContext(task: ClaudeTask): ClaudeTask {
 // Prompt builders
 // ============================================================================
 
-function buildHealingPrompt(command: string, exitCode: number, output: string, attemptHistory: string): string {
-  return fillTemplate(SELF_HEALING_PROMPT, { COMMAND: command, EXIT_CODE: String(exitCode), OUTPUT: output, ATTEMPT_HISTORY: attemptHistory });
+function buildHealingPrompt(
+  command: string,
+  exitCode: number,
+  output: string,
+  attemptHistory: string,
+): string {
+  return fillTemplate(SELF_HEALING_PROMPT, {
+    COMMAND: command,
+    EXIT_CODE: String(exitCode),
+    OUTPUT: output,
+    ATTEMPT_HISTORY: attemptHistory,
+  });
 }
 
-function buildJudgePrompt(stepName: string, instructions: string, output: string): string {
-  return fillTemplate(JUDGE_EVALUATION_PROMPT, { STEP_NAME: stepName, STEP_INSTRUCTIONS: instructions, OUTPUT: output });
+function buildJudgePrompt(
+  stepName: string,
+  instructions: string,
+  output: string,
+): string {
+  return fillTemplate(JUDGE_EVALUATION_PROMPT, {
+    STEP_NAME: stepName,
+    STEP_INSTRUCTIONS: instructions,
+    OUTPUT: output,
+  });
 }
 
 function formatToolCall(tool: string, input: Record<string, unknown>): string {
-  if (tool === 'Edit' || tool === 'Write') return `${tool}(${String(input['file_path'] ?? '')})`;
-  if (tool === 'Bash') return `Bash(${String(input['command'] ?? '')})`;
+  if (tool === "Edit" || tool === "Write")
+    return `${tool}(${String(input["file_path"] ?? "")})`;
+  if (tool === "Bash") return `Bash(${String(input["command"] ?? "")})`;
   return tool;
 }
 
 function buildFixSummary(toolCalls: string[], claudeLines: string[]): string {
-  if (toolCalls.length > 0) return toolCalls.join(', ');
-  return claudeLines.join(' ').trim() || 'No changes made';
+  if (toolCalls.length > 0) return toolCalls.join(", ");
+  return claudeLines.join(" ").trim() || "No changes made";
 }
 
 function buildAttemptHistory(
   attempts: Array<{ fixSummary: string; exitCode: number; cmdOutput: string }>,
 ): string {
-  if (attempts.length === 0) return '';
-  const blocks = attempts.map((a, i) =>
-    `--- Attempt ${i + 1} ---\nFix applied: ${a.fixSummary}\nResult: Failed with exit code ${a.exitCode}\nOutput: ${a.cmdOutput}`,
+  if (attempts.length === 0) return "";
+  const blocks = attempts.map(
+    (a, i) =>
+      `--- Attempt ${i + 1} ---\nFix applied: ${a.fixSummary}\nResult: Failed with exit code ${a.exitCode}\nOutput: ${a.cmdOutput}`,
   );
-  return `PREVIOUS ATTEMPTS:\n${blocks.join('\n\n')}`;
+  return `PREVIOUS ATTEMPTS:\n${blocks.join("\n\n")}`;
 }

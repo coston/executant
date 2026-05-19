@@ -19,13 +19,13 @@ interface BaseTask {
 
 /** Emits a single log line with no side effects. Useful for progress markers. */
 export interface LogTask extends BaseTask {
-  type: 'log';
+  type: "log";
   message: string;
 }
 
 /** Runs an arbitrary bash command. Streams stdout/stderr as output:text events. */
 export interface CommandTask extends BaseTask {
-  type: 'command';
+  type: "command";
   command: string;
   /**
    * When true (default for script steps), failures trigger a multi-pass Claude
@@ -47,12 +47,12 @@ export interface CommandTask extends BaseTask {
 
 /** Invokes the Claude CLI via child_process.spawn. Streams AI output as structured events. */
 export interface ClaudeTask extends BaseTask {
-  type: 'claude';
+  type: "claude";
   prompt: string;
   /** Subset of Claude tools to allow. Defaults to a safe general-purpose set. */
   allowedTools?: string[];
   /** Permission mode passed to the claude CLI. Defaults to 'bypassPermissions'. */
-  permissionMode?: 'bypassPermissions' | 'default';
+  permissionMode?: "bypassPermissions" | "default";
   /** JSON Schema object passed via --json-schema to enforce structured output. */
   jsonSchema?: Record<string, unknown>;
   /** Text appended to the system prompt via --append-system-prompt. */
@@ -73,21 +73,20 @@ export interface ClaudeTask extends BaseTask {
 }
 
 /**
- * Runs a child task (command, claude, or log) once per item in a list.
+ * Runs child tasks once per item in a list.
  * The list is either an inline array or a shell command whose newline-split
- * output provides the items. `{{item}}` in the inner task's fields is
+ * output provides the items. `{{item}}` in each inner task's fields is
  * substituted at runtime for each iteration.
  */
 export interface ForEachTask extends BaseTask {
-  type: 'forEach';
+  type: "forEach";
   forEach: string[] | string;
   /**
-   * Template task — {{item}} will be substituted per iteration.
-   * Nesting ForEachTask here is intentionally excluded: recursive iteration
-   * would require multi-dimensional item substitution and loop-termination
-   * semantics that the runner does not implement.
+   * Template tasks — {{item}} will be substituted per iteration.
+   * Always an array; single-task forEach is normalized to [task] at load time.
+   * Nested ForEachTask is supported for multi-level iteration.
    */
-  inner: CommandTask | ClaudeTask | LogTask;
+  inner: Task[];
 }
 
 export type Task = LogTask | CommandTask | ClaudeTask | ForEachTask;
@@ -98,27 +97,27 @@ export type Task = LogTask | CommandTask | ClaudeTask | ForEachTask;
 
 /** Fired once when the entire workflow begins. */
 export interface WorkflowStartEvent {
-  type: 'workflow:start';
+  type: "workflow:start";
   workflow: Workflow;
 }
 
 /** Fired once when all steps have completed (or the last error was swallowed). */
 export interface WorkflowCompleteEvent {
-  type: 'workflow:complete';
+  type: "workflow:complete";
   workflow: Workflow;
   durationMs: number;
 }
 
 /** Fired when a step begins executing. */
 export interface StepStartEvent {
-  type: 'step:start';
+  type: "step:start";
   index: number;
   name: string;
 }
 
 /** Fired when a step finishes successfully. */
 export interface StepCompleteEvent {
-  type: 'step:complete';
+  type: "step:complete";
   index: number;
   name: string;
   durationMs: number;
@@ -126,7 +125,7 @@ export interface StepCompleteEvent {
 
 /** Fired when a step throws. If continueOnError is set, execution continues. */
 export interface StepErrorEvent {
-  type: 'step:error';
+  type: "step:error";
   index: number;
   name: string;
   error: Error;
@@ -134,23 +133,33 @@ export interface StepErrorEvent {
 
 /** Fired when a step is skipped due to --step or --from-step filters. */
 export interface StepSkipEvent {
-  type: 'step:skip';
+  type: "step:skip";
   index: number;
   name: string;
 }
 
 /** Fired at the start of each forEach iteration so the UI can show progress. */
 export interface StepIterationEvent {
-  type: 'step:iteration';
+  type: "step:iteration";
   index: number;
   item: string;
-  iteration: number;  // 1-based
+  iteration: number; // 1-based
   total: number;
+}
+
+/** Fired before each child step within a multi-step forEach iteration. */
+export interface StepInnerEvent {
+  type: "step:inner";
+  index: number; // parent forEach step index
+  iteration: number; // 1-based
+  innerIndex: number; // 0-based child step index
+  innerTotal: number; // total child steps
+  name: string; // child step name ({{item}} already substituted)
 }
 
 /** A line of plain text output from a command or Claude's text blocks. */
 export interface OutputTextEvent {
-  type: 'output:text';
+  type: "output:text";
   /**
    * 0-based step index. Inner generators (log, forEach iterations) emit -1 as
    * a sentinel; runWorkflow patches this to the real step index before yielding
@@ -166,7 +175,7 @@ export interface OutputTextEvent {
  * showing the raw JSON that stream-parser.sh used to parse.
  */
 export interface OutputToolEvent {
-  type: 'output:tool';
+  type: "output:tool";
   /**
    * 0-based step index. Inner generators emit -1 as a sentinel;
    * runWorkflow patches this to the real step index before yielding downstream.
@@ -178,20 +187,20 @@ export interface OutputToolEvent {
 
 /** API cost reported at the end of a Claude invocation. */
 export interface OutputCostEvent {
-  type: 'output:cost';
+  type: "output:cost";
   usd: number;
 }
 
 /** Schema-validated JSON object from a Claude invocation that used --json-schema. */
 export interface OutputStructuredEvent {
-  type: 'output:structured';
+  type: "output:structured";
   data: unknown;
 }
 
 /** Informational messages from the runner itself (not from commands/Claude). */
 export interface LogEvent {
-  type: 'log';
-  level: 'info' | 'warn' | 'error';
+  type: "log";
+  level: "info" | "warn" | "error";
   text: string;
 }
 
@@ -203,6 +212,7 @@ export type Event =
   | StepErrorEvent
   | StepSkipEvent
   | StepIterationEvent
+  | StepInnerEvent
   | OutputTextEvent
   | OutputToolEvent
   | OutputCostEvent
@@ -239,7 +249,12 @@ export interface Workflow {
 // Execution State  (derived from the event stream by the UI reducer)
 // ----------------------------------------------------------------------------
 
-export type TaskStatus = 'pending' | 'running' | 'complete' | 'error' | 'skipped';
+export type TaskStatus =
+  | "pending"
+  | "running"
+  | "complete"
+  | "error"
+  | "skipped";
 
 export interface TaskState {
   task: Task;
@@ -251,6 +266,8 @@ export interface TaskState {
   error?: Error;
   /** Set while a forEach step is iterating. */
   iteration?: { current: number; total: number; item: string };
+  /** Set while a multi-step forEach is running a child step. */
+  inner?: { index: number; total: number; name: string };
 }
 
 export interface ExecutionState {

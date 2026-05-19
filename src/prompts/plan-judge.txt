@@ -35,6 +35,7 @@ Does the workflow contain at least one of: a lint step, a test step, or a build 
 
 - Look for `type: "script"` steps whose `command` runs a linter, test runner, or build tool
   (e.g., `npm run lint`, `npm test`, `npm run build`, `pytest`, `tsc --noEmit`, `go test`, etc.)
+- **This includes script steps nested inside a `forEach` or `repeat`'s `steps:` array** — a lint/test/build step inside a loop's child steps satisfies the verification requirement
 - A workflow with ZERO verification steps automatically FAILS regardless of other criteria
 - A visual check prompt step with `llm_as_judge: true` as the final step is acceptable if no
   lint/test/build commands exist in the project
@@ -45,6 +46,7 @@ Are steps focused on a single concern?
 - Does any step do more than one distinct thing (e.g., "implement AND test")?
 - Could any step be meaningfully split into two smaller steps?
 - Steps that combine unrelated operations are too large
+- **Exception**: A `forEach`/`repeat` step with a nested `steps:` array is NOT an atomicity violation — each child step should itself be atomic, and the parent is a loop container, not a combined action
 
 ### 3. Goal Coverage
 Do the steps collectively accomplish the stated goal?
@@ -83,7 +85,7 @@ or
 ```
 
 Rules:
-- `pass` is `true` only if ALL four criteria above are met
+- `pass` is `true` only if ALL five criteria above are met
 - `feedback` is an empty string when `pass` is `true`
 - `feedback` must be specific and actionable when `pass` is `false` — say EXACTLY what is wrong
   and what the decomposer must do to fix it

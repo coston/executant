@@ -53,9 +53,26 @@ Complete structure with all available options:
       "prompt": "Review {{item}} for issues and suggest improvements."
     },
     {
+      "name": "foreach_multi_step",
+      "forEach": ["pkg/api", "pkg/web"],
+      "steps": [
+        { "name": "lint {{item}}", "type": "script", "command": "cd {{item}} && npm run lint" },
+        { "name": "test {{item}}", "type": "script", "command": "cd {{item}} && npm test" },
+        { "name": "review {{item}}", "prompt": "Review the test results for {{item}} and summarize any issues." }
+      ]
+    },
+    {
       "name": "repeated_audit",
       "repeat": 20,
       "prompt": "Review the codebase for issues. This is pass {{item}} of 20."
+    },
+    {
+      "name": "repeated_multi_step",
+      "repeat": 3,
+      "steps": [
+        { "name": "build pass {{item}}", "type": "script", "command": "npm run build" },
+        { "name": "test pass {{item}}", "type": "script", "command": "npm test" }
+      ]
     }
   ]
 }
@@ -94,6 +111,9 @@ or commands.
 
 **Pre-Output Self-Review — Vars (MANDATORY):**
 Before finalising your JSON, scan every `prompt` and `command` field you wrote — every sentence, every numbered instruction, every parenthetical.
+
+**`{{item}}` is NOT a path — never extract it to `vars`.** It is a runtime placeholder that the runner substitutes per iteration. Only treat actual string literals as paths requiring `vars` extraction.
+
 For each field, identify ALL occurrences of paths, including:
 - Direct path references (e.g., `src/middleware/rate-limit.ts`)
 - Paths mentioned in narrative context (e.g., "match the style of tests in `src/tests/`")
@@ -158,11 +178,30 @@ Use the EXACT commands from the research document. Only skip a category if the r
 
 **REQUIRED: Always use `forEach` instead of enumerating items inline in a prompt.**
 
+**Use nested `steps:` inside `forEach` or `repeat` when:**
+- Each iteration requires **two or more** distinct actions (e.g., lint THEN test THEN review) — if there is only one action per item, use `command` or `prompt` directly on the forEach step instead
+- Replace `command`/`prompt` on the forEach step with a `steps` array of child steps
+- Child steps support all standard step fields (`type`, `command`, `prompt`, `llm_as_judge`, etc.)
+- `{{item}}` substitution applies to all child step `name`, `command`, and `prompt` fields
+- Mutually exclusive with `command`/`prompt` on the parent step
+
+```json
+{
+  "name": "process each package",
+  "forEach": ["pkg/api", "pkg/web"],
+  "steps": [
+    { "name": "lint {{item}}", "type": "script", "command": "cd {{item}} && npm run lint" },
+    { "name": "test {{item}}", "type": "script", "command": "cd {{item}} && npm test" }
+  ]
+}
+```
+
 **Use `repeat: N` when:**
 - The user asks to run the same prompt or command multiple times ("do this 20 times", "repeat 5 times", "run N iterations")
 - The step is identical each time — only the iteration number ({{item}}) differs
 - Prefer `repeat` over `forEach` when there is no meaningful list of items — just a count
 - NEVER expand "do X N times" into N separate steps — always use `repeat: N`
+- Combine with nested `steps:` when each iteration needs multiple sub-steps
 
 ## Atomicity (MANDATORY)
 
@@ -231,6 +270,7 @@ Generate a JSON object that:
 10. Uses `output:` + `context:` to pass script step results to downstream prompt steps
 11. Declares ALL file paths in `vars` — no hardcoded paths in prompts or commands, including paths in narrative or example context
 12. Places `vars` before `steps` in the JSON output
+13. Uses nested `steps:` inside `forEach`/`repeat` when each iteration needs multiple sequential actions
 
 ## Critical Rules
 

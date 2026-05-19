@@ -4,19 +4,19 @@
 // Tests for substituteVars, type inference, validation errors, and edge cases
 // not covered by the existing context/forEach/output/self-healing test files.
 
-import { test, describe } from 'node:test';
-import assert from 'node:assert/strict';
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
 
-import { loadWorkflow } from '../load-workflow.js';
-import type { ClaudeTask, CommandTask, LogTask } from '../types.js';
-import { tmpYaml } from './helpers.js';
+import { loadWorkflow } from "../load-workflow.js";
+import type { ClaudeTask, CommandTask, LogTask } from "../types.js";
+import { tmpYaml } from "./helpers.js";
 
 // ----------------------------------------------------------------------------
 // Variable substitution
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — variable substitution', () => {
-  test('substitutes a single var in a command', () => {
+describe("loadWorkflow — variable substitution", () => {
+  test("substitutes a single var in a command", () => {
     const file = tmpYaml(`
 goal: test
 vars:
@@ -27,10 +27,10 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as CommandTask;
-    assert.equal(task.command, 'deploy --env production');
+    assert.equal(task.command, "deploy --env production");
   });
 
-  test('substitutes multiple vars in a single prompt', () => {
+  test("substitutes multiple vars in a single prompt", () => {
     const file = tmpYaml(`
 goal: test
 vars:
@@ -42,10 +42,13 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ClaudeTask;
-    assert.equal(task.prompt, 'Review src/app.ts which is written in TypeScript');
+    assert.equal(
+      task.prompt,
+      "Review src/app.ts which is written in TypeScript",
+    );
   });
 
-  test('leaves {{item}} unreplaced for runner-time substitution', () => {
+  test("leaves {{item}} unreplaced for runner-time substitution", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -55,13 +58,13 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0];
-    assert.equal(task.type, 'forEach');
-    if (task.type === 'forEach') {
-      assert.equal((task.inner as CommandTask).command, 'echo {{item}}');
+    assert.equal(task.type, "forEach");
+    if (task.type === "forEach") {
+      assert.equal((task.inner[0] as CommandTask).command, "echo {{item}}");
     }
   });
 
-  test('throws at load time for unknown placeholder in command', () => {
+  test("throws at load time for unknown placeholder in command", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -74,7 +77,7 @@ steps:
     );
   });
 
-  test('throws at load time for unknown placeholder in prompt', () => {
+  test("throws at load time for unknown placeholder in prompt", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -87,7 +90,7 @@ steps:
     );
   });
 
-  test('{{item}} in forEach inner step does not throw', () => {
+  test("{{item}} in forEach inner step does not throw", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -96,10 +99,10 @@ steps:
     command: echo {{item}}
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'forEach');
+    assert.equal(wf.tasks[0].type, "forEach");
   });
 
-  test('vars map defaults to empty when not specified', () => {
+  test("vars map defaults to empty when not specified", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -110,7 +113,7 @@ steps:
     assert.deepEqual(wf.vars, {});
   });
 
-  test('vars are accessible on the returned workflow', () => {
+  test("vars are accessible on the returned workflow", () => {
     const file = tmpYaml(`
 goal: test
 vars:
@@ -120,7 +123,7 @@ steps:
     command: echo {{key}}
 `);
     const wf = loadWorkflow(file);
-    assert.deepEqual(wf.vars, { key: 'value' });
+    assert.deepEqual(wf.vars, { key: "value" });
   });
 });
 
@@ -128,8 +131,8 @@ steps:
 // Type inference
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — type inference', () => {
-  test('step with command field and no type is inferred as CommandTask', () => {
+describe("loadWorkflow — type inference", () => {
+  test("step with command field and no type is inferred as CommandTask", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -137,10 +140,10 @@ steps:
     command: npm run build
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'command');
+    assert.equal(wf.tasks[0].type, "command");
   });
 
-  test('step with prompt field and no type is inferred as ClaudeTask', () => {
+  test("step with prompt field and no type is inferred as ClaudeTask", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -148,10 +151,10 @@ steps:
     prompt: Please review this code
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'claude');
+    assert.equal(wf.tasks[0].type, "claude");
   });
 
-  test('step with message and no prompt is inferred as LogTask', () => {
+  test("step with message and no prompt is inferred as LogTask", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -159,10 +162,10 @@ steps:
     message: Starting phase 2
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'log');
+    assert.equal(wf.tasks[0].type, "log");
   });
 
-  test('explicit type: prompt takes precedence', () => {
+  test("explicit type: prompt takes precedence", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -171,10 +174,10 @@ steps:
     prompt: Do something
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'claude');
+    assert.equal(wf.tasks[0].type, "claude");
   });
 
-  test('explicit type: script creates CommandTask', () => {
+  test("explicit type: script creates CommandTask", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -183,10 +186,10 @@ steps:
     command: npm test
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'command');
+    assert.equal(wf.tasks[0].type, "command");
   });
 
-  test('explicit type: log creates LogTask', () => {
+  test("explicit type: log creates LogTask", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -195,10 +198,10 @@ steps:
     message: Done
 `);
     const wf = loadWorkflow(file);
-    assert.equal(wf.tasks[0].type, 'log');
+    assert.equal(wf.tasks[0].type, "log");
   });
 
-  test('log step uses name as message when message is absent', () => {
+  test("log step uses name as message when message is absent", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -207,7 +210,7 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as LogTask;
-    assert.equal(task.message, 'Phase complete');
+    assert.equal(task.message, "Phase complete");
   });
 });
 
@@ -215,8 +218,8 @@ steps:
 // Validation errors
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — validation errors', () => {
-  test('throws when goal field is missing', () => {
+describe("loadWorkflow — validation errors", () => {
+  test("throws when goal field is missing", () => {
     const file = tmpYaml(`
 steps:
   - name: s
@@ -225,14 +228,14 @@ steps:
     assert.throws(() => loadWorkflow(file), /goal.*required/i);
   });
 
-  test('throws when steps array is missing', () => {
+  test("throws when steps array is missing", () => {
     const file = tmpYaml(`
 goal: something
 `);
     assert.throws(() => loadWorkflow(file), /steps.*required/i);
   });
 
-  test('throws for prompt step without prompt field', () => {
+  test("throws for prompt step without prompt field", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -242,7 +245,7 @@ steps:
     assert.throws(() => loadWorkflow(file), /no prompt field/i);
   });
 
-  test('throws for script step without command field', () => {
+  test("throws for script step without command field", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -252,7 +255,7 @@ steps:
     assert.throws(() => loadWorkflow(file), /no command/i);
   });
 
-  test('throws for unknown explicit type', () => {
+  test("throws for unknown explicit type", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -263,8 +266,11 @@ steps:
     assert.throws(() => loadWorkflow(file), /invalid enum value/i);
   });
 
-  test('throws when file cannot be read', () => {
-    assert.throws(() => loadWorkflow('/nonexistent/path/workflow.yaml'), /Cannot read/i);
+  test("throws when file cannot be read", () => {
+    assert.throws(
+      () => loadWorkflow("/nonexistent/path/workflow.yaml"),
+      /Cannot read/i,
+    );
   });
 });
 
@@ -272,8 +278,8 @@ steps:
 // self_improve field
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — self_improve', () => {
-  test('selfImprove is true when self_improve: true', () => {
+describe("loadWorkflow — self_improve", () => {
+  test("selfImprove is true when self_improve: true", () => {
     const file = tmpYaml(`
 goal: test
 self_improve: true
@@ -285,7 +291,7 @@ steps:
     assert.equal(wf.selfImprove, true);
   });
 
-  test('selfImprove is undefined when not specified', () => {
+  test("selfImprove is undefined when not specified", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -301,8 +307,8 @@ steps:
 // continueOnError field
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — continueOnError', () => {
-  test('continueOnError is false by default', () => {
+describe("loadWorkflow — continueOnError", () => {
+  test("continueOnError is false by default", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -313,7 +319,7 @@ steps:
     assert.equal(wf.tasks[0].continueOnError, false);
   });
 
-  test('continueOnError: true is parsed', () => {
+  test("continueOnError: true is parsed", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -330,8 +336,8 @@ steps:
 // Zod schema validation — new coverage
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — Zod schema new coverage', () => {
-  test('throws a descriptive error when vars is not an object', () => {
+describe("loadWorkflow — Zod schema new coverage", () => {
+  test("throws a descriptive error when vars is not an object", () => {
     const file = tmpYaml(`
 goal: test
 vars: "not-an-object"
@@ -342,7 +348,7 @@ steps:
     assert.throws(() => loadWorkflow(file), /vars/);
   });
 
-  test('throws a descriptive error when command is not a string', () => {
+  test("throws a descriptive error when command is not a string", () => {
     const file = tmpYaml(`
 goal: test
 steps:
@@ -352,7 +358,7 @@ steps:
     assert.throws(() => loadWorkflow(file), /command/i);
   });
 
-  test('throws a descriptive error when steps is null', () => {
+  test("throws a descriptive error when steps is null", () => {
     const file = tmpYaml(`
 goal: test
 steps: null
@@ -360,23 +366,35 @@ steps: null
     assert.throws(() => loadWorkflow(file), /steps/i);
   });
 
-  test('unknown placeholder error names both step name and field', () => {
+  test("unknown placeholder error names both step name and field", () => {
     const file = tmpYaml(`
 goal: test
 steps:
   - name: my-step
     prompt: Fix {{missing_var}} please
 `);
-    assert.throws(() => loadWorkflow(file), (err: unknown) => {
-      assert.ok(err instanceof Error);
-      assert.ok(err.message.includes('my-step'), 'error should name the step');
-      assert.ok(err.message.includes('prompt'), 'error should name the field');
-      assert.ok(err.message.includes('{{missing_var}}'), 'error should name the placeholder');
-      return true;
-    });
+    assert.throws(
+      () => loadWorkflow(file),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.ok(
+          err.message.includes("my-step"),
+          "error should name the step",
+        );
+        assert.ok(
+          err.message.includes("prompt"),
+          "error should name the field",
+        );
+        assert.ok(
+          err.message.includes("{{missing_var}}"),
+          "error should name the placeholder",
+        );
+        return true;
+      },
+    );
   });
 
-  test('valid workflow with vars loads without error', () => {
+  test("valid workflow with vars loads without error", () => {
     const file = tmpYaml(`
 goal: Run tests
 vars:
@@ -387,7 +405,7 @@ steps:
 `);
     assert.doesNotThrow(() => loadWorkflow(file));
     const wf = loadWorkflow(file);
-    assert.equal(wf.goal, 'Run tests');
+    assert.equal(wf.goal, "Run tests");
     assert.equal(wf.tasks.length, 1);
   });
 });
@@ -396,8 +414,8 @@ steps:
 // substituteVars regression — P2-7 ($1, $2, \n in replacement values)
 // ----------------------------------------------------------------------------
 
-describe('loadWorkflow — substituteVars regression (P2-7)', () => {
-  test('var value containing $1 is substituted literally', () => {
+describe("loadWorkflow — substituteVars regression (P2-7)", () => {
+  test("var value containing $1 is substituted literally", () => {
     const file = tmpYaml(`
 goal: test
 vars:
@@ -408,10 +426,10 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as CommandTask;
-    assert.equal(task.command, 'echo $1');
+    assert.equal(task.command, "echo $1");
   });
 
-  test('var value containing $2 is substituted literally', () => {
+  test("var value containing $2 is substituted literally", () => {
     const file = tmpYaml(`
 goal: test
 vars:
@@ -422,10 +440,10 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as CommandTask;
-    assert.equal(task.command, 'echo $2');
+    assert.equal(task.command, "echo $2");
   });
 
-  test('var value containing a newline is substituted as-is', () => {
+  test("var value containing a newline is substituted as-is", () => {
     const file = tmpYaml(`
 goal: test
 vars:
@@ -437,6 +455,6 @@ steps:
     // JS template \\n → YAML file has "before\nafter"; YAML double-quote \n → actual newline
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as CommandTask;
-    assert.equal(task.command, 'show before\nafter');
+    assert.equal(task.command, "show before\nafter");
   });
 });

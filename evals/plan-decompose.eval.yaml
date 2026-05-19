@@ -36,3 +36,16 @@ test_cases:
       - "Includes verification script steps matching commands from the research doc"
       - "vars block is present and all file paths in steps use {{var_name}} syntax"
       - "Step count is 6 or more — complex task should not be collapsed into too few steps"
+
+  - id: nested-steps-foreach
+    vars:
+      DESCRIPTION: "add a shared logger utility to all packages and verify each one passes lint, tests, and build"
+      RESEARCH_DOC: fixtures/research-doc-monorepo.md
+    criteria:
+      - "Output is valid JSON with a 'goal' field and a 'steps' array"
+      - "Contains a forEach step with a nested 'steps' array (not a single command or prompt field) for per-package verification"
+      - "The nested steps array contains at least two child steps covering lint, test, or build per package"
+      - "The forEach items are the workspace package paths (packages/shared, packages/api, packages/web or similar)"
+      - "Each child step in the nested steps array uses {{item}} in its name or command field"
+      - "No hardcoded file paths in any prompt field — all file references use {{var_name}} substitution"
+      - "vars block is present and appears before the steps block"

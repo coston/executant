@@ -44,3 +44,23 @@ test_cases:
       - "The first character of the output is '{'"
       - "The 'pass' field is false — prompt fields contain hardcoded absolute file paths"
       - "The 'feedback' field mentions hardcoded paths or the missing vars block"
+
+  - id: nested-steps-valid
+    vars:
+      DESCRIPTION: "add a shared logger utility to all packages and verify each one passes lint, tests, and build"
+      WORKFLOW_JSON: fixtures/plan-judge-nested-steps-valid.json
+    criteria:
+      - "Output is valid JSON with 'pass' and 'feedback' fields"
+      - "The first character of the output is '{'"
+      - "The 'pass' field is true — the forEach step with nested steps satisfies the verification requirement"
+      - "The 'feedback' field is an empty string"
+
+  - id: nested-steps-not-atomicity-violation
+    vars:
+      DESCRIPTION: "run CI for each package in the monorepo"
+      WORKFLOW_JSON: fixtures/plan-judge-nested-steps-atomicity-false-positive.json
+    criteria:
+      - "Output is valid JSON with 'pass' and 'feedback' fields"
+      - "The first character of the output is '{'"
+      - "The 'pass' field is true — a forEach with nested steps is a valid loop container, not an atomicity violation"
+      - "The 'feedback' field is an empty string"

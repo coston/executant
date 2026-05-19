@@ -9,46 +9,37 @@
 // Generates a YAML workflow file in .claude/executant.local/tasks/todo/
 // via a three-pass pipeline: research → decompose → validate.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { dump as dumpYaml } from 'js-yaml';
-import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { runClaude, runClaudeStructured } from './tasks/claude.js';
-import { loadPrompt, slugify, timestamp, getErrorMessage, fillTemplate, formatZodIssues } from './lib/utils.js';
-import type { PlanEvent } from './ui/PlanApp.js';
-import type { ClaudeTask } from './types.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { dump as dumpYaml } from "js-yaml";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { runClaude, runClaudeStructured } from "./tasks/claude.js";
+import {
+  loadPrompt,
+  slugify,
+  timestamp,
+  getErrorMessage,
+  fillTemplate,
+  formatZodIssues,
+} from "./lib/utils.js";
+import { RawStepSchema as StepSchema } from "./load-workflow.js";
+import type { PlanEvent } from "./ui/PlanApp.js";
+import type { ClaudeTask } from "./types.js";
 
-const PLAN_RESEARCH_PROMPT = loadPrompt('plan-research');
-const PLAN_DECOMPOSE_PROMPT = loadPrompt('plan-decompose');
-const PLAN_JUDGE_PROMPT = loadPrompt('plan-judge');
-const PLAN_SYSTEM_RULES = loadPrompt('plan-system-rules');
-const PLAN_RETRY_PARSE_ERROR = loadPrompt('plan-retry-parse-error');
-const PLAN_RETRY_SCHEMA_ERROR = loadPrompt('plan-retry-schema-error');
-const PLAN_RETRY_JUDGE = loadPrompt('plan-retry-judge');
+const PLAN_RESEARCH_PROMPT = loadPrompt("plan-research");
+const PLAN_DECOMPOSE_PROMPT = loadPrompt("plan-decompose");
+const PLAN_JUDGE_PROMPT = loadPrompt("plan-judge");
+const PLAN_SYSTEM_RULES = loadPrompt("plan-system-rules");
+const PLAN_RETRY_PARSE_ERROR = loadPrompt("plan-retry-parse-error");
+const PLAN_RETRY_SCHEMA_ERROR = loadPrompt("plan-retry-schema-error");
+const PLAN_RETRY_JUDGE = loadPrompt("plan-retry-judge");
 const MAX_PLAN_RETRIES = 3;
 const TOTAL_PLAN_STAGES = 3;
 
 // ---------------------------------------------------------------------------
 // Zod schemas — validate JSON output before serialising to YAML
 // ---------------------------------------------------------------------------
-
-const StepSchema = z.object({
-  name: z.string(),
-  type: z.enum(['prompt', 'script', 'log']).optional(),
-  prompt: z.string().optional(),
-  command: z.string().optional(),
-  message: z.string().optional(),
-  continue_on_error: z.boolean().optional(),
-  self_healing: z.boolean().optional(),
-  max_healing_attempts: z.number().int().positive().optional(),
-  output: z.string().optional(),
-  llm_as_judge: z.boolean().optional(),
-  allowed_tools: z.array(z.string()).optional(),
-  forEach: z.union([z.array(z.string()), z.string()]).optional(),
-  repeat: z.number().int().positive().optional(),
-  context: z.array(z.string()).optional(),
-});
 
 const WorkflowSchema = z.object({
   goal: z.string(),
@@ -62,26 +53,34 @@ const PlanJudgeOutputSchema = z.object({
   feedback: z.string(),
 });
 
-const WORKFLOW_JSON_SCHEMA = zodToJsonSchema(WorkflowSchema) as Record<string, unknown>;
+const WORKFLOW_JSON_SCHEMA = zodToJsonSchema(WorkflowSchema) as Record<
+  string,
+  unknown
+>;
 
-function walkUp(startDir: string, check: (dir: string) => string | null): string | null {
+function walkUp(
+  startDir: string,
+  check: (dir: string) => string | null,
+): string | null {
   let dir = startDir;
   while (true) {
     const found = check(dir);
     if (found !== null) return found;
-    const parent = join(dir, '..');
+    const parent = join(dir, "..");
     if (resolve(parent) === resolve(dir)) return null;
     dir = parent;
   }
 }
 
 export function findGitRoot(startDir: string): string | null {
-  return walkUp(startDir, (dir) => existsSync(join(dir, '.git')) ? dir : null);
+  return walkUp(startDir, (dir) =>
+    existsSync(join(dir, ".git")) ? dir : null,
+  );
 }
 
 export function findProjectRoot(startDir: string): string | null {
   return walkUp(startDir, (dir) => {
-    const candidate = join(dir, '.claude', 'executant.local', 'tasks');
+    const candidate = join(dir, ".claude", "executant.local", "tasks");
     return existsSync(candidate) ? candidate : null;
   });
 }
@@ -104,16 +103,19 @@ export function isSimpleRequest(description: string): boolean {
 }
 
 export function parsePlanArgs(rawArgs: string[]): PlanArgs {
-  let description = '';
+  let description = "";
   let fast = false;
 
   // Filter out fast flags before other processing
   const args = rawArgs.filter((a) => {
-    if (a === '-q' || a === '--fast') { fast = true; return false; }
+    if (a === "-q" || a === "--fast") {
+      fast = true;
+      return false;
+    }
     return true;
   });
 
-  if (args[0] === '-h' || args[0] === '--help') {
+  if (args[0] === "-h" || args[0] === "--help") {
     console.log(`Usage: executant plan [OPTIONS] [DESCRIPTION]
 
 Generate a task plan from a description.
@@ -130,10 +132,10 @@ Examples:
     process.exit(0);
   }
 
-  if (args[0] === '-f' || args[0] === '--file') {
+  if (args[0] === "-f" || args[0] === "--file") {
     const filePath = args[1];
     if (!filePath) {
-      console.error('Error: -f/--file requires a file path argument');
+      console.error("Error: -f/--file requires a file path argument");
       process.exit(1);
     }
     if (!existsSync(filePath)) {
@@ -141,37 +143,37 @@ Examples:
       process.exit(1);
     }
     try {
-      description = readFileSync(filePath, 'utf8').trim();
+      description = readFileSync(filePath, "utf8").trim();
     } catch {
       console.error(`Error: Cannot read file: ${filePath}`);
       process.exit(1);
     }
   } else if (args.length > 0) {
-    description = args.join(' ').trim();
+    description = args.join(" ").trim();
   } else if (!process.stdin.isTTY) {
     try {
-      description = readFileSync('/dev/stdin', 'utf8').trim();
+      description = readFileSync("/dev/stdin", "utf8").trim();
     } catch {
       // ignore
     }
   }
 
   if (!description) {
-    console.error('Error: No task description provided');
-    console.error('Usage: executant plan [OPTIONS] [DESCRIPTION]');
-    console.error('       executant plan -f <filepath>');
-    console.error('       cat prompt.txt | executant plan');
+    console.error("Error: No task description provided");
+    console.error("Usage: executant plan [OPTIONS] [DESCRIPTION]");
+    console.error("       executant plan -f <filepath>");
+    console.error("       cat prompt.txt | executant plan");
     process.exit(1);
   }
 
   let taskDir = findProjectRoot(process.cwd());
   if (!taskDir) {
     const base = findGitRoot(process.cwd()) ?? process.cwd();
-    taskDir = join(base, '.claude', 'executant.local', 'tasks');
+    taskDir = join(base, ".claude", "executant.local", "tasks");
     mkdirSync(taskDir, { recursive: true });
   }
 
-  const todoDir = join(taskDir, 'todo');
+  const todoDir = join(taskDir, "todo");
   mkdirSync(todoDir, { recursive: true });
 
   const slug = slugify(description);
@@ -190,20 +192,20 @@ async function runPass3Judge(
   workflow: z.infer<typeof WorkflowSchema>,
 ): Promise<{ pass: boolean; feedback: string; skipped?: boolean }> {
   try {
-    const task: Omit<ClaudeTask, 'jsonSchema'> = {
-      type: 'claude',
-      name: 'plan:judge',
+    const task: Omit<ClaudeTask, "jsonSchema"> = {
+      type: "claude",
+      name: "plan:judge",
       prompt: fillTemplate(PLAN_JUDGE_PROMPT, {
         DESCRIPTION: description,
         WORKFLOW_JSON: JSON.stringify(workflow, null, 2),
       }),
       allowedTools: [],
-      permissionMode: 'default',
-      model: 'sonnet',
+      permissionMode: "default",
+      model: "sonnet",
     };
     return await runClaudeStructured(task, PlanJudgeOutputSchema);
   } catch {
-    return { pass: true, feedback: '', skipped: true };
+    return { pass: true, feedback: "", skipped: true };
   }
 }
 
@@ -225,7 +227,9 @@ function isLabeledSequence(arr: string[]): number | null {
   const m = arr[0]!.match(/^(.+\s)(\d+)$/);
   if (!m) return null;
   const prefix = m[1]!;
-  return arr.every((item, i) => item === `${prefix}${i + 1}`) ? arr.length : null;
+  return arr.every((item, i) => item === `${prefix}${i + 1}`)
+    ? arr.length
+    : null;
 }
 
 /**
@@ -256,7 +260,9 @@ function extractCountFromName(name: string): number | null {
  * - prompt uses {{item}}, no loop  → infer repeat from step name
  * - step_1, step_2, step_3        → repeat: 3   (N identical named steps)
  */
-export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.infer<typeof WorkflowSchema> {
+export function normalizeWorkflow(
+  workflow: z.infer<typeof WorkflowSchema>,
+): z.infer<typeof WorkflowSchema> {
   const steps = workflow.steps.map((step) => {
     // Case 1a: forEach is a numeric array ["1","2","3"]
     // Case 1b: forEach is a labeled sequence ["pass 1","pass 2","pass 3"]
@@ -270,7 +276,7 @@ export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.i
       }
     }
     // Case 2: forEach is a "seq N" or "seq 1 N" shell command
-    if (typeof step.forEach === 'string') {
+    if (typeof step.forEach === "string") {
       const n = parseSeqCommand(step.forEach);
       if (n !== null) {
         const { forEach: _forEach, ...rest } = step;
@@ -278,8 +284,12 @@ export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.i
       }
     }
     // Case 3: prompt uses {{item}} but no forEach/repeat — infer from step name
-    const prompt = typeof step.prompt === 'string' ? step.prompt : '';
-    if (prompt.includes('{{item}}') && step.forEach === undefined && step.repeat === undefined) {
+    const prompt = typeof step.prompt === "string" ? step.prompt : "";
+    if (
+      prompt.includes("{{item}}") &&
+      step.forEach === undefined &&
+      step.repeat === undefined
+    ) {
       const n = extractCountFromName(step.name);
       if (n !== null) return { ...step, repeat: n };
     }
@@ -294,30 +304,35 @@ export function normalizeWorkflow(workflow: z.infer<typeof WorkflowSchema>): z.i
  * Detects runs of steps like step_1, step_2, step_3 and collapses them into
  * a single step with repeat: N and name "step_{{item}}".
  */
-function collapseSequentialSteps(steps: z.infer<typeof StepSchema>[]): z.infer<typeof StepSchema>[] {
-  const result: z.infer<typeof StepSchema>[] = [];
-  let i = 0;
-  while (i < steps.length) {
-    const step = steps[i]!;
-    // Only try to collapse steps that already have no loop construct
-    if (step.forEach !== undefined || step.repeat !== undefined) {
-      result.push(step);
-      i++;
-      continue;
-    }
-    // Check if name ends with _1 and subsequent steps are _2, _3, ...
-    const m = step.name.match(/^(.+?)_1$/);
-    if (!m) { result.push(step); i++; continue; }
-    const prefix = m[1]!;
-    let n = 1;
-    while (i + n < steps.length && steps[i + n]!.name === `${prefix}_${n + 1}`) n++;
-    if (n < 2) { result.push(step); i++; continue; }
-    // Collapse: use first step as template, replace _1 suffix with _{{item}}
-    const { name: _name, ...rest } = step;
-    result.push({ ...rest, name: `${prefix}_{{item}}`, repeat: n });
-    i += n;
-  }
-  return result;
+function collapseSequentialSteps(
+  steps: z.infer<typeof StepSchema>[],
+): z.infer<typeof StepSchema>[] {
+  type Acc = { out: z.infer<typeof StepSchema>[]; skip: number };
+  return steps.reduce<Acc>(
+    ({ out, skip }, step, i, arr) => {
+      if (skip > 0) return { out, skip: skip - 1 };
+      if (
+        step.forEach !== undefined ||
+        step.repeat !== undefined ||
+        step.steps !== undefined
+      ) {
+        return { out: [...out, step], skip: 0 };
+      }
+      const m = step.name.match(/^(.+?)_1$/);
+      if (!m) return { out: [...out, step], skip: 0 };
+      const prefix = m[1]!;
+      let n = 1;
+      while (i + n < arr.length && arr[i + n]!.name === `${prefix}_${n + 1}`)
+        n++;
+      if (n < 2) return { out: [...out, step], skip: 0 };
+      const { name: _name, ...rest } = step;
+      return {
+        out: [...out, { ...rest, name: `${prefix}_{{item}}`, repeat: n }],
+        skip: n - 1,
+      };
+    },
+    { out: [], skip: 0 },
+  ).out;
 }
 
 /**
@@ -331,45 +346,62 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
   const { description, taskFile } = args;
   const skipResearch = args.fast || isSimpleRequest(description);
 
-  yield { type: 'plan:start', description };
+  yield { type: "plan:start", description };
 
   let researchDoc: string;
 
   if (skipResearch) {
-    yield { type: 'plan:stages', names: ['Decompose to Steps', 'Validate'] };
-    researchDoc = 'No codebase research performed — the task is self-contained. Work directly from the user\'s original goal.';
+    yield { type: "plan:stages", names: ["Decompose to Steps", "Validate"] };
+    researchDoc =
+      "No codebase research performed — the task is self-contained. Work directly from the user's original goal.";
   } else {
-    yield { type: 'plan:stages', names: ['Research & Planning', 'Decompose to Steps', 'Validate'] };
+    yield {
+      type: "plan:stages",
+      names: ["Research & Planning", "Decompose to Steps", "Validate"],
+    };
 
     // --- Pass 1: Research & Planning ---
-    yield { type: 'plan:stage', stage: 1, total: TOTAL_PLAN_STAGES, name: 'Research & Planning' };
+    yield {
+      type: "plan:stage",
+      stage: 1,
+      total: TOTAL_PLAN_STAGES,
+      name: "Research & Planning",
+    };
 
     const researchLines: string[] = [];
     try {
       const researchTask: ClaudeTask = {
-        type: 'claude',
-        name: 'plan:research',
-        prompt: fillTemplate(PLAN_RESEARCH_PROMPT, { DESCRIPTION: description }),
-        allowedTools: ['Read', 'Glob', 'Grep'],
-        permissionMode: 'bypassPermissions',
-        model: 'opus',
+        type: "claude",
+        name: "plan:research",
+        prompt: fillTemplate(PLAN_RESEARCH_PROMPT, {
+          DESCRIPTION: description,
+        }),
+        allowedTools: ["Read", "Glob", "Grep"],
+        permissionMode: "bypassPermissions",
+        model: "opus",
       };
       for await (const event of runClaude(researchTask)) {
-        if (event.type === 'output:tool') {
-          yield { type: 'plan:tool', tool: event.tool, input: event.input };
-        } else if (event.type === 'output:text') {
+        if (event.type === "output:tool") {
+          yield { type: "plan:tool", tool: event.tool, input: event.input };
+        } else if (event.type === "output:text") {
           researchLines.push(event.text);
-          yield { type: 'plan:text', text: event.text };
+          yield { type: "plan:text", text: event.text };
         }
       }
     } catch (err) {
-      yield { type: 'plan:error', message: `Research pass failed: ${getErrorMessage(err)}` };
+      yield {
+        type: "plan:error",
+        message: `Research pass failed: ${getErrorMessage(err)}`,
+      };
       return;
     }
 
-    researchDoc = researchLines.join('\n');
+    researchDoc = researchLines.join("\n");
     if (!researchDoc.trim()) {
-      yield { type: 'plan:error', message: 'Research pass produced no output — cannot decompose' };
+      yield {
+        type: "plan:error",
+        message: "Research pass produced no output — cannot decompose",
+      };
       return;
     }
   }
@@ -379,31 +411,44 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     : { decompose: 2, validate: 3, total: TOTAL_PLAN_STAGES };
 
   // --- Pass 2 (or 1 in fast mode): Decompose to Steps (with retries) ---
-  yield { type: 'plan:stage', stage: stages.decompose, total: stages.total, name: 'Decompose to Steps' };
+  yield {
+    type: "plan:stage",
+    stage: stages.decompose,
+    total: stages.total,
+    name: "Decompose to Steps",
+  };
 
-  let retryPrefix = '';
+  let retryPrefix = "";
 
   for (let attempt = 0; attempt < MAX_PLAN_RETRIES; attempt++) {
     if (attempt > 0) {
       yield {
-        type: 'plan:retry',
+        type: "plan:retry",
         attempt: attempt + 1,
         maxAttempts: MAX_PLAN_RETRIES,
-        reason: retryPrefix.replace(/\n/g, ' '),
+        reason: retryPrefix.replace(/\n/g, " "),
       };
       // Re-emit decompose stage so the TUI reflects the retry (judge rejection re-enters decompose)
-      yield { type: 'plan:stage', stage: stages.decompose, total: stages.total, name: 'Decompose to Steps' };
+      yield {
+        type: "plan:stage",
+        stage: stages.decompose,
+        total: stages.total,
+        name: "Decompose to Steps",
+      };
     }
 
-    const basePrompt = fillTemplate(PLAN_DECOMPOSE_PROMPT, { DESCRIPTION: description, RESEARCH_DOC: researchDoc });
+    const basePrompt = fillTemplate(PLAN_DECOMPOSE_PROMPT, {
+      DESCRIPTION: description,
+      RESEARCH_DOC: researchDoc,
+    });
 
     const decomposeTask: ClaudeTask = {
-      type: 'claude',
-      name: 'plan:decompose',
+      type: "claude",
+      name: "plan:decompose",
       prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
       allowedTools: [],
-      permissionMode: 'bypassPermissions',
-      model: skipResearch ? 'sonnet' : 'opus',
+      permissionMode: "bypassPermissions",
+      model: skipResearch ? "sonnet" : "opus",
       appendSystemPrompt: PLAN_SYSTEM_RULES,
       jsonSchema: WORKFLOW_JSON_SCHEMA,
     };
@@ -413,29 +458,33 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
 
     try {
       for await (const event of runClaude(decomposeTask)) {
-        if (event.type === 'output:tool') {
-          yield { type: 'plan:tool', tool: event.tool, input: event.input };
-        } else if (event.type === 'output:text') {
+        if (event.type === "output:tool") {
+          yield { type: "plan:tool", tool: event.tool, input: event.input };
+        } else if (event.type === "output:text") {
           decomposeTextLines.push(event.text);
-          yield { type: 'plan:text', text: event.text };
-        } else if (event.type === 'output:structured') {
+          yield { type: "plan:text", text: event.text };
+        } else if (event.type === "output:structured") {
           structuredOutput = event.data;
         }
       }
     } catch (err) {
       const msg = getErrorMessage(err);
       if (attempt === MAX_PLAN_RETRIES - 1) {
-        yield { type: 'plan:error', message: msg };
+        yield { type: "plan:error", message: msg };
         return;
       }
-      retryPrefix = fillTemplate(PLAN_RETRY_PARSE_ERROR, { ERROR: msg, EXCERPT: decomposeTextLines.join('\n') });
+      retryPrefix = fillTemplate(PLAN_RETRY_PARSE_ERROR, {
+        ERROR: msg,
+        EXCERPT: decomposeTextLines.join("\n"),
+      });
       continue;
     }
 
     if (structuredOutput === undefined) {
-      const issues = 'No structured output returned — ensure the response is a JSON object';
+      const issues =
+        "No structured output returned — ensure the response is a JSON object";
       if (attempt === MAX_PLAN_RETRIES - 1) {
-        yield { type: 'plan:error', message: issues };
+        yield { type: "plan:error", message: issues };
         return;
       }
       retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
@@ -446,7 +495,10 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     if (!zodResult.success) {
       const issues = formatZodIssues(zodResult.error.issues);
       if (attempt === MAX_PLAN_RETRIES - 1) {
-        yield { type: 'plan:error', message: `Plan did not match expected schema:\n${issues}` };
+        yield {
+          type: "plan:error",
+          message: `Plan did not match expected schema:\n${issues}`,
+        };
         return;
       }
       retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
@@ -454,23 +506,36 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     }
 
     // --- Pass 3 (or 2 in fast mode): Validate ---
-    yield { type: 'plan:stage', stage: stages.validate, total: stages.total, name: 'Validate' };
+    yield {
+      type: "plan:stage",
+      stage: stages.validate,
+      total: stages.total,
+      name: "Validate",
+    };
 
     const judgeResult = await runPass3Judge(description, zodResult.data);
 
     if (judgeResult.skipped) {
-      yield { type: 'plan:warn', message: 'Judge skipped due to error — proceeding without validation' };
+      yield {
+        type: "plan:warn",
+        message: "Judge skipped due to error — proceeding without validation",
+      };
     }
 
     // Judge is non-blocking: if it rejects on the final attempt the workflow is
     // written anyway — retries are exhausted and discarding the work would be worse.
     if (!judgeResult.pass && attempt < MAX_PLAN_RETRIES - 1) {
-      retryPrefix = fillTemplate(PLAN_RETRY_JUDGE, { FEEDBACK: judgeResult.feedback });
+      retryPrefix = fillTemplate(PLAN_RETRY_JUDGE, {
+        FEEDBACK: judgeResult.feedback,
+      });
       continue;
     }
 
     if (!judgeResult.pass) {
-      yield { type: 'plan:warn', message: `Judge rejected plan but retries exhausted: ${judgeResult.feedback}` };
+      yield {
+        type: "plan:warn",
+        message: `Judge rejected plan but retries exhausted: ${judgeResult.feedback}`,
+      };
     }
 
     // All passes succeeded (or judge override on final attempt) — write YAML
@@ -484,14 +549,19 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
       forceQuotes: false,
     }).trimEnd();
 
-    writeFileSync(taskFile, yamlContent + '\n', 'utf8');
+    writeFileSync(taskFile, yamlContent + "\n", "utf8");
 
-    const yamlLines = yamlContent.split('\n');
-    const preview = yamlLines.slice(0, 30).join('\n') + (yamlLines.length > 30 ? '\n...' : '');
+    const yamlLines = yamlContent.split("\n");
+    const preview =
+      yamlLines.slice(0, 30).join("\n") +
+      (yamlLines.length > 30 ? "\n..." : "");
 
-    yield { type: 'plan:complete', taskFile, preview };
+    yield { type: "plan:complete", taskFile, preview };
     return;
   }
 
-  yield { type: 'plan:error', message: 'Plan generation failed after maximum retries' };
+  yield {
+    type: "plan:error",
+    message: "Plan generation failed after maximum retries",
+  };
 }

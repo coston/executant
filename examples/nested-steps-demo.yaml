@@ -1,0 +1,57 @@
+goal: "Demonstrate nested steps — run multiple child steps per forEach or repeat iteration"
+
+steps:
+  # --- forEach with nested steps: multiple actions per item ---
+  # Each iteration runs ALL child steps in order before advancing to the next item.
+  # {{item}} is substituted into every child step's name, command, and prompt.
+
+  - name: check each source file
+    forEach: [src/runner.ts, src/types.ts, src/load-workflow.ts]
+    steps:
+      - name: count lines in {{item}}
+        type: script
+        command: wc -l "{{item}}"
+        continue_on_error: true
+
+      - name: check for TODOs in {{item}}
+        type: script
+        command: grep -n "TODO\|FIXME" "{{item}}" || true
+
+  # --- forEach from shell command with nested steps ---
+  # The item list is computed at runtime; each item still runs all child steps.
+
+  - name: verify each changed file
+    forEach: "git diff --name-only HEAD~1 -- '*.ts'"
+    steps:
+      - name: lint {{item}}
+        type: script
+        command: npx eslint "{{item}}"
+        continue_on_error: true
+
+      - name: review {{item}}
+        # Prompt steps must write output to a file — streamed text is not persisted between steps.
+        prompt: |
+          Read {{item}} and review the recent changes.
+          1. Identify any obvious bugs or logic errors
+          2. Note any missing tests for the changed code
+          Write a one-paragraph summary to .reviews/{{item}}.md (create parent dirs if needed).
+
+  # --- repeat with nested steps: multi-phase iteration ---
+  # Useful when each pass of N needs more than one distinct action.
+
+  - name: multi-phase stress test
+    repeat: 3
+    steps:
+      - name: build pass {{item}}
+        type: script
+        command: npm run build
+        continue_on_error: true
+
+      - name: test pass {{item}}
+        type: script
+        command: npm test
+        continue_on_error: true
+
+      - name: summarize pass {{item}}
+        type: log
+        message: "Completed pass {{item}} of 3"

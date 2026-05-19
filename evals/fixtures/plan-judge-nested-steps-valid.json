@@ -1,0 +1,63 @@
+{
+  "goal": "Add a shared logger utility to all packages in the monorepo",
+  "vars": {
+    "shared_pkg": "packages/shared",
+    "api_pkg": "packages/api",
+    "web_pkg": "packages/web",
+    "logger_file": "packages/shared/src/logger.ts",
+    "shared_index": "packages/shared/src/index.ts",
+    "api_app": "packages/api/src/app.ts",
+    "web_main": "packages/web/src/main.tsx",
+    "logger_test": "packages/shared/src/tests/logger.test.ts"
+  },
+  "steps": [
+    {
+      "name": "install pino",
+      "type": "script",
+      "command": "npm install pino --workspace={{shared_pkg}}"
+    },
+    {
+      "name": "create logger",
+      "prompt": "Create a typed Logger class in {{logger_file}} wrapping pino. Export a singleton logger instance as the default export.",
+      "llm_as_judge": true
+    },
+    {
+      "name": "export logger from shared index",
+      "prompt": "Add an export for the logger from {{shared_index}} so consuming packages can import it."
+    },
+    {
+      "name": "integrate logger into api",
+      "prompt": "In {{api_app}}, import the logger from {{shared_pkg}} and use it to log all incoming requests via middleware."
+    },
+    {
+      "name": "integrate logger into web",
+      "prompt": "In {{web_main}}, import the logger from {{shared_pkg}} and use it to log unhandled errors via window.onerror."
+    },
+    {
+      "name": "write logger tests",
+      "prompt": "Write unit tests for the Logger class in {{logger_test}}. Test that log methods emit the correct level and message.",
+      "llm_as_judge": true
+    },
+    {
+      "name": "verify each package",
+      "forEach": ["packages/shared", "packages/api", "packages/web"],
+      "steps": [
+        {
+          "name": "lint {{item}}",
+          "type": "script",
+          "command": "npm run lint --workspace={{item}}"
+        },
+        {
+          "name": "test {{item}}",
+          "type": "script",
+          "command": "npm test --workspace={{item}}"
+        },
+        {
+          "name": "build {{item}}",
+          "type": "script",
+          "command": "npm run build --workspace={{item}}"
+        }
+      ]
+    }
+  ]
+}

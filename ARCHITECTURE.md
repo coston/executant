@@ -60,6 +60,8 @@ Three prompt files are read once at module load time and stored as module-level 
 
 When a `forEach` step is running, a failure in any single iteration propagates out of the inner `runStep` call and aborts all remaining iterations. The error then surfaces to `runWorkflow`'s outer try/catch, which checks `continueOnError` on the **forEach step** (not the inner step) to decide whether to continue the workflow. Setting `continue_on_error: true` on the forEach step therefore means: *"if any iteration fails, skip the rest and carry on to the next workflow step."*
 
+For multi-step forEach (using the `steps:` key), each child step has its own `continueOnError`. If a child step fails with `continue_on_error: true`, only that child is skipped and the next child in the same iteration runs. If a child step fails without `continue_on_error`, the error propagates out of the entire loop — remaining children in the current iteration and all subsequent iterations are abandoned, and the outer `continueOnError` on the forEach step determines whether the workflow continues.
+
 ## Why Async Generators
 
 The runner is an async generator (`async function*`) for three reasons:
@@ -74,7 +76,7 @@ All communication between the runner and consumers uses the `Event` discriminate
 
 Key event types in the union:
 - `workflow:start` / `workflow:complete` — workflow lifecycle
-- `step:start` / `step:complete` / `step:error` / `step:skip` / `step:iteration` — step lifecycle
+- `step:start` / `step:complete` / `step:error` / `step:skip` / `step:iteration` / `step:inner` — step lifecycle (`step:inner` fires before each child step in a multi-step forEach/repeat)
 - `output:text` — plain text line from a command or Claude's text blocks
 - `output:tool` — structured tool invocation emitted by Claude
 - `output:cost` — API cost reported at the end of a Claude invocation

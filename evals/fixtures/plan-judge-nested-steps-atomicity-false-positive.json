@@ -1,0 +1,31 @@
+{
+  "goal": "Run CI for each package in the monorepo",
+  "vars": {
+    "shared_pkg": "packages/shared",
+    "api_pkg": "packages/api",
+    "web_pkg": "packages/web"
+  },
+  "steps": [
+    {
+      "name": "run ci for each package",
+      "forEach": ["packages/shared", "packages/api", "packages/web"],
+      "steps": [
+        {
+          "name": "lint {{item}}",
+          "type": "script",
+          "command": "npm run lint --workspace={{item}}"
+        },
+        {
+          "name": "test {{item}}",
+          "type": "script",
+          "command": "npm test --workspace={{item}}"
+        },
+        {
+          "name": "build {{item}}",
+          "type": "script",
+          "command": "npm run build --workspace={{item}}"
+        }
+      ]
+    }
+  ]
+}

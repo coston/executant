@@ -10,59 +10,73 @@
 // The --ci flag runs the same event stream in headless mode (NDJSON to stdout)
 // instead of the Ink TUI, showing that the runner and UI are fully decoupled.
 
-import React from 'react';
-import { render } from 'ink';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { loadWorkflow } from './load-workflow.js';
-import { runWorkflow } from './runner.js';
-import { checkForUpdate } from './update.js';
-import { App } from './ui/App.js';
-import { parsePlanArgs, streamPlan } from './plan.js';
-import { PlanApp } from './ui/PlanApp.js';
-import { type Logger, createLogger, resolveLogDir, withLogger } from './logger.js';
-import { runRetrospective } from './retrospective.js';
-import type { RunOptions, Workflow } from './types.js';
-import { getErrorMessage } from './lib/utils.js';
+import React from "react";
+import { render } from "ink";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadWorkflow } from "./load-workflow.js";
+import { runWorkflow } from "./runner.js";
+import { checkForUpdate } from "./update.js";
+import { App } from "./ui/App.js";
+import { parsePlanArgs, streamPlan } from "./plan.js";
+import { PlanApp } from "./ui/PlanApp.js";
+import {
+  type Logger,
+  createLogger,
+  resolveLogDir,
+  withLogger,
+} from "./logger.js";
+import { runRetrospective } from "./retrospective.js";
+import type { RunOptions, Workflow } from "./types.js";
+import { getErrorMessage } from "./lib/utils.js";
 
-const CURRENT_VERSION = (JSON.parse(
-  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
-) as { version: string }).version;
+const CURRENT_VERSION = (
+  JSON.parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
+      "utf-8",
+    ),
+  ) as { version: string }
+).version;
 
 const rawArgs = process.argv.slice(2);
 
 // executant plan — generate task YAML from description
-if (rawArgs[0] === 'plan') {
+if (rawArgs[0] === "plan") {
   const planArgs = parsePlanArgs(rawArgs.slice(1));
   const planEvents = streamPlan(planArgs);
-  const inkApp = render(React.createElement(PlanApp, {
-    description: planArgs.description,
-    events: planEvents,
-  }));
+  const inkApp = render(
+    React.createElement(PlanApp, {
+      description: planArgs.description,
+      events: planEvents,
+    }),
+  );
   try {
     await inkApp.waitUntilExit();
-  } catch { /* user quit or error — PlanApp already displayed it */ }
+  } catch {
+    /* user quit or error — PlanApp already displayed it */
+  }
   process.exit(0);
 }
 
 // executant update — upgrade in-place from GitHub
-if (rawArgs[0] === 'update') {
-  const { checkForUpdate, doUpdate } = await import('./update.js');
+if (rawArgs[0] === "update") {
+  const { checkForUpdate, doUpdate } = await import("./update.js");
   const newer = await checkForUpdate(CURRENT_VERSION);
   if (!newer) process.exit(0);
   console.log(`Updating to v${newer}...`);
   try {
     await doUpdate();
-    console.log('Done.');
+    console.log("Done.");
   } catch (err) {
-    console.error('Update failed:', getErrorMessage(err));
+    console.error("Update failed:", getErrorMessage(err));
     process.exit(1);
   }
   process.exit(0);
 }
 
-if (rawArgs.length === 0 || rawArgs[0] === '--help' || rawArgs[0] === '-h') {
+if (rawArgs.length === 0 || rawArgs[0] === "--help" || rawArgs[0] === "-h") {
   console.log(`Usage: executant [options] <workflow.yaml>
        executant update
 
@@ -90,7 +104,15 @@ YAML — step fields (all step types):
   forEach           string or list
                     Inline YAML array OR a shell command whose newline-split
                     stdout provides the items. {{item}} is substituted per
-                    iteration in the inner step's prompt or command.
+                    iteration in every child step's name, command, and prompt.
+  repeat            int     Run this step N times; {{item}} is the 1-based
+                    iteration number. Mutually exclusive with forEach.
+  steps             list    Multiple child steps to run per forEach/repeat
+                    iteration. Mutually exclusive with command/prompt on the
+                    parent step. Requires forEach or repeat.
+  context           list    Var names whose file-path values are prepended to
+                    a prompt step's content at runtime.
+  output            string  Var name; captures script stdout to that file path.
 
 YAML — prompt step fields (type: prompt, or inferred when prompt is present):
   prompt            string  (required) Instructions sent to Claude
@@ -102,7 +124,7 @@ YAML — prompt step fields (type: prompt, or inferred when prompt is present):
 YAML — script step fields (type: script | command, or inferred when command is present):
   command           string  (required) Bash command to execute
   self_healing      bool    On failure, Claude diagnoses and fixes iteratively
-                            up to 5 attempts with accumulated context (default: true)
+                            up to 5 attempts with accumulated context (default: false)
   max_healing_attempts  int   Override max self-healing retries (default: 5)
 
 YAML — log step fields (type: log, or inferred when message is present and prompt is absent):
@@ -134,15 +156,24 @@ const positional: string[] = [];
 
 for (let i = 0; i < rawArgs.length; i++) {
   const a = rawArgs[i];
-  if (a === '--ci') {
+  if (a === "--ci") {
     ciMode = true;
-  } else if (a === '--step') {
-    if (!rawArgs[i + 1]) { console.error('--step requires a value'); process.exit(1); }
+  } else if (a === "--step") {
+    if (!rawArgs[i + 1]) {
+      console.error("--step requires a value");
+      process.exit(1);
+    }
     stepFilter = rawArgs[++i];
-  } else if (a === '--from-step') {
-    if (!rawArgs[i + 1]) { console.error('--from-step requires a value'); process.exit(1); }
+  } else if (a === "--from-step") {
+    if (!rawArgs[i + 1]) {
+      console.error("--from-step requires a value");
+      process.exit(1);
+    }
     fromStep = parseInt(rawArgs[++i], 10);
-    if (isNaN(fromStep)) { console.error('--from-step must be a number'); process.exit(1); }
+    if (isNaN(fromStep)) {
+      console.error("--from-step must be a number");
+      process.exit(1);
+    }
   } else {
     positional.push(a);
   }
@@ -151,7 +182,7 @@ for (let i = 0; i < rawArgs.length; i++) {
 const filePath = positional[0];
 
 if (!filePath) {
-  console.error('Error: no workflow file specified');
+  console.error("Error: no workflow file specified");
   process.exit(1);
 }
 
@@ -179,12 +210,24 @@ function errorReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
-async function maybeRunRetrospective(filePath: string, workflow: Workflow, logger?: Logger): Promise<void> {
+async function maybeRunRetrospective(
+  filePath: string,
+  workflow: Workflow,
+  logger?: Logger,
+): Promise<void> {
   if (!logger) return;
   try {
-    await runRetrospective(filePath, workflow, logger.getHighlightsDir(), logger.getTimestamp());
+    await runRetrospective(
+      filePath,
+      workflow,
+      logger.getHighlightsDir(),
+      logger.getTimestamp(),
+    );
   } catch (err) {
-    console.warn('[executant] retrospective failed (non-fatal):', getErrorMessage(err));
+    console.warn(
+      "[executant] retrospective failed (non-fatal):",
+      getErrorMessage(err),
+    );
   }
 }
 
@@ -193,7 +236,7 @@ if (ciMode) {
   // Useful for logs, piping into other tools, or running in a headless env.
   (async () => {
     for await (const event of events) {
-      process.stdout.write(JSON.stringify(event, errorReplacer) + '\n');
+      process.stdout.write(JSON.stringify(event, errorReplacer) + "\n");
     }
     if (workflow.selfImprove) {
       await maybeRunRetrospective(filePath, workflow, logger);
@@ -204,9 +247,12 @@ if (ciMode) {
   });
 } else {
   // Interactive mode: render the Ink TUI.
-  const inkApp = render(React.createElement(App, { workflow, events, options, updateCheck }));
+  const inkApp = render(
+    React.createElement(App, { workflow, events, options, updateCheck }),
+  );
   if (workflow.selfImprove) {
-    inkApp.waitUntilExit()
+    inkApp
+      .waitUntilExit()
       .then(() => maybeRunRetrospective(filePath, workflow, logger))
       .catch(() => {
         // Workflow failed — skip retrospective

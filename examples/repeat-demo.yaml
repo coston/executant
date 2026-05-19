@@ -1,4 +1,5 @@
 goal: "Demonstrate repeat — run a step N times"
+# To run multiple child steps per iteration, see nested-steps-demo.yaml.
 
 steps:
   - name: warm up

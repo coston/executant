@@ -1,4 +1,5 @@
 goal: "Demonstrate forEach — run a step once per item in a list"
+# To run multiple child steps per item, see nested-steps-demo.yaml.
 
 steps:
   # --- Inline list: process each file explicitly listed ---
