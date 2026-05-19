@@ -1,7 +1,12 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { TaskState } from "../types.js";
-import { SPINNER, formatTaskElapsed } from "./utils.js";
+import {
+  SPINNER,
+  STATUS_ICON,
+  STATUS_COLOR,
+  formatTaskElapsed,
+} from "./utils.js";
 import { theme } from "./theme.js";
 
 interface Props {
@@ -17,13 +22,8 @@ export function TaskRow({ taskState, isActive, index, tick }: Props) {
   const icon = statusIcon(status, tick);
   const color = statusColor(status, isActive);
   const elapsed = formatTaskElapsed(startTime, endTime, status);
-  const iterInfo = taskState.iteration
-    ? ` (${taskState.iteration.current}/${taskState.iteration.total}) ${taskState.iteration.item}`
-    : "";
-  const innerInfo = taskState.inner
-    ? ` — ${taskState.inner.name} [${taskState.inner.index + 1}/${taskState.inner.total}]`
-    : "";
-  const label = `${index + 1}. ${task.name}${iterInfo}${innerInfo}`;
+  const iterInfo = formatIterCount(taskState.iterationHistory);
+  const label = `${index + 1}. ${task.name}${iterInfo}`;
 
   return (
     <Box>
@@ -43,19 +43,6 @@ export function TaskRow({ taskState, isActive, index, tick }: Props) {
 // Helpers
 // ----------------------------------------------------------------------------
 
-const STATUS_ICON: Partial<Record<TaskState["status"], string>> = {
-  complete: "✓",
-  error: "✗",
-  skipped: "⊘",
-  pending: "·",
-};
-
-const STATUS_COLOR: Partial<Record<TaskState["status"], string>> = {
-  complete: theme.success,
-  error: theme.error,
-  pending: theme.muted,
-};
-
 function statusIcon(status: TaskState["status"], tick: number): string {
   return status === "running"
     ? SPINNER[tick % SPINNER.length]
@@ -65,4 +52,12 @@ function statusIcon(status: TaskState["status"], tick: number): string {
 function statusColor(status: TaskState["status"], isActive: boolean): string {
   if (isActive && status === "running") return theme.primary;
   return STATUS_COLOR[status] ?? theme.foreground;
+}
+
+function formatIterCount(history: TaskState["iterationHistory"]): string {
+  if (!history?.length) return "";
+  const total = history[0].total;
+  const running = history.find((r) => r.status === "running");
+  const current = running?.iteration ?? history.length;
+  return ` (${current}/${total})`;
 }

@@ -343,14 +343,16 @@ steps:
       total: 3,
     });
 
-    assert.deepEqual(updated.tasks[0].iteration, {
-      current: 1,
-      total: 3,
-      item: "x",
-    });
+    const history = updated.tasks[0].iterationHistory;
+    assert.ok(history);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].item, "x");
+    assert.equal(history[0].iteration, 1);
+    assert.equal(history[0].total, 3);
+    assert.equal(history[0].status, "running");
   });
 
-  test("overwrites iteration on subsequent events", () => {
+  test("appends to iterationHistory on subsequent events, marking previous complete", () => {
     let state = makeState();
     state = reducer(state, { type: "step:start", index: 0, name: "loop" });
     state = reducer(state, {
@@ -368,11 +370,13 @@ steps:
       total: 3,
     });
 
-    assert.deepEqual(state.tasks[0].iteration, {
-      current: 2,
-      total: 3,
-      item: "y",
-    });
+    const history = state.tasks[0].iterationHistory;
+    assert.ok(history);
+    assert.equal(history.length, 2);
+    assert.equal(history[0].item, "x");
+    assert.equal(history[0].status, "complete");
+    assert.equal(history[1].item, "y");
+    assert.equal(history[1].status, "running");
   });
 
   test("does not affect other tasks", () => {
@@ -397,8 +401,8 @@ steps:
       total: 2,
     });
 
-    assert.equal(state.tasks[0].iteration, undefined);
-    assert.ok(state.tasks[1].iteration !== undefined);
+    assert.equal(state.tasks[0].iterationHistory, undefined);
+    assert.ok(state.tasks[1].iterationHistory !== undefined);
   });
 });
 
@@ -730,6 +734,35 @@ steps:
   });
 });
 
+describe("runWorkflow — forEach log step substitution", () => {
+  test("{{item}} is substituted in log step message inside forEach", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: announce
+    forEach: [alpha, beta, gamma]
+    steps:
+      - name: log {{item}}
+        type: log
+        message: "processing item: {{item}}"
+`),
+    );
+    const events = await collectEvents(wf);
+    const textLines = events
+      .filter(
+        (e): e is { type: "output:text"; index: number; text: string } =>
+          e.type === "output:text",
+      )
+      .map((e) => e.text);
+
+    assert.ok(textLines.some((l) => l.includes("processing item: alpha")));
+    assert.ok(textLines.some((l) => l.includes("processing item: beta")));
+    assert.ok(textLines.some((l) => l.includes("processing item: gamma")));
+    assert.ok(!textLines.some((l) => l.includes("{{item}}")));
+  });
+});
+
 describe("runWorkflow — nested steps events", () => {
   test("emits step:inner before each child step in multi-step forEach", async () => {
     const wf = loadWorkflow(
@@ -1022,7 +1055,7 @@ steps:
     return buildInitialState(wf);
   }
 
-  test("sets inner on the correct task", () => {
+  test("sets inner on the running iteration record", () => {
     let state = makeMultiStepState();
     state = reducer(state, { type: "step:start", index: 0, name: "process" });
     state = reducer(state, {
@@ -1041,10 +1074,13 @@ steps:
       name: "A x",
     });
 
-    assert.deepEqual(state.tasks[0].inner, { index: 0, total: 2, name: "A x" });
+    const running = state.tasks[0].iterationHistory?.find(
+      (r) => r.status === "running",
+    );
+    assert.deepEqual(running?.inner, { index: 0, total: 2, name: "A x" });
   });
 
-  test("step:iteration resets inner to undefined", () => {
+  test("new step:iteration marks previous running record complete (inner cleared)", () => {
     let state = makeMultiStepState();
     state = reducer(state, { type: "step:start", index: 0, name: "process" });
     state = reducer(state, {
@@ -1062,7 +1098,7 @@ steps:
       innerTotal: 2,
       name: "B x",
     });
-    // New iteration should clear inner
+    // New iteration: previous record (x) is now complete; new record (y) has no inner yet
     state = reducer(state, {
       type: "step:iteration",
       index: 0,
@@ -1071,15 +1107,16 @@ steps:
       total: 2,
     });
 
-    assert.equal(state.tasks[0].inner, undefined);
-    assert.deepEqual(state.tasks[0].iteration, {
-      current: 2,
-      total: 2,
-      item: "y",
-    });
+    const history = state.tasks[0].iterationHistory;
+    assert.ok(history);
+    assert.equal(history[0].item, "x");
+    assert.equal(history[0].status, "complete");
+    assert.equal(history[1].item, "y");
+    assert.equal(history[1].status, "running");
+    assert.equal(history[1].inner, undefined);
   });
 
-  test("step:inner overwrites previous inner on the same task", () => {
+  test("step:inner overwrites inner on the running iteration record", () => {
     let state = makeMultiStepState();
     state = reducer(state, { type: "step:start", index: 0, name: "process" });
     state = reducer(state, {
@@ -1106,6 +1143,9 @@ steps:
       name: "B x",
     });
 
-    assert.deepEqual(state.tasks[0].inner, { index: 1, total: 2, name: "B x" });
+    const running = state.tasks[0].iterationHistory?.find(
+      (r) => r.status === "running",
+    );
+    assert.deepEqual(running?.inner, { index: 1, total: 2, name: "B x" });
   });
 });

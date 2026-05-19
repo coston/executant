@@ -36,27 +36,47 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
         startTime: Date.now(),
       });
 
-    case "step:complete":
+    case "step:complete": {
+      const prev = state.tasks[event.index]?.iterationHistory;
+      const iterationHistory = prev?.length
+        ? prev.map((r) =>
+            r.status === "running"
+              ? { ...r, status: "complete" as const, endTime: Date.now() }
+              : r,
+          )
+        : undefined;
       return {
         ...updateTask(state, event.index, {
           status: "complete",
           endTime: Date.now(),
+          ...(iterationHistory ? { iterationHistory } : {}),
         }),
         currentIndex: event.index + 1,
       };
+    }
 
-    case "step:error":
+    case "step:error": {
       // Advance currentIndex even on error so subsequent output events land on
       // the correct task. continueOnError steps resume at the next step rather
       // than replaying output into the failed one.
+      const prev = state.tasks[event.index]?.iterationHistory;
+      const iterationHistory = prev?.length
+        ? prev.map((r) =>
+            r.status === "running"
+              ? { ...r, status: "error" as const, endTime: Date.now() }
+              : r,
+          )
+        : undefined;
       return {
         ...updateTask(state, event.index, {
           status: "error",
           endTime: Date.now(),
           error: event.error,
+          ...(iterationHistory ? { iterationHistory } : {}),
         }),
         currentIndex: event.index + 1,
       };
+    }
 
     case "step:skip":
       return {
@@ -64,24 +84,44 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
         currentIndex: event.index + 1,
       };
 
-    case "step:iteration":
+    case "step:iteration": {
+      const prev = (state.tasks[event.index]?.iterationHistory ?? []).map(
+        (r) =>
+          r.status === "running"
+            ? { ...r, status: "complete" as const, endTime: Date.now() }
+            : r,
+      );
       return updateTask(state, event.index, {
-        iteration: {
-          current: event.iteration,
-          total: event.total,
-          item: event.item,
-        },
-        inner: undefined,
+        iterationHistory: [
+          ...prev,
+          {
+            item: event.item,
+            iteration: event.iteration,
+            total: event.total,
+            status: "running" as const,
+            startTime: Date.now(),
+          },
+        ],
       });
+    }
 
-    case "step:inner":
-      return updateTask(state, event.index, {
-        inner: {
-          index: event.innerIndex,
-          total: event.innerTotal,
-          name: event.name,
-        },
-      });
+    case "step:inner": {
+      const iterationHistory = (
+        state.tasks[event.index]?.iterationHistory ?? []
+      ).map((r) =>
+        r.status === "running"
+          ? {
+              ...r,
+              inner: {
+                index: event.innerIndex,
+                total: event.innerTotal,
+                name: event.name,
+              },
+            }
+          : r,
+      );
+      return updateTask(state, event.index, { iterationHistory });
+    }
 
     case "output:text": {
       const idx = event.index;

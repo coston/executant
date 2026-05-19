@@ -256,6 +256,20 @@ export type TaskStatus =
   | "error"
   | "skipped";
 
+/** A single forEach iteration's state, including history of completed iterations. */
+export interface IterationRecord {
+  item: string;
+  /** 1-based iteration counter. */
+  iteration: number;
+  /** Total number of iterations. */
+  total: number;
+  status: "running" | "complete" | "error";
+  startTime: number;
+  endTime?: number;
+  /** Set when the iteration is running a named child step (innerTotal > 1). */
+  inner?: { index: number; total: number; name: string };
+}
+
 export interface TaskState {
   task: Task;
   status: TaskStatus;
@@ -264,10 +278,8 @@ export interface TaskState {
   /** Rolling buffer of output lines rendered in the log pane. */
   lines: string[];
   error?: Error;
-  /** Set while a forEach step is iterating. */
-  iteration?: { current: number; total: number; item: string };
-  /** Set while a multi-step forEach is running a child step. */
-  inner?: { index: number; total: number; name: string };
+  /** Per-iteration records for forEach steps; grows as iterations start/finish. */
+  iterationHistory?: IterationRecord[];
 }
 
 export interface ExecutionState {
