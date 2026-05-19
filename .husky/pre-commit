@@ -3,4 +3,4 @@ npx lint-staged
 npm run lint
 npm test
 npm run bundle
-npx knip
+npx knip --fix && git add -u && npx knip
