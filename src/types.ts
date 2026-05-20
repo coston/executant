@@ -223,11 +223,18 @@ export type Event =
 // Run options  (CLI flags, not YAML — passed to runWorkflow)
 // ----------------------------------------------------------------------------
 
+/**
+ * Dot-notation path for resuming from a nested step. Each element is 1-based.
+ * [stepIdx] | [stepIdx, iteration] | [stepIdx, iteration, childIdx, ...]
+ * Components alternate: step → iteration → child-step → iteration → …
+ */
+export type FromStepTarget = number[];
+
 export interface RunOptions {
   /** Run only this step: match by name or 1-based index string. */
   stepFilter?: string;
-  /** Skip all steps before this 1-based index. */
-  fromStep?: number;
+  /** Resume from this 1-based path (e.g. [3] or [3,2] or [2,5,4,3]). */
+  fromStep?: FromStepTarget;
 }
 
 // ----------------------------------------------------------------------------

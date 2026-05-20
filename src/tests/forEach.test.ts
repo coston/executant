@@ -12,11 +12,15 @@ import { reducer, buildInitialState } from "../ui/reducer.js";
 import type {
   CommandTask,
   ClaudeTask,
+  Event,
   ForEachTask,
+  OutputTextEvent,
   StepInnerEvent,
   StepIterationEvent,
+  StepStartEvent,
 } from "../types.js";
 import { tmpYaml, collectEvents, collectEventsUntilError } from "./helpers.js";
+import { runWorkflow } from "../runner.js";
 
 // ----------------------------------------------------------------------------
 // load-workflow: YAML → ForEachTask
@@ -1176,5 +1180,215 @@ steps:
       (r) => r.status === "running",
     );
     assert.deepEqual(running?.inner, { index: 1, total: 2, name: "B x" });
+  });
+});
+
+// ----------------------------------------------------------------------------
+// runWorkflow — fromStep dot-notation sub-step targeting
+// ----------------------------------------------------------------------------
+
+async function collectWithOptions(
+  wf: ReturnType<typeof loadWorkflow>,
+  options: Parameters<typeof runWorkflow>[1],
+) {
+  const events: Event[] = [];
+  for await (const e of runWorkflow(wf, options)) events.push(e);
+  return events;
+}
+
+describe("runWorkflow — fromStep sub-step targeting", () => {
+  test("[1,2] skips iteration 1 and starts from iteration 2", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: each
+    forEach: [a, b, c]
+    command: echo "{{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [1, 2] });
+    const iterEvents = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.equal(iterEvents.length, 2);
+    assert.deepEqual(
+      iterEvents.map((e) => e.item),
+      ["b", "c"],
+    );
+    assert.deepEqual(
+      iterEvents.map((e) => e.iteration),
+      [2, 3],
+    );
+  });
+
+  test("[1,3] skips to the third iteration of a 3-item forEach", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: each
+    forEach: [x, y, z]
+    command: echo "{{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [1, 3] });
+    const iterEvents = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.equal(iterEvents.length, 1);
+    assert.equal(iterEvents[0].item, "z");
+    assert.equal(iterEvents[0].iteration, 3);
+  });
+
+  test("[1,99] on a 3-item forEach runs no iterations", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: each
+    forEach: [a, b, c]
+    command: echo "{{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [1, 99] });
+    const iterEvents = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.equal(iterEvents.length, 0);
+  });
+
+  test("[2,2] skips step 1 entirely and resumes from iteration 2 of step 2", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: first
+    command: echo first
+  - name: each
+    forEach: [a, b, c]
+    command: echo "{{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [2, 2] });
+    const starts = events
+      .filter((e) => e.type === "step:start")
+      .map((e) => (e as StepStartEvent).name);
+    assert.deepEqual(starts, ["each"]);
+    const iterEvents = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.deepEqual(
+      iterEvents.map((e) => e.item),
+      ["b", "c"],
+    );
+  });
+
+  test("[1,2,2] with multi-step forEach: first resumed iteration starts at child 2", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: each
+    forEach: [a, b]
+    steps:
+      - name: child-A {{item}}
+        command: echo "A {{item}}"
+      - name: child-B {{item}}
+        command: echo "B {{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [1, 2, 2] });
+    const innerEvents = events.filter(
+      (e): e is StepInnerEvent => e.type === "step:inner",
+    );
+    // iteration 1 is skipped entirely; iteration 2 starts at child 2 (child-B b)
+    assert.equal(innerEvents.length, 1);
+    assert.equal(innerEvents[0].iteration, 2);
+    assert.equal(innerEvents[0].innerIndex, 1); // 0-based → child-B
+    assert.equal(innerEvents[0].name, "child-B b");
+  });
+
+  test("[1,1,2] starts from child 2 of iteration 1 (no iterations skipped)", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: each
+    forEach: [a, b]
+    steps:
+      - name: child-A {{item}}
+        command: echo "A {{item}}"
+      - name: child-B {{item}}
+        command: echo "B {{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [1, 1, 2] });
+    const innerEvents = events.filter(
+      (e): e is StepInnerEvent => e.type === "step:inner",
+    );
+    // iteration 1 → only child-B; iteration 2 → both children
+    assert.equal(innerEvents.length, 3);
+    assert.equal(innerEvents[0].iteration, 1);
+    assert.equal(innerEvents[0].innerIndex, 1); // child-B a
+    assert.equal(innerEvents[1].iteration, 2);
+    assert.equal(innerEvents[1].innerIndex, 0); // child-A b
+    assert.equal(innerEvents[2].iteration, 2);
+    assert.equal(innerEvents[2].innerIndex, 1); // child-B b
+  });
+
+  test("[1,2,1,2] targets nested forEach: outer iter 2, inner iter 2", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: outer
+    forEach: [p, q]
+    steps:
+      - name: inner {{item}}
+        forEach: [x, y, z]
+        command: echo "{{item}}"
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [1, 2, 1, 2] });
+    // Only outer iteration 2 (q) should appear in step:iteration events
+    const iterEvents = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.equal(iterEvents.length, 1);
+    assert.equal(iterEvents[0].item, "q");
+    assert.equal(iterEvents[0].iteration, 2);
+    // {{item}} in the inner command is substituted with the outer item ("q") before
+    // the inner forEach runs, so each inner iteration outputs "q". Inner starts from
+    // iteration 2 (y, z) → 2 outputs, not 3 (x, y, z).
+    const outputTexts = events
+      .filter((e) => e.type === "output:text")
+      .map((e) => (e as OutputTextEvent).text);
+    const qOutputs = outputTexts.filter((t) => t.includes("q"));
+    assert.equal(
+      qOutputs.length,
+      2,
+      "inner forEach should run 2 iterations (y,z) not 3 (x,y,z)",
+    );
+    assert.ok(events.some((e) => e.type === "workflow:complete"));
+  });
+
+  test("non-forEach step with fromStep [2] skips step 1, runs step 2 fully", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: first
+    command: echo first
+  - name: second
+    command: echo second
+`),
+    );
+    const events = await collectWithOptions(wf, { fromStep: [2] });
+    const starts = events
+      .filter((e) => e.type === "step:start")
+      .map((e) => (e as StepStartEvent).name);
+    assert.deepEqual(starts, ["second"]);
+    assert.ok(events.some((e) => e.type === "workflow:complete"));
   });
 });

@@ -59,7 +59,7 @@ export function shouldSkipStep(
       parseInt(options.stepFilter, 10) === stepNumber;
     return !matchByIndex && name !== options.stepFilter;
   }
-  return options.fromStep !== undefined && stepNumber < options.fromStep;
+  return options.fromStep !== undefined && stepNumber < options.fromStep[0];
 }
 
 // ============================================================================
@@ -92,8 +92,13 @@ export async function* runWorkflow(
     const stepStart = Date.now();
     yield { type: "step:start", index: i, name: task.name };
 
+    const from =
+      options.fromStep && options.fromStep[0] === stepNumber
+        ? options.fromStep.slice(1)
+        : undefined;
+
     try {
-      for await (const event of runStep(task)) {
+      for await (const event of runStep(task, from)) {
         if (
           event.type === "step:iteration" ||
           event.type === "step:inner" ||
@@ -129,7 +134,7 @@ export async function* runWorkflow(
 // Step dispatch — routes to quality-control wrappers when needed
 // ============================================================================
 
-async function* runStep(task: Task): AsyncGenerator<Event> {
+async function* runStep(task: Task, from?: number[]): AsyncGenerator<Event> {
   switch (task.type) {
     case "log":
       yield* runLog(task);
@@ -156,7 +161,7 @@ async function* runStep(task: Task): AsyncGenerator<Event> {
       break;
     }
     case "forEach":
-      yield* runForEach(task);
+      yield* runForEach(task, from);
       break;
     default: {
       // Exhaustiveness: TypeScript errors here if a new Task variant is added
@@ -176,29 +181,46 @@ async function* runLog(task: LogTask): AsyncGenerator<Event> {
 // forEach: run an inner task once per item
 // ============================================================================
 
-async function* runForEach(task: ForEachTask): AsyncGenerator<Event> {
+async function* runForEach(
+  task: ForEachTask,
+  from?: number[],
+): AsyncGenerator<Event> {
   const items = await resolveItems(task.forEach);
   const total = items.length;
   const innerTotal = task.inner.length;
+  const startIteration = from?.[0] ?? 1;
 
   for (const [i, item] of items.entries()) {
+    const iteration = i + 1;
+    if (iteration < startIteration) continue; // silent skip
+
     // index: -1 here — runWorkflow patches it to the real step index
-    yield { type: "step:iteration", index: -1, item, iteration: i + 1, total };
+    yield { type: "step:iteration", index: -1, item, iteration, total };
+
+    // On the first resumed iteration propagate the tail; after that run all.
+    const iterFrom = iteration === startIteration ? from?.slice(1) : undefined;
+    const startChild = iterFrom?.[0] ?? 1;
 
     for (const [j, innerTask] of task.inner.entries()) {
+      const childIdx = j + 1;
+      if (childIdx < startChild) continue; // silent skip
+
       const substituted = substituteItem(innerTask, item);
       if (innerTotal > 1) {
         yield {
           type: "step:inner",
           index: -1,
-          iteration: i + 1,
+          iteration,
           innerIndex: j,
           innerTotal,
           name: substituted.name,
         };
       }
+      // Pass deeper tail for nested forEach; after the first child run all.
+      const childFrom =
+        childIdx === startChild ? iterFrom?.slice(1) : undefined;
       try {
-        for await (const event of runStep(substituted)) {
+        for await (const event of runStep(substituted, childFrom)) {
           // step:iteration and step:inner from nested forEach tasks would
           // land in the parent task's iterationHistory (via runWorkflow's
           // index-patching), creating duplicate iteration numbers and

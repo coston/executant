@@ -28,7 +28,7 @@ import {
   withLogger,
 } from "./logger.js";
 import { runRetrospective } from "./retrospective.js";
-import type { RunOptions, Workflow } from "./types.js";
+import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
 import { getErrorMessage } from "./lib/utils.js";
 
 const CURRENT_VERSION = (
@@ -85,7 +85,7 @@ Version: ${CURRENT_VERSION}
 Options:
   --ci                  Headless mode — print events as NDJSON, no TUI
   --step <name|index>   Run only the named step or step at 1-based index
-  --from-step <n>       Skip steps before n and run from there (1-based)
+  --from-step <n>       Resume from step n (e.g. 3, 3.2, 2.5.4.3 — 1-based path)
   --help, -h            Show this help
 
 Commands:
@@ -151,7 +151,7 @@ Example:
 
 let ciMode = false;
 let stepFilter: string | undefined;
-let fromStep: number | undefined;
+let fromStep: FromStepTarget | undefined;
 const positional: string[] = [];
 
 for (let i = 0; i < rawArgs.length; i++) {
@@ -169,11 +169,15 @@ for (let i = 0; i < rawArgs.length; i++) {
       console.error("--from-step requires a value");
       process.exit(1);
     }
-    fromStep = parseInt(rawArgs[++i], 10);
-    if (isNaN(fromStep)) {
-      console.error("--from-step must be a number");
+    const raw = rawArgs[++i];
+    const parts = raw.split(".").map(Number);
+    if (parts.some(Number.isNaN) || parts.some((p) => p < 1)) {
+      console.error(
+        "--from-step must be N or N.M.K... (all 1-based, e.g. 3 or 3.2 or 2.5.4.3)",
+      );
       process.exit(1);
     }
+    fromStep = parts;
   } else {
     positional.push(a);
   }
