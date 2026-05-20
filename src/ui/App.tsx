@@ -15,7 +15,11 @@ import { TaskRow } from "./TaskRow.js";
 import { IterationList } from "./IterationRow.js";
 import { LogPane } from "./LogPane.js";
 import { useInterval } from "./useInterval.js";
-import { formatHeaderElapsed, EXIT_DELAY_MS } from "./utils.js";
+import {
+  countIterationRows,
+  formatHeaderElapsed,
+  EXIT_DELAY_MS,
+} from "./utils.js";
 import { theme } from "./theme.js";
 import { BrandMark } from "./BrandMark.js";
 
@@ -69,16 +73,10 @@ export function App({ workflow, events, options, updateCheck }: Props) {
   const { isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
 
-  // Compute how many log lines can fit without overflowing the terminal.
-  // Overflow causes Ink to miscount its rendered height → text sprays above the UI.
-  // Fixed overhead accounts for: outer padding(2) + brand+margin(2) + header+margin(2)
-  // + taskList margin(1) + logPane marginTop+borders(3) + footer+margin(2) = 12 rows.
-  const terminalRows = stdout?.rows ?? 24;
-  const FIXED_OVERHEAD = 12;
-  const logPaneMaxLines = Math.max(
-    5,
-    terminalRows - FIXED_OVERHEAD - state.tasks.length,
-  );
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  useEffect(() => {
+    updateCheck.then(setUpdateVersion);
+  }, [updateCheck]);
 
   // Tick counter drives spinner animation and live elapsed time in TaskRow.
   // Stops incrementing once the workflow finishes to avoid unnecessary renders.
@@ -87,10 +85,41 @@ export function App({ workflow, events, options, updateCheck }: Props) {
     if (!state.endTime) setTick((t) => t + 1);
   }, 100);
 
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
-  useEffect(() => {
-    updateCheck.then(setUpdateVersion);
-  }, [updateCheck]);
+  // Compute how many log lines can fit without overflowing the terminal.
+  // Overflow causes Ink to miscount its rendered height → text sprays above the UI.
+  // Fixed overhead: outer padding(2) + brand+margin(2) + header+margin(2)
+  // + taskList margin(1) + logPane marginTop+borders(3) + footer+margin(2) = 12 rows.
+  const terminalRows = stdout?.rows ?? 24;
+  const LOG_PANE_MIN = 5;
+
+  // Count iteration rows rendered beneath the running forEach task.
+  const runningTask = state.tasks.find((t) => t.status === "running");
+  const iterationRowCount = countIterationRows(
+    runningTask?.iterationHistory,
+    MAX_VISIBLE_ITERATIONS,
+  );
+
+  // +1 when the update-available banner is showing
+  const FIXED_OVERHEAD = 12 + (updateVersion ? 1 : 0);
+
+  // Budget rows for the task list, leaving room for iteration rows + log pane minimum.
+  const availableForTaskSection = Math.max(
+    1,
+    terminalRows - FIXED_OVERHEAD - LOG_PANE_MIN - iterationRowCount,
+  );
+  // Reserve 1 row for the "··· N earlier" indicator when truncating
+  const visibleTaskCount =
+    state.tasks.length > availableForTaskSection
+      ? availableForTaskSection - 1
+      : state.tasks.length;
+  const taskSlice = state.tasks.slice(-visibleTaskCount);
+  const hiddenTaskCount = state.tasks.length - taskSlice.length;
+
+  const taskRowsUsed = visibleTaskCount + (hiddenTaskCount > 0 ? 1 : 0);
+  const logPaneMaxLines = Math.max(
+    LOG_PANE_MIN,
+    terminalRows - FIXED_OVERHEAD - taskRowsUsed - iterationRowCount,
+  );
 
   const elapsed = formatHeaderElapsed(state.startTime, state.endTime);
   const activeTask = state.tasks[state.currentIndex];
@@ -125,24 +154,32 @@ export function App({ workflow, events, options, updateCheck }: Props) {
 
       {/* Task list */}
       <Box flexDirection="column" marginBottom={1}>
-        {state.tasks.map((taskState, i) => (
-          <Box key={i} flexDirection="column">
-            <TaskRow
-              index={i}
-              tick={tick}
-              taskState={taskState}
-              isActive={i === state.currentIndex}
-            />
-            {taskState.status === "running" &&
-            taskState.iterationHistory?.length ? (
-              <IterationList
-                iterationHistory={taskState.iterationHistory}
+        {hiddenTaskCount > 0 && (
+          <Text dimColor>
+            {"  "}··· {hiddenTaskCount} earlier
+          </Text>
+        )}
+        {taskSlice.map((taskState, i) => {
+          const globalIndex = hiddenTaskCount + i;
+          return (
+            <Box key={globalIndex} flexDirection="column">
+              <TaskRow
+                index={globalIndex}
                 tick={tick}
-                maxVisible={MAX_VISIBLE_ITERATIONS}
+                taskState={taskState}
+                isActive={globalIndex === state.currentIndex}
               />
-            ) : null}
-          </Box>
-        ))}
+              {taskState.status === "running" &&
+              taskState.iterationHistory?.length ? (
+                <IterationList
+                  iterationHistory={taskState.iterationHistory}
+                  tick={tick}
+                  maxVisible={MAX_VISIBLE_ITERATIONS}
+                />
+              ) : null}
+            </Box>
+          );
+        })}
       </Box>
 
       {/* Live output pane for the active task */}

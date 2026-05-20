@@ -1,4 +1,4 @@
-import type { TaskStatus } from "../types.js";
+import type { IterationRecord, TaskStatus } from "../types.js";
 import { theme } from "./theme.js";
 
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -23,6 +23,21 @@ export function statusIcon(status: string, tick: number): string {
   return status === "running"
     ? SPINNER[tick % SPINNER.length]!
     : (STATUS_ICON[status as TaskStatus] ?? "·");
+}
+
+/**
+ * Number of terminal rows the IterationList will occupy for a given history.
+ * Returns 0 for repeat-style steps (items === their iteration number) because
+ * IterationList renders null in that case.
+ */
+export function countIterationRows(
+  iterationHistory: IterationRecord[] | undefined,
+  maxVisible: number,
+): number {
+  if (!iterationHistory?.length) return 0;
+  if (iterationHistory.every((r) => r.item === String(r.iteration))) return 0;
+  const visible = Math.min(iterationHistory.length, maxVisible);
+  return visible + (iterationHistory.length > maxVisible ? 1 : 0);
 }
 
 /** Delay before Ink unmounts to allow the final frame to render. */
