@@ -397,6 +397,7 @@ async function* runCommandWithHealing(
         name: `${task.name}:heal-${attempt + 1}`,
         prompt: healPrompt,
         allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
+        model: "sonnet",
       };
 
       const toolCalls: string[] = [];
@@ -504,6 +505,7 @@ export async function evaluateWithJudge(
       prompt: buildJudgePrompt(stepName, stepInstructions, output),
       allowedTools: [],
       permissionMode: "default", // judge only reads text — no tool access needed
+      model: "sonnet",
     },
     JudgeOutputSchema,
   );

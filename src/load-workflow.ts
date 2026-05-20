@@ -186,6 +186,7 @@ function convertInnerStep(
         continueOnError,
         llmAsJudge: step.llm_as_judge,
         allowedTools: step.allowed_tools,
+        model: "sonnet",
         ...(contextFiles.length > 0 && { contextFiles }),
       } satisfies ClaudeTask;
     }
