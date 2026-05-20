@@ -147,3 +147,36 @@ describe("reducer lines cap", () => {
     assert.equal(state.tasks[0].lines.length, 50);
   });
 });
+
+describe("reducer — step:interjection", () => {
+  test("appends prefixed message to the task's log lines", () => {
+    let state = runningState();
+    state = reducer(state, {
+      type: "step:interjection",
+      index: 0,
+      message: "use TypeScript not JavaScript",
+    });
+    assert.ok(
+      state.tasks[0].lines.some(
+        (l) =>
+          l.includes("[interjection]") &&
+          l.includes("use TypeScript not JavaScript"),
+      ),
+      `expected [interjection] line, got: ${JSON.stringify(state.tasks[0].lines)}`,
+    );
+  });
+
+  test("ignores event when index is out of range", () => {
+    const state = runningState();
+    const next = reducer(state, {
+      type: "step:interjection",
+      index: 99,
+      message: "out of range",
+    });
+    assert.deepEqual(
+      next,
+      state,
+      "state should be unchanged for out-of-range index",
+    );
+  });
+});

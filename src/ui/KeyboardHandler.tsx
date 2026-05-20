@@ -1,8 +1,20 @@
-import { useInput } from 'ink';
+import { useInput } from "ink";
 
-export function KeyboardHandler({ onExit }: { onExit: () => void }) {
+interface Props {
+  onExit: () => void;
+  onInterject?: () => void;
+  isInterjecting?: boolean;
+}
+
+export function KeyboardHandler({
+  onExit,
+  onInterject,
+  isInterjecting,
+}: Props) {
   useInput((input, key) => {
-    if (input === 'q' || (key.ctrl && input === 'c')) onExit();
+    if (isInterjecting) return; // InterjectInput owns input while open
+    if (input === "q" || (key.ctrl && input === "c")) onExit();
+    if (input === "i" && onInterject) onInterject();
   });
   return null;
 }

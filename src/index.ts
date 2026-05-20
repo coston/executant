@@ -28,6 +28,7 @@ import {
   withLogger,
 } from "./logger.js";
 import { runRetrospective } from "./retrospective.js";
+import { InterjectChannel } from "./types.js";
 import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
 import { getErrorMessage } from "./lib/utils.js";
 
@@ -198,7 +199,8 @@ try {
   process.exit(1);
 }
 const options: RunOptions = { stepFilter, fromStep };
-const rawEvents = runWorkflow(workflow, options);
+const channel = new InterjectChannel();
+const rawEvents = runWorkflow(workflow, options, channel);
 const logger = createLogger(resolveLogDir(filePath), workflow.goal);
 const events = withLogger(rawEvents, logger);
 const updateCheck = checkForUpdate(CURRENT_VERSION);
@@ -252,7 +254,13 @@ if (ciMode) {
 } else {
   // Interactive mode: render the Ink TUI.
   const inkApp = render(
-    React.createElement(App, { workflow, events, options, updateCheck }),
+    React.createElement(App, {
+      workflow,
+      events,
+      options,
+      updateCheck,
+      interjectChannel: channel,
+    }),
   );
   if (workflow.selfImprove) {
     inkApp

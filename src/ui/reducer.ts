@@ -156,6 +156,12 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       return appendLines(state, idx, `[${event.level}] ${event.text}`);
     }
 
+    case "step:interjection": {
+      const idx = event.index;
+      if (idx >= state.tasks.length) return state;
+      return appendLines(state, idx, `[interjection] ${event.message}`);
+    }
+
     default: {
       // Compile-time exhaustiveness check: TypeScript will error here if a new
       // Event variant is added to types.ts without a corresponding case above.

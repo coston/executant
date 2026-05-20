@@ -49,6 +49,10 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 - **`context`** — injects file contents into a prompt at runtime
 - **`output`** — captures a script step's stdout to a file
 
+### TUI Controls
+- **`i` — interjection** — opens a text input at the bottom of the screen. The typed message is queued and prepended as `[User correction from a previous step]` to the next Claude step's prompt. If a Claude step is currently running, the message waits for the next Claude step (the Claude CLI processes each invocation as a complete unit; mid-execution injection is not possible). If a script step is running, the message is similarly deferred. Press Esc to cancel without sending.
+- **`q` / Ctrl+C** — abort the workflow immediately
+
 ### Tooling
 - **`executant plan`** — generates a workflow YAML from a natural language description
 - **`executant update`** — upgrades to the latest version

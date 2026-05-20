@@ -204,6 +204,13 @@ export interface LogEvent {
   text: string;
 }
 
+/** Fired when the user injects a message into the running Claude step via the TUI. */
+export interface StepInterjectionEvent {
+  type: "step:interjection";
+  index: number;
+  message: string;
+}
+
 export type Event =
   | WorkflowStartEvent
   | WorkflowCompleteEvent
@@ -217,7 +224,8 @@ export type Event =
   | OutputToolEvent
   | OutputCostEvent
   | OutputStructuredEvent
-  | LogEvent;
+  | LogEvent
+  | StepInterjectionEvent;
 
 // ----------------------------------------------------------------------------
 // Run options  (CLI flags, not YAML — passed to runWorkflow)
@@ -297,6 +305,46 @@ export interface ExecutionState {
   endTime?: number;
   /** Accumulated list of file paths written via the Write tool across all steps. */
   writtenFiles: string[];
+}
+
+// ----------------------------------------------------------------------------
+// Interject Channel  (bridges TUI key input → runner subprocess stdin)
+// ----------------------------------------------------------------------------
+
+/**
+ * Connects the TUI's user interjection input to the currently-running Claude
+ * subprocess. When the user presses `i` and submits a message, it is either
+ * written directly to the running process's stdin (if a Claude step is active)
+ * or queued for prepending to the next Claude step's prompt.
+ */
+export class InterjectChannel {
+  private sender: ((msg: string) => void) | null = null;
+  private _queue: string[] = [];
+
+  /** Called by runClaude when a Claude step starts to activate direct delivery. */
+  register(sender: (msg: string) => void): void {
+    this.sender = sender;
+    for (const msg of this._queue) sender(msg);
+    this._queue = [];
+  }
+
+  /** Called by runClaude when a Claude step ends. */
+  unregister(): void {
+    this.sender = null;
+  }
+
+  /** Called by the TUI. Delivers immediately if a Claude step is running, else queues. */
+  interject(message: string): void {
+    if (this.sender) this.sender(message);
+    else this._queue.push(message);
+  }
+
+  /** Drains and returns any queued messages (for non-Claude steps to consume). */
+  consumeQueue(): string[] {
+    const q = this._queue.slice();
+    this._queue = [];
+    return q;
+  }
 }
 
 /** Raw step shape as parsed from YAML before normalisation. */

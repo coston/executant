@@ -209,6 +209,41 @@ describe("buildClaudeArgs", () => {
       "--allowedTools should be empty string when allowedTools is []",
     );
   });
+
+  test("interactive=true omits --print and the prompt from args", () => {
+    const args = buildClaudeArgs(
+      { type: "claude", name: "test", prompt: "my prompt" },
+      true,
+    );
+    assert.ok(
+      !args.includes("--print"),
+      "--print must be absent in interactive mode",
+    );
+    assert.ok(
+      !args.includes("my prompt"),
+      "prompt must not appear as CLI arg in interactive mode",
+    );
+  });
+
+  test("interactive=false (default) includes --print and prompt", () => {
+    const args = buildClaudeArgs({
+      type: "claude",
+      name: "test",
+      prompt: "my prompt",
+    });
+    assert.equal(args[0], "--print");
+    assert.equal(args[1], "my prompt");
+  });
+
+  test("interactive=true still includes --output-format stream-json", () => {
+    const args = buildClaudeArgs(
+      { type: "claude", name: "test", prompt: "p" },
+      true,
+    );
+    const idx = args.indexOf("--output-format");
+    assert.ok(idx !== -1, "missing --output-format");
+    assert.equal(args[idx + 1], "stream-json");
+  });
 });
 
 // ----------------------------------------------------------------------------

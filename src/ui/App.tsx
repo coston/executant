@@ -8,7 +8,13 @@
 import React, { useEffect, useReducer, useState } from "react";
 import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { KeyboardHandler } from "./KeyboardHandler.js";
-import type { Event, RunOptions, Workflow } from "../types.js";
+import { InterjectInput } from "./InterjectInput.js";
+import type {
+  Event,
+  InterjectChannel,
+  RunOptions,
+  Workflow,
+} from "../types.js";
 import { getErrorMessage } from "../lib/utils.js";
 import { reducer, buildInitialState } from "./reducer.js";
 import { TaskRow } from "./TaskRow.js";
@@ -28,13 +34,21 @@ interface Props {
   events: AsyncGenerator<Event>;
   options?: RunOptions;
   updateCheck: Promise<string | null>;
+  interjectChannel?: InterjectChannel;
 }
 
 const MAX_VISIBLE_ITERATIONS = 8;
 
-export function App({ workflow, events, options, updateCheck }: Props) {
+export function App({
+  workflow,
+  events,
+  options,
+  updateCheck,
+  interjectChannel,
+}: Props) {
   const { exit } = useApp();
   const [state, dispatch] = useReducer(reducer, buildInitialState(workflow));
+  const [isInterjecting, setIsInterjecting] = useState(false);
 
   // Consume the event stream. Each event updates state via the reducer.
   useEffect(() => {
@@ -99,8 +113,9 @@ export function App({ workflow, events, options, updateCheck }: Props) {
     MAX_VISIBLE_ITERATIONS,
   );
 
-  // +1 when the update-available banner is showing
-  const FIXED_OVERHEAD = 12 + (updateVersion ? 1 : 0);
+  // +1 when the update-available banner is showing; +1 when interject input is open
+  const FIXED_OVERHEAD =
+    12 + (updateVersion ? 1 : 0) + (isInterjecting ? 1 : 0);
 
   // Budget rows for the task list, leaving room for iteration rows + log pane minimum.
   const availableForTaskSection = Math.max(
@@ -204,6 +219,22 @@ export function App({ workflow, events, options, updateCheck }: Props) {
         </Box>
       )}
 
+      {/* Interject input — shown when user presses i */}
+      {isInterjecting && interjectChannel && (
+        <InterjectInput
+          onSubmit={(msg) => {
+            interjectChannel.interject(msg);
+            dispatch({
+              type: "step:interjection",
+              index: state.currentIndex,
+              message: msg,
+            });
+            setIsInterjecting(false);
+          }}
+          onCancel={() => setIsInterjecting(false)}
+        />
+      )}
+
       {/* Footer */}
       <Box marginTop={1} flexDirection="column">
         {updateVersion && (
@@ -211,11 +242,23 @@ export function App({ workflow, events, options, updateCheck }: Props) {
             v{updateVersion} available — run: executant update
           </Text>
         )}
-        <Text dimColor>press q to quit</Text>
+        <Text dimColor>
+          {isInterjecting
+            ? "typing interjection…"
+            : "press q to quit  ·  i to interject"}
+        </Text>
       </Box>
 
       {/* Keyboard handler — only mounted when stdin supports raw mode */}
-      {isRawModeSupported && <KeyboardHandler onExit={exit} />}
+      {isRawModeSupported && (
+        <KeyboardHandler
+          onExit={exit}
+          onInterject={
+            interjectChannel ? () => setIsInterjecting(true) : undefined
+          }
+          isInterjecting={isInterjecting}
+        />
+      )}
     </Box>
   );
 }

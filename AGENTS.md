@@ -41,12 +41,12 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `steps` - Optional array of child steps on a `forEach`/`repeat` step; each iteration runs all child steps in order with `{{item}}` substituted; mutually exclusive with `command`/`prompt`/`message` on the parent step; requires `forEach` or `repeat` to be present
 
 2. **TypeScript implementation** (`src/`)
-   - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`update` subcommands
+   - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`
    - `src/load-workflow.ts` - YAML → typed `Workflow`
-   - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection
+   - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
    - `src/logger.ts` - Subscribes to event stream; writes `.log` files and highlight markdown files to `.claude/executant.local/logs/`
    - `src/retrospective.ts` - Self-improvement: reads highlight files, calls Claude, saves improved YAML + changelog to `tasks/backlog/`
-   - `src/types.ts` - All shared types: `Task`, `Event`, `Workflow`, `RawWorkflow`/`RawStep` (YAML schema)
+   - `src/types.ts` - All shared types: `Task`, `Event`, `Workflow`, `RawWorkflow`/`RawStep` (YAML schema), `InterjectChannel` class
 
 ### Module Architecture
 
@@ -65,6 +65,11 @@ src/
 │   ├── command.ts        # Bash command runner
 │   └── stream.ts         # Shared stream utilities (AsyncQueue, mergeStreamsToLines)
 ├── ui/                   # Ink TUI components
+│   ├── App.tsx           # Root component; holds isInterjecting state; wires InterjectChannel
+│   ├── InterjectInput.tsx # Text input overlay shown when user presses i
+│   ├── KeyboardHandler.tsx # Handles q/Ctrl+C/i; disabled while isInterjecting
+│   ├── reducer.ts        # ExecutionState reducer; handles step:interjection event
+│   └── ...               # LogPane, TaskRow, IterationRow, BrandMark, theme, utils
 ├── prompts/              # AI prompt templates
 │   ├── plan-research.txt        # Plan Pass 1: codebase research
 │   ├── plan-decompose.txt       # Plan Pass 2: step decomposition
@@ -150,6 +155,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - **Streaming**: Real-time output via Ink TUI
 - **Auto-move**: Completed tasks auto-move to done/ with timestamp
 - **Project detection**: Walks up directory tree to find `.claude/executant.local/tasks`
+- **Interjection**: User presses `i` during execution to queue a correction. The message is prepended to the next Claude step's prompt as `[User correction from a previous step]`. The Claude CLI cannot receive mid-execution stdin input (it buffers all stdin until EOF before processing), so true mid-step injection is not possible — the correction always targets the next step.
 
 ### TypeScript Logging (`src/logger.ts`)
 

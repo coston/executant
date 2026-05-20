@@ -18,6 +18,7 @@ import type {
   CommandTask,
   Event,
   ForEachTask,
+  InterjectChannel,
   LogTask,
   RunOptions,
   Task,
@@ -73,10 +74,15 @@ export function shouldSkipStep(
  *   - The Ink UI feeds this into a useReducer to build ExecutionState
  *   - Tests can collect all events into an array for assertions
  *   - CI mode pipes events as NDJSON to stdout
+ *
+ * When `channel` is provided, user interjections typed in the TUI are
+ * delivered to running Claude steps via stdin. Messages sent during non-Claude
+ * steps are queued and prepended to the next Claude step's prompt.
  */
 export async function* runWorkflow(
   workflow: Workflow,
   options: RunOptions = {},
+  channel?: InterjectChannel,
 ): AsyncGenerator<Event> {
   const workflowStart = Date.now();
   yield { type: "workflow:start", workflow };
@@ -98,7 +104,7 @@ export async function* runWorkflow(
         : undefined;
 
     try {
-      for await (const event of runStep(task, from)) {
+      for await (const event of runStep(task, from, channel)) {
         if (
           event.type === "step:iteration" ||
           event.type === "step:inner" ||
@@ -134,7 +140,11 @@ export async function* runWorkflow(
 // Step dispatch — routes to quality-control wrappers when needed
 // ============================================================================
 
-async function* runStep(task: Task, from?: number[]): AsyncGenerator<Event> {
+async function* runStep(
+  task: Task,
+  from?: number[],
+  channel?: InterjectChannel,
+): AsyncGenerator<Event> {
   switch (task.type) {
     case "log":
       yield* runLog(task);
@@ -155,13 +165,23 @@ async function* runStep(task: Task, from?: number[]): AsyncGenerator<Event> {
     }
     case "claude": {
       const expanded = expandContext(task);
-      yield* expanded.llmAsJudge
-        ? runClaudeWithJudge(expanded)
-        : runClaude(expanded);
+      // Prepend any messages queued during non-Claude steps so they arrive as
+      // context at the start of this turn rather than being lost.
+      const queued = channel?.consumeQueue() ?? [];
+      const enriched =
+        queued.length > 0
+          ? {
+              ...expanded,
+              prompt: `[User correction from a previous step]\n${queued.join("\n")}\n\n---\n${expanded.prompt}`,
+            }
+          : expanded;
+      yield* enriched.llmAsJudge
+        ? runClaudeWithJudge(enriched, channel)
+        : runClaude(enriched, channel);
       break;
     }
     case "forEach":
-      yield* runForEach(task, from);
+      yield* runForEach(task, from, channel);
       break;
     default: {
       // Exhaustiveness: TypeScript errors here if a new Task variant is added
@@ -184,6 +204,7 @@ async function* runLog(task: LogTask): AsyncGenerator<Event> {
 async function* runForEach(
   task: ForEachTask,
   from?: number[],
+  channel?: InterjectChannel,
 ): AsyncGenerator<Event> {
   const items = await resolveItems(task.forEach);
   const total = items.length;
@@ -229,7 +250,7 @@ async function* runForEach(
       const childFrom =
         childIdx === startChild ? iterFrom?.slice(1) : undefined;
       try {
-        for await (const event of runStep(substituted, childFrom)) {
+        for await (const event of runStep(substituted, childFrom, channel)) {
           // step:iteration and step:inner from nested forEach tasks would
           // land in the parent task's iterationHistory (via runWorkflow's
           // index-patching), creating duplicate iteration numbers and
@@ -411,8 +432,12 @@ async function* runCommandWithHealing(
  * Runs a Claude step and then evaluates its output with a separate judge
  * invocation. If the judge returns FAIL, the step is retried with the judge's
  * feedback appended to the original prompt. Maximum MAX_JUDGE_RETRIES attempts.
+ * The channel is only passed to the main step invocations, not the judge.
  */
-async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
+async function* runClaudeWithJudge(
+  task: ClaudeTask,
+  channel?: InterjectChannel,
+): AsyncGenerator<Event> {
   let judgeContext = "";
 
   for (let attempt = 0; attempt < MAX_JUDGE_RETRIES; attempt++) {
@@ -423,7 +448,7 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
         : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, { FEEDBACK: judgeContext })}`;
 
     const lines: string[] = [];
-    yield* collectLines(runClaude({ ...task, prompt }), lines);
+    yield* collectLines(runClaude({ ...task, prompt }, channel), lines);
 
     // Evaluate output quality.
     yield {

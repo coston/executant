@@ -121,6 +121,20 @@ steps:
 - **`self_healing: true`** — on script failure, Claude diagnoses and repairs the command, then re-runs it, up to 5×
 - **`self_improve: true`** — after the workflow finishes, Claude analyzes execution highlights and saves an improved YAML to `tasks/backlog/`
 
+## Interjection
+
+While a workflow is running, press **`i`** to open a text input at the bottom of the TUI. Type a correction and press **Enter** to send it; **Esc** cancels.
+
+The message is queued and prepended to the **next Claude step's prompt** as `[User correction from a previous step]`. Claude sees your note before it starts and incorporates it into its work. If you interject while a script step is running, the correction waits for the next Claude step in the workflow.
+
+```
+press i  →  ▷ don't delete that file, use git revert▌  esc to cancel
+```
+
+**What it's good for:** steering the next Claude step while watching the current one run — leaving a note for the step that's about to start.
+
+**What it can't do:** interrupt a Claude step mid-execution. The Claude CLI processes each invocation as a complete unit; there's no mechanism to inject a message partway through. To abort a runaway step immediately, press `q`.
+
 ## Examples
 
 | File | Demonstrates |
