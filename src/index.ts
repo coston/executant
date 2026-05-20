@@ -20,6 +20,7 @@ import { runWorkflow } from "./runner.js";
 import { checkForUpdate } from "./update.js";
 import { App } from "./ui/App.js";
 import { parsePlanArgs, streamPlan } from "./plan.js";
+import { parseRefineArgs, streamRefine } from "./refine.js";
 import { PlanApp } from "./ui/PlanApp.js";
 import {
   type Logger,
@@ -61,6 +62,24 @@ if (rawArgs[0] === "plan") {
   process.exit(0);
 }
 
+// executant refine — apply instructions to an existing task YAML
+if (rawArgs[0] === "refine") {
+  const refineArgs = parseRefineArgs(rawArgs.slice(1));
+  const refineEvents = streamRefine(refineArgs);
+  const inkApp = render(
+    React.createElement(PlanApp, {
+      description: refineArgs.description,
+      events: refineEvents,
+    }),
+  );
+  try {
+    await inkApp.waitUntilExit();
+  } catch {
+    /* user quit or error — PlanApp already displayed it */
+  }
+  process.exit(0);
+}
+
 // executant update — upgrade in-place from GitHub
 if (rawArgs[0] === "update") {
   const { checkForUpdate, doUpdate } = await import("./update.js");
@@ -91,6 +110,7 @@ Options:
 
 Commands:
   plan <description>    Generate a task YAML from a natural language description
+  refine <file> <inst>  Refine an existing task YAML with natural language instructions
   update                Upgrade executant to the latest version
 
 YAML — top-level fields:

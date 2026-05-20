@@ -41,7 +41,7 @@ const TOTAL_PLAN_STAGES = 3;
 // Zod schemas — validate JSON output before serialising to YAML
 // ---------------------------------------------------------------------------
 
-const WorkflowSchema = z.object({
+export const WorkflowSchema = z.object({
   goal: z.string(),
   steps: z.array(StepSchema).min(1),
   vars: z.record(z.string()).optional(),
@@ -53,7 +53,7 @@ const PlanJudgeOutputSchema = z.object({
   feedback: z.string(),
 });
 
-const WORKFLOW_JSON_SCHEMA = zodToJsonSchema(WorkflowSchema) as Record<
+export const WORKFLOW_JSON_SCHEMA = zodToJsonSchema(WorkflowSchema) as Record<
   string,
   unknown
 >;
@@ -187,7 +187,7 @@ Examples:
 // Pass 3: Validate (non-generator — runs silently, swallows errors)
 // ---------------------------------------------------------------------------
 
-async function runPass3Judge(
+export async function runPass3Judge(
   description: string,
   workflow: z.infer<typeof WorkflowSchema>,
 ): Promise<{ pass: boolean; feedback: string; skipped?: boolean }> {
