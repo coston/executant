@@ -126,7 +126,7 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
     case "output:text": {
       const idx = event.index;
       if (idx >= state.tasks.length) return state;
-      return appendLine(state, idx, event.text);
+      return appendLines(state, idx, event.text);
     }
 
     case "output:tool": {
@@ -155,7 +155,7 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
     case "log": {
       const idx = state.currentIndex;
       if (idx >= state.tasks.length) return state;
-      return appendLine(state, idx, `[${event.level}] ${event.text}`);
+      return appendLines(state, idx, `[${event.level}] ${event.text}`);
     }
 
     default: {
@@ -171,6 +171,27 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
+
+// Matches ANSI CSI sequences (ESC[...m, including ?-prefixed sequences like
+// cursor-hide ESC[?25l), OSC sequences (ESC]...\x07), and bare carriage returns.
+// Stripping these before storage prevents raw escape codes from leaking into
+// <Text> elements where the terminal would interpret them and corrupt Ink's
+// cursor-position tracking.
+const ANSI_RE = /\x1B(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07)|[\r]/g;
+
+// Hard cap on stored lines per task. Prevents unbounded growth for long-running
+// steps with verbose output (e.g. npm install).
+const MAX_LOG_LINES = 300;
+
+/**
+ * Strips ANSI escape codes and splits on newlines so every stored entry is
+ * exactly one terminal row. This prevents multi-line <Text> content from
+ * causing Ink to miscount its rendered height, which manifests as text
+ * "spraying" above the UI area on re-renders.
+ */
+export function normalizeLines(text: string): string[] {
+  return text.replace(ANSI_RE, "").split("\n");
+}
 
 function updateTask(
   state: ExecutionState,
@@ -188,9 +209,22 @@ function appendLine(
   index: number,
   line: string,
 ): ExecutionState {
+  return appendLines(state, index, line);
+}
+
+function appendLines(
+  state: ExecutionState,
+  index: number,
+  text: string,
+): ExecutionState {
+  const newLines = normalizeLines(text);
   const tasks = state.tasks.map((t, i) => {
     if (i !== index) return t;
-    const lines = [...t.lines, line];
+    const combined = [...t.lines, ...newLines];
+    const lines =
+      combined.length > MAX_LOG_LINES
+        ? combined.slice(-MAX_LOG_LINES)
+        : combined;
     return { ...t, lines };
   });
   return { ...state, tasks };

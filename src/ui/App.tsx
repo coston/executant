@@ -6,7 +6,7 @@
 // knows how tasks execute — it only renders what the reducer tells it.
 
 import React, { useEffect, useReducer, useState } from "react";
-import { Box, Text, useApp, useStdin } from "ink";
+import { Box, Text, useApp, useStdin, useStdout } from "ink";
 import { KeyboardHandler } from "./KeyboardHandler.js";
 import type { Event, RunOptions, Workflow } from "../types.js";
 import { getErrorMessage } from "../lib/utils.js";
@@ -67,6 +67,18 @@ export function App({ workflow, events, options, updateCheck }: Props) {
   }, [events, exit]);
 
   const { isRawModeSupported } = useStdin();
+  const { stdout } = useStdout();
+
+  // Compute how many log lines can fit without overflowing the terminal.
+  // Overflow causes Ink to miscount its rendered height → text sprays above the UI.
+  // Fixed overhead accounts for: outer padding(2) + brand+margin(2) + header+margin(2)
+  // + taskList margin(1) + logPane marginTop+borders(3) + footer+margin(2) = 12 rows.
+  const terminalRows = stdout?.rows ?? 24;
+  const FIXED_OVERHEAD = 12;
+  const logPaneMaxLines = Math.max(
+    5,
+    terminalRows - FIXED_OVERHEAD - state.tasks.length,
+  );
 
   // Tick counter drives spinner animation and live elapsed time in TaskRow.
   // Stops incrementing once the workflow finishes to avoid unnecessary renders.
@@ -138,6 +150,7 @@ export function App({ workflow, events, options, updateCheck }: Props) {
         <LogPane
           lines={activeTask.lines}
           isActive={activeTask.status === "running"}
+          maxLines={logPaneMaxLines}
         />
       )}
 
