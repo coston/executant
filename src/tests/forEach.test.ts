@@ -1241,7 +1241,7 @@ steps:
     assert.equal(iterEvents[0].iteration, 3);
   });
 
-  test("[1,99] on a 3-item forEach runs no iterations", async () => {
+  test("[1,99] on a 3-item forEach emits a warning and runs no iterations", async () => {
     const wf = loadWorkflow(
       tmpYaml(`
 goal: test
@@ -1256,6 +1256,19 @@ steps:
       (e): e is StepIterationEvent => e.type === "step:iteration",
     );
     assert.equal(iterEvents.length, 0);
+    const warnEvents = events.filter(
+      (e) =>
+        e.type === "log" &&
+        (e as import("../types.js").LogEvent).level === "warn",
+    );
+    assert.ok(
+      warnEvents.length > 0,
+      "expected a warning when target iteration exceeds total",
+    );
+    assert.ok(
+      (warnEvents[0] as import("../types.js").LogEvent).text.includes("99"),
+      "warning should mention the target iteration",
+    );
   });
 
   test("[2,2] skips step 1 entirely and resumes from iteration 2 of step 2", async () => {

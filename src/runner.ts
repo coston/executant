@@ -190,6 +190,15 @@ async function* runForEach(
   const innerTotal = task.inner.length;
   const startIteration = from?.[0] ?? 1;
 
+  if (startIteration > 1 && startIteration > total) {
+    yield {
+      type: "log",
+      level: "warn",
+      text: `[from-step] No iterations to run: target iteration ${startIteration} exceeds total ${total} in "${task.name}"`,
+    };
+    return;
+  }
+
   for (const [i, item] of items.entries()) {
     const iteration = i + 1;
     if (iteration < startIteration) continue; // silent skip

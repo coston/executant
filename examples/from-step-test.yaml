@@ -1,0 +1,13 @@
+goal: "Test --from-step with live Claude: one-sentence summaries per module"
+
+steps:
+  - name: setup
+    type: script
+    command: echo "Starting module summaries"
+
+  - name: summarize
+    forEach: [src/runner.ts, src/types.ts, src/load-workflow.ts, src/logger.ts, src/plan.ts]
+    allowed_tools: []
+    prompt: |
+      Read {{item}} and respond with exactly one sentence describing what this module does.
+      No preamble, just the sentence.
