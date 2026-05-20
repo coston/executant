@@ -23,6 +23,8 @@ function IterationRow({ record, tick }: RowProps) {
       <Text dimColor>{"    "}</Text>
       <Text color={color}>{icon}</Text>
       <Text> </Text>
+      <Text dimColor>{`[${record.iteration}/${record.total}]`}</Text>
+      <Text> </Text>
       <Text
         color={record.status === "running" ? theme.foreground : theme.muted}
       >
