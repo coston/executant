@@ -9,29 +9,16 @@
 // Applies natural language refinement instructions to an existing YAML
 // workflow file, running it through the same validate pipeline as `plan`.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { load as loadYaml, dump as dumpYaml } from "js-yaml";
-import { runClaude, METHODOLOGY } from "./tasks/claude.js";
-import {
-  loadPrompt,
-  getErrorMessage,
-  fillTemplate,
-  formatZodIssues,
-} from "./lib/utils.js";
-import {
-  normalizeWorkflow,
-  runPass3Judge,
-  WorkflowSchema,
-  WORKFLOW_JSON_SCHEMA,
-} from "./plan.js";
+import { existsSync, readFileSync } from "node:fs";
+import { load as loadYaml } from "js-yaml";
+import { METHODOLOGY } from "./tasks/claude.js";
+import { loadPrompt, fillTemplate } from "./lib/utils.js";
+import { runRetryLoop, WORKFLOW_JSON_SCHEMA } from "./plan.js";
 import type { PlanEvent } from "./ui/PlanApp.js";
 import type { ClaudeTask } from "./types.js";
 
 const PLAN_REFINE_PROMPT = loadPrompt("plan-refine");
 const PLAN_SYSTEM_RULES = loadPrompt("plan-system-rules");
-const PLAN_RETRY_PARSE_ERROR = loadPrompt("plan-retry-parse-error");
-const PLAN_RETRY_SCHEMA_ERROR = loadPrompt("plan-retry-schema-error");
-const PLAN_RETRY_JUDGE = loadPrompt("plan-retry-judge");
 const MAX_REFINE_RETRIES = 3;
 
 // ---------------------------------------------------------------------------
@@ -142,137 +129,33 @@ export async function* streamRefine(
   yield { type: "plan:stages", names: ["Refine", "Validate"] };
   yield { type: "plan:stage", stage: 1, total: 2, name: "Refine" };
 
-  let retryPrefix = "";
-
-  for (let attempt = 0; attempt < MAX_REFINE_RETRIES; attempt++) {
-    if (attempt > 0) {
-      yield {
-        type: "plan:retry",
-        attempt: attempt + 1,
-        maxAttempts: MAX_REFINE_RETRIES,
-        reason: retryPrefix.replace(/\n/g, " "),
-      };
-      yield { type: "plan:stage", stage: 1, total: 2, name: "Refine" };
-    }
-
-    const basePrompt = fillTemplate(PLAN_REFINE_PROMPT, {
-      DESCRIPTION: description,
-      EXISTING_YAML: existingYaml,
-      INSTRUCTIONS: instructions,
-    });
-
-    const refineTask: ClaudeTask = {
-      type: "claude",
-      name: "plan:refine",
-      prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
-      allowedTools: [],
-      permissionMode: "bypassPermissions",
-      model: "sonnet",
-      appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
-      jsonSchema: WORKFLOW_JSON_SCHEMA,
-    };
-
-    let structuredOutput: unknown;
-    const textLines: string[] = [];
-
-    try {
-      for await (const event of runClaude(refineTask)) {
-        if (event.type === "output:tool") {
-          yield { type: "plan:tool", tool: event.tool, input: event.input };
-        } else if (event.type === "output:text") {
-          textLines.push(event.text);
-          yield { type: "plan:text", text: event.text };
-        } else if (event.type === "output:structured") {
-          structuredOutput = event.data;
-        }
-      }
-    } catch (err) {
-      const msg = getErrorMessage(err);
-      if (attempt === MAX_REFINE_RETRIES - 1) {
-        yield { type: "plan:error", message: msg };
-        return;
-      }
-      retryPrefix = fillTemplate(PLAN_RETRY_PARSE_ERROR, {
-        ERROR: msg,
-        EXCERPT: textLines.join("\n"),
+  yield* runRetryLoop({
+    maxRetries: MAX_REFINE_RETRIES,
+    retryStageName: "Refine",
+    retryStage: 1,
+    retryTotal: 2,
+    validateStage: 2,
+    validateTotal: 2,
+    schemaErrorLabel: "Refined plan",
+    judgeRejectLabel: "refinement",
+    description,
+    taskFile,
+    buildTask: (retryPrefix) => {
+      const basePrompt = fillTemplate(PLAN_REFINE_PROMPT, {
+        DESCRIPTION: description,
+        EXISTING_YAML: existingYaml,
+        INSTRUCTIONS: instructions,
       });
-      continue;
-    }
-
-    if (structuredOutput === undefined) {
-      const issues =
-        "No structured output returned — ensure the response is a JSON object";
-      if (attempt === MAX_REFINE_RETRIES - 1) {
-        yield { type: "plan:error", message: issues };
-        return;
-      }
-      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
-      continue;
-    }
-
-    const zodResult = WorkflowSchema.safeParse(structuredOutput);
-    if (!zodResult.success) {
-      const issues = formatZodIssues(zodResult.error.issues);
-      if (attempt === MAX_REFINE_RETRIES - 1) {
-        yield {
-          type: "plan:error",
-          message: `Refined plan did not match expected schema:\n${issues}`,
-        };
-        return;
-      }
-      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
-      continue;
-    }
-
-    // --- Pass 2: Validate ---
-    yield { type: "plan:stage", stage: 2, total: 2, name: "Validate" };
-
-    const judgeResult = await runPass3Judge(description, zodResult.data);
-
-    if (judgeResult.skipped) {
-      yield {
-        type: "plan:warn",
-        message: "Judge skipped due to error — proceeding without validation",
-      };
-    }
-
-    if (!judgeResult.pass && attempt < MAX_REFINE_RETRIES - 1) {
-      retryPrefix = fillTemplate(PLAN_RETRY_JUDGE, {
-        FEEDBACK: judgeResult.feedback,
-      });
-      continue;
-    }
-
-    if (!judgeResult.pass) {
-      yield {
-        type: "plan:warn",
-        message: `Judge rejected refinement but retries exhausted: ${judgeResult.feedback}`,
-      };
-    }
-
-    const { goal, vars, steps, ...rest } = normalizeWorkflow(zodResult.data);
-    const ordered = { goal, ...(vars && { vars }), steps, ...rest };
-
-    const yamlContent = dumpYaml(ordered, {
-      lineWidth: -1,
-      noRefs: true,
-      quotingType: '"',
-      forceQuotes: false,
-    }).trimEnd();
-
-    writeFileSync(taskFile, yamlContent + "\n", "utf8");
-
-    const yamlLines = yamlContent.split("\n");
-    const preview =
-      yamlLines.slice(0, 30).join("\n") +
-      (yamlLines.length > 30 ? "\n..." : "");
-
-    yield { type: "plan:complete", taskFile, preview };
-    return;
-  }
-
-  yield {
-    type: "plan:error",
-    message: "Refine failed after maximum retries",
-  };
+      return {
+        type: "claude",
+        name: "plan:refine",
+        prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
+        allowedTools: [],
+        permissionMode: "bypassPermissions",
+        model: "sonnet",
+        appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
+        jsonSchema: WORKFLOW_JSON_SCHEMA,
+      } satisfies ClaudeTask;
+    },
+  });
 }

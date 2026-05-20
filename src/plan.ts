@@ -187,7 +187,7 @@ Examples:
 // Pass 3: Validate (non-generator — runs silently, swallows errors)
 // ---------------------------------------------------------------------------
 
-export async function runPass3Judge(
+async function runPass3Judge(
   description: string,
   workflow: z.infer<typeof WorkflowSchema>,
 ): Promise<{ pass: boolean; feedback: string; skipped?: boolean }> {
@@ -336,6 +336,183 @@ function collapseSequentialSteps(
   ).out;
 }
 
+// ---------------------------------------------------------------------------
+// Shared helpers — used by streamPlan and streamRefine
+// ---------------------------------------------------------------------------
+
+/** Normalizes, serializes, and writes a workflow to disk. Returns a 30-line preview. */
+function writeWorkflowFile(
+  taskFile: string,
+  workflow: z.infer<typeof WorkflowSchema>,
+): string {
+  const { goal, vars, steps, ...rest } = normalizeWorkflow(workflow);
+  const ordered = { goal, ...(vars && { vars }), steps, ...rest };
+  const yamlContent = dumpYaml(ordered, {
+    lineWidth: -1,
+    noRefs: true,
+    quotingType: '"',
+    forceQuotes: false,
+  }).trimEnd();
+  writeFileSync(taskFile, yamlContent + "\n", "utf8");
+  const lines = yamlContent.split("\n");
+  return lines.slice(0, 30).join("\n") + (lines.length > 30 ? "\n..." : "");
+}
+
+interface RetryLoopConfig {
+  maxRetries: number;
+  /** Stage name re-emitted on each retry (e.g. "Decompose to Steps", "Refine"). */
+  retryStageName: string;
+  retryStage: number;
+  retryTotal: number;
+  validateStage: number;
+  validateTotal: number;
+  /** Label used in schema-error messages (e.g. "Plan", "Refined plan"). */
+  schemaErrorLabel: string;
+  /** Label used in judge-reject warning (e.g. "plan", "refinement"). */
+  judgeRejectLabel: string;
+  description: string;
+  taskFile: string;
+  /** Returns the ClaudeTask to run for this attempt. Receives the retry prefix (empty on first attempt). */
+  buildTask: (retryPrefix: string) => ClaudeTask;
+}
+
+/**
+ * Shared retry loop used by both streamPlan and streamRefine.
+ * Runs the task, validates structured output, runs the judge, and writes YAML on success.
+ * Emits plan:tool, plan:text, plan:retry, plan:stage, plan:warn, plan:error, plan:complete events.
+ * The caller must emit the initial plan:stage before calling this.
+ */
+export async function* runRetryLoop(
+  config: RetryLoopConfig,
+): AsyncGenerator<PlanEvent> {
+  const {
+    maxRetries,
+    retryStageName,
+    retryStage,
+    retryTotal,
+    validateStage,
+    validateTotal,
+    schemaErrorLabel,
+    judgeRejectLabel,
+    description,
+    taskFile,
+    buildTask,
+  } = config;
+
+  let retryPrefix = "";
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (attempt > 0) {
+      yield {
+        type: "plan:retry",
+        attempt: attempt + 1,
+        maxAttempts: maxRetries,
+        reason: retryPrefix.replace(/\n/g, " "),
+      };
+      yield {
+        type: "plan:stage",
+        stage: retryStage,
+        total: retryTotal,
+        name: retryStageName,
+      };
+    }
+
+    const task = buildTask(retryPrefix);
+    let structuredOutput: unknown;
+    const textLines: string[] = [];
+
+    try {
+      for await (const event of runClaude(task)) {
+        if (event.type === "output:tool") {
+          yield { type: "plan:tool", tool: event.tool, input: event.input };
+        } else if (event.type === "output:text") {
+          textLines.push(event.text);
+          yield { type: "plan:text", text: event.text };
+        } else if (event.type === "output:structured") {
+          structuredOutput = event.data;
+        }
+      }
+    } catch (err) {
+      const msg = getErrorMessage(err);
+      if (attempt === maxRetries - 1) {
+        yield { type: "plan:error", message: msg };
+        return;
+      }
+      retryPrefix = fillTemplate(PLAN_RETRY_PARSE_ERROR, {
+        ERROR: msg,
+        EXCERPT: textLines.join("\n"),
+      });
+      continue;
+    }
+
+    if (structuredOutput === undefined) {
+      const issues =
+        "No structured output returned — ensure the response is a JSON object";
+      if (attempt === maxRetries - 1) {
+        yield { type: "plan:error", message: issues };
+        return;
+      }
+      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
+      continue;
+    }
+
+    const zodResult = WorkflowSchema.safeParse(structuredOutput);
+    if (!zodResult.success) {
+      const issues = formatZodIssues(zodResult.error.issues);
+      if (attempt === maxRetries - 1) {
+        yield {
+          type: "plan:error",
+          message: `${schemaErrorLabel} did not match expected schema:\n${issues}`,
+        };
+        return;
+      }
+      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
+      continue;
+    }
+
+    yield {
+      type: "plan:stage",
+      stage: validateStage,
+      total: validateTotal,
+      name: "Validate",
+    };
+
+    const judgeResult = await runPass3Judge(description, zodResult.data);
+
+    if (judgeResult.skipped) {
+      yield {
+        type: "plan:warn",
+        message: "Judge skipped due to error — proceeding without validation",
+      };
+    }
+
+    // Judge is non-blocking: if it rejects on the final attempt the workflow is
+    // written anyway — retries are exhausted and discarding the work would be worse.
+    if (!judgeResult.pass && attempt < maxRetries - 1) {
+      retryPrefix = fillTemplate(PLAN_RETRY_JUDGE, {
+        FEEDBACK: judgeResult.feedback,
+      });
+      continue;
+    }
+
+    if (!judgeResult.pass) {
+      yield {
+        type: "plan:warn",
+        message: `Judge rejected ${judgeRejectLabel} but retries exhausted: ${judgeResult.feedback}`,
+      };
+    }
+
+    const preview = writeWorkflowFile(taskFile, zodResult.data);
+    yield { type: "plan:complete", taskFile, preview };
+    return;
+  }
+
+  yield {
+    type: "plan:error",
+    message: `${schemaErrorLabel} generation failed after maximum retries`,
+  };
+}
+
 /**
  * Runs a plan generation pipeline:
  *   Fast path (2 passes) — when the request is self-contained or --fast is set:
@@ -412,7 +589,6 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     ? { decompose: 1, validate: 2, total: 2 }
     : { decompose: 2, validate: 3, total: TOTAL_PLAN_STAGES };
 
-  // --- Pass 2 (or 1 in fast mode): Decompose to Steps (with retries) ---
   yield {
     type: "plan:stage",
     stage: stages.decompose,
@@ -420,150 +596,32 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
     name: "Decompose to Steps",
   };
 
-  let retryPrefix = "";
-
-  for (let attempt = 0; attempt < MAX_PLAN_RETRIES; attempt++) {
-    if (attempt > 0) {
-      yield {
-        type: "plan:retry",
-        attempt: attempt + 1,
-        maxAttempts: MAX_PLAN_RETRIES,
-        reason: retryPrefix.replace(/\n/g, " "),
-      };
-      // Re-emit decompose stage so the TUI reflects the retry (judge rejection re-enters decompose)
-      yield {
-        type: "plan:stage",
-        stage: stages.decompose,
-        total: stages.total,
-        name: "Decompose to Steps",
-      };
-    }
-
-    const basePrompt = fillTemplate(PLAN_DECOMPOSE_PROMPT, {
-      DESCRIPTION: description,
-      RESEARCH_DOC: researchDoc,
-    });
-
-    const decomposeTask: ClaudeTask = {
-      type: "claude",
-      name: "plan:decompose",
-      prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
-      allowedTools: [],
-      permissionMode: "bypassPermissions",
-      model: skipResearch ? "sonnet" : "opus",
-      appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
-      jsonSchema: WORKFLOW_JSON_SCHEMA,
-    };
-
-    let structuredOutput: unknown;
-    const decomposeTextLines: string[] = [];
-
-    try {
-      for await (const event of runClaude(decomposeTask)) {
-        if (event.type === "output:tool") {
-          yield { type: "plan:tool", tool: event.tool, input: event.input };
-        } else if (event.type === "output:text") {
-          decomposeTextLines.push(event.text);
-          yield { type: "plan:text", text: event.text };
-        } else if (event.type === "output:structured") {
-          structuredOutput = event.data;
-        }
-      }
-    } catch (err) {
-      const msg = getErrorMessage(err);
-      if (attempt === MAX_PLAN_RETRIES - 1) {
-        yield { type: "plan:error", message: msg };
-        return;
-      }
-      retryPrefix = fillTemplate(PLAN_RETRY_PARSE_ERROR, {
-        ERROR: msg,
-        EXCERPT: decomposeTextLines.join("\n"),
+  yield* runRetryLoop({
+    maxRetries: MAX_PLAN_RETRIES,
+    retryStageName: "Decompose to Steps",
+    retryStage: stages.decompose,
+    retryTotal: stages.total,
+    validateStage: stages.validate,
+    validateTotal: stages.total,
+    schemaErrorLabel: "Plan",
+    judgeRejectLabel: "plan",
+    description,
+    taskFile,
+    buildTask: (retryPrefix) => {
+      const basePrompt = fillTemplate(PLAN_DECOMPOSE_PROMPT, {
+        DESCRIPTION: description,
+        RESEARCH_DOC: researchDoc,
       });
-      continue;
-    }
-
-    if (structuredOutput === undefined) {
-      const issues =
-        "No structured output returned — ensure the response is a JSON object";
-      if (attempt === MAX_PLAN_RETRIES - 1) {
-        yield { type: "plan:error", message: issues };
-        return;
-      }
-      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
-      continue;
-    }
-
-    const zodResult = WorkflowSchema.safeParse(structuredOutput);
-    if (!zodResult.success) {
-      const issues = formatZodIssues(zodResult.error.issues);
-      if (attempt === MAX_PLAN_RETRIES - 1) {
-        yield {
-          type: "plan:error",
-          message: `Plan did not match expected schema:\n${issues}`,
-        };
-        return;
-      }
-      retryPrefix = fillTemplate(PLAN_RETRY_SCHEMA_ERROR, { ISSUES: issues });
-      continue;
-    }
-
-    // --- Pass 3 (or 2 in fast mode): Validate ---
-    yield {
-      type: "plan:stage",
-      stage: stages.validate,
-      total: stages.total,
-      name: "Validate",
-    };
-
-    const judgeResult = await runPass3Judge(description, zodResult.data);
-
-    if (judgeResult.skipped) {
-      yield {
-        type: "plan:warn",
-        message: "Judge skipped due to error — proceeding without validation",
+      return {
+        type: "claude",
+        name: "plan:decompose",
+        prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
+        allowedTools: [],
+        permissionMode: "bypassPermissions",
+        model: skipResearch ? "sonnet" : "opus",
+        appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
+        jsonSchema: WORKFLOW_JSON_SCHEMA,
       };
-    }
-
-    // Judge is non-blocking: if it rejects on the final attempt the workflow is
-    // written anyway — retries are exhausted and discarding the work would be worse.
-    if (!judgeResult.pass && attempt < MAX_PLAN_RETRIES - 1) {
-      retryPrefix = fillTemplate(PLAN_RETRY_JUDGE, {
-        FEEDBACK: judgeResult.feedback,
-      });
-      continue;
-    }
-
-    if (!judgeResult.pass) {
-      yield {
-        type: "plan:warn",
-        message: `Judge rejected plan but retries exhausted: ${judgeResult.feedback}`,
-      };
-    }
-
-    // All passes succeeded (or judge override on final attempt) — write YAML
-    const { goal, vars, steps, ...rest } = normalizeWorkflow(zodResult.data);
-    const ordered = { goal, ...(vars && { vars }), steps, ...rest };
-
-    const yamlContent = dumpYaml(ordered, {
-      lineWidth: -1,
-      noRefs: true,
-      quotingType: '"',
-      forceQuotes: false,
-    }).trimEnd();
-
-    writeFileSync(taskFile, yamlContent + "\n", "utf8");
-
-    const yamlLines = yamlContent.split("\n");
-    const preview =
-      yamlLines.slice(0, 30).join("\n") +
-      (yamlLines.length > 30 ? "\n..." : "");
-
-    yield { type: "plan:complete", taskFile, preview };
-    return;
-  }
-
-  yield {
-    type: "plan:error",
-    message: "Plan generation failed after maximum retries",
-  };
+    },
+  });
 }

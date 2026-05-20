@@ -18,33 +18,6 @@ import type { Workflow } from "../types.js";
 // ----------------------------------------------------------------------------
 
 describe("InterjectChannel", () => {
-  test("delivers a message immediately when sender is registered", () => {
-    const channel = new InterjectChannel();
-    const received: string[] = [];
-    channel.register((msg) => received.push(msg));
-    channel.interject("hello");
-    assert.deepEqual(received, ["hello"]);
-  });
-
-  test("queues messages sent before registration and flushes on register", () => {
-    const channel = new InterjectChannel();
-    channel.interject("first");
-    channel.interject("second");
-    const received: string[] = [];
-    channel.register((msg) => received.push(msg));
-    assert.deepEqual(received, ["first", "second"]);
-  });
-
-  test("after unregister, messages go to queue", () => {
-    const channel = new InterjectChannel();
-    const received: string[] = [];
-    channel.register((msg) => received.push(msg));
-    channel.unregister();
-    channel.interject("queued");
-    assert.deepEqual(received, []);
-    assert.deepEqual(channel.consumeQueue(), ["queued"]);
-  });
-
   test("consumeQueue drains and clears the queue", () => {
     const channel = new InterjectChannel();
     channel.interject("a");
@@ -54,36 +27,15 @@ describe("InterjectChannel", () => {
     assert.deepEqual(first, ["a", "b"]);
     assert.deepEqual(second, []);
   });
-
-  test("interject after register does not touch queue", () => {
-    const channel = new InterjectChannel();
-    const received: string[] = [];
-    channel.register((msg) => received.push(msg));
-    channel.interject("live");
-    assert.deepEqual(received, ["live"]);
-    assert.deepEqual(channel.consumeQueue(), []);
-  });
-
-  test("register with queued messages delivers them before live ones", () => {
-    const channel = new InterjectChannel();
-    channel.interject("queued-1");
-    channel.interject("queued-2");
-    const received: string[] = [];
-    channel.register((msg) => received.push(msg));
-    channel.interject("live");
-    assert.deepEqual(received, ["queued-1", "queued-2", "live"]);
-  });
 });
 
 // ----------------------------------------------------------------------------
 // runClaude interactive mode — stdin injection
 // ----------------------------------------------------------------------------
 
-// Note: stdin injection (keeping stdin open for multi-turn input) was
-// investigated but is not viable — the Claude CLI requires stdin EOF before
-// it will process a piped prompt. Interjections are instead queued by
-// InterjectChannel and prepended to the next Claude step's prompt.
-describe("runClaude with channel — always uses --print mode", () => {
+// Note: stdin injection is not viable — the Claude CLI requires stdin EOF
+// before processing. Interjections queue and prepend to the next Claude step.
+describe("runClaude — always uses --print mode", () => {
   let mockDir: string;
   let originalPath: string;
 
@@ -101,7 +53,7 @@ describe("runClaude with channel — always uses --print mode", () => {
     rmSync(mockDir, { recursive: true, force: true });
   });
 
-  test("channel parameter does not change the --print invocation", async () => {
+  test("yields output:text events from the claude CLI", async () => {
     const script = join(mockDir, "claude");
     writeFileSync(
       script,
@@ -115,10 +67,9 @@ exit 0
     chmodSync(script, 0o755);
     process.env["PATH"] = `${mockDir}:${originalPath}`;
 
-    const channel = new InterjectChannel();
     const task = { type: "claude" as const, name: "t", prompt: "do it" };
     const events = [];
-    for await (const e of runClaude(task, channel)) events.push(e);
+    for await (const e of runClaude(task)) events.push(e);
 
     const texts = events
       .filter((e) => e.type === "output:text")
@@ -131,7 +82,7 @@ exit 0
     // Simulate user interjecting while a Claude step runs (sender not registered)
     channel.interject("use TypeScript");
     channel.interject("avoid any types");
-    // Channel accumulates them in the queue since no step has registered a sender
+    // Channel accumulates them — always queued until consumed by the next Claude step
     assert.deepEqual(channel.consumeQueue(), [
       "use TypeScript",
       "avoid any types",

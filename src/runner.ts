@@ -176,8 +176,8 @@ async function* runStep(
             }
           : expanded;
       yield* enriched.llmAsJudge
-        ? runClaudeWithJudge(enriched, channel)
-        : runClaude(enriched, channel);
+        ? runClaudeWithJudge(enriched)
+        : runClaude(enriched);
       break;
     }
     case "forEach":
@@ -435,10 +435,7 @@ async function* runCommandWithHealing(
  * feedback appended to the original prompt. Maximum MAX_JUDGE_RETRIES attempts.
  * The channel is only passed to the main step invocations, not the judge.
  */
-async function* runClaudeWithJudge(
-  task: ClaudeTask,
-  channel?: InterjectChannel,
-): AsyncGenerator<Event> {
+async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
   let judgeContext = "";
 
   for (let attempt = 0; attempt < MAX_JUDGE_RETRIES; attempt++) {
@@ -449,7 +446,7 @@ async function* runClaudeWithJudge(
         : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, { FEEDBACK: judgeContext })}`;
 
     const lines: string[] = [];
-    yield* collectLines(runClaude({ ...task, prompt }, channel), lines);
+    yield* collectLines(runClaude({ ...task, prompt }), lines);
 
     // Evaluate output quality.
     yield {

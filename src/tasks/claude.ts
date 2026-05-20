@@ -9,7 +9,7 @@
 import { execSync, spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ZodType } from "zod";
-import type { ClaudeTask, Event, InterjectChannel } from "../types.js";
+import type { ClaudeTask, Event } from "../types.js";
 import { mergeStreamsToLines, waitForExit } from "./stream.js";
 import {
   extractJsonObject,
@@ -67,17 +67,8 @@ export function resolveClaudePath(): string {
  * Runs a Claude task via child_process.spawn.
  * Throws if Claude exits with a non-zero exit code.
  * Yields output:text, output:tool, output:cost, and log events.
- *
- * The `channel` parameter is accepted for API compatibility but is not used
- * for stdin injection here. The Claude CLI requires stdin EOF before it will
- * process a piped prompt, making mid-execution injection impossible.
- * Interjections are instead queued by InterjectChannel and prepended to the
- * next Claude step's prompt in runStep (runner.ts).
  */
-export async function* runClaude(
-  task: ClaudeTask,
-  _channel?: InterjectChannel,
-): AsyncGenerator<Event> {
+export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
   yield {
     type: "log",
     level: "info",

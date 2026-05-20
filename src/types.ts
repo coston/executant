@@ -312,31 +312,17 @@ export interface ExecutionState {
 // ----------------------------------------------------------------------------
 
 /**
- * Connects the TUI's user interjection input to the currently-running Claude
- * subprocess. When the user presses `i` and submits a message, it is either
- * written directly to the running process's stdin (if a Claude step is active)
- * or queued for prepending to the next Claude step's prompt.
+ * Queues user interjection messages for prepending to the next Claude step's
+ * prompt. The Claude CLI requires stdin EOF before processing, so mid-execution
+ * injection is not possible — messages are always queued and consumed by
+ * runStep before starting the next Claude invocation.
  */
 export class InterjectChannel {
-  private sender: ((msg: string) => void) | null = null;
   private _queue: string[] = [];
 
-  /** Called by runClaude when a Claude step starts to activate direct delivery. */
-  register(sender: (msg: string) => void): void {
-    this.sender = sender;
-    for (const msg of this._queue) sender(msg);
-    this._queue = [];
-  }
-
-  /** Called by runClaude when a Claude step ends. */
-  unregister(): void {
-    this.sender = null;
-  }
-
-  /** Called by the TUI. Delivers immediately if a Claude step is running, else queues. */
+  /** Called by the TUI when the user submits an interjection message. */
   interject(message: string): void {
-    if (this.sender) this.sender(message);
-    else this._queue.push(message);
+    this._queue.push(message);
   }
 
   /** Drains and returns any queued messages (for non-Claude steps to consume). */
