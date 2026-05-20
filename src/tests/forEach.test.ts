@@ -840,6 +840,35 @@ steps:
     assert.equal(innerEvents.length, 0);
   });
 
+  test("nested forEach step:iteration events do not bleed into parent iterationHistory", async () => {
+    // Regression: inner forEach step:iteration events were bubbling up through
+    // runWorkflow's index-patching, creating duplicate iteration numbers
+    // in the parent task's iterationHistory (e.g. both outer iter 1 and inner
+    // iter 1 produced record.iteration === 1), breaking key={record.iteration}.
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: outer
+    forEach: [a, b]
+    steps:
+      - name: inner {{item}}
+        forEach: [x, y, z]
+        command: echo "{{item}}"
+`),
+    );
+    const events = await collectEvents(wf);
+    const iterEvents = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    // Only the 2 outer iterations should appear — inner forEach's events must not bubble up
+    assert.equal(iterEvents.length, 2);
+    assert.deepEqual(
+      iterEvents.map((e) => e.item),
+      ["a", "b"],
+    );
+  });
+
   test("{{item}} from outer forEach is substituted into inner forEach shell command", async () => {
     const wf = loadWorkflow(
       tmpYaml(`

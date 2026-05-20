@@ -192,7 +192,15 @@ async function* runForEach(task: ForEachTask): AsyncGenerator<Event> {
         };
       }
       try {
-        yield* runStep(substituted);
+        for await (const event of runStep(substituted)) {
+          // step:iteration and step:inner from nested forEach tasks would
+          // land in the parent task's iterationHistory (via runWorkflow's
+          // index-patching), creating duplicate iteration numbers and
+          // breaking key={record.iteration} in the UI.
+          if (event.type !== "step:iteration" && event.type !== "step:inner") {
+            yield event;
+          }
+        }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         if (!substituted.continueOnError) {

@@ -1,0 +1,33 @@
+name: development-methodology
+prompt: src/prompts/dev-approach.txt
+placeholders:
+  - TASK
+
+test_cases:
+  - id: ambiguous-goal
+    vars:
+      TASK: "Fix the step execution bug."
+    criteria:
+      - "Response explicitly states at least one assumption about what 'step execution bug' means — e.g. which step type (claude, script, log), which failure mode, or what symptom is being observed — before proposing an investigation or fix"
+      - "Response does not jump directly into writing code or a fix without first identifying what is unclear about the bug report"
+
+  - id: knowledge-acquisition
+    vars:
+      TASK: "Add OpenTelemetry distributed tracing to the Express API so every inbound request gets a trace ID propagated through all downstream service calls."
+    criteria:
+      - "Response mentions reading documentation, inspecting existing code, inspecting the API or service architecture, or understanding current request-handling patterns before implementing"
+      - "Response identifies at least one unknown or risk — such as existing middleware ordering, service boundaries, or SDK compatibility — before proposing an implementation"
+
+  - id: complex-decomposition
+    vars:
+      TASK: "Build a complete e-commerce checkout flow: shopping cart management, Stripe payment processing, order confirmation, transactional email notifications, and real-time inventory updates."
+    criteria:
+      - "Response identifies at least 4 distinct implementation slices or phases — such as cart, payment, order, notifications, inventory — rather than treating this as a single task"
+      - "Response orders the slices by dependency or risk — e.g. payment processing before notifications — rather than listing them arbitrarily"
+
+  - id: implementation-verification
+    vars:
+      TASK: "Add a `timeout_seconds` field to executant's prompt step type. If a Claude step runs longer than the specified number of seconds, the subprocess should be killed and the step should fail with a timeout error. The field should be optional — steps without it run indefinitely as they do today."
+    criteria:
+      - "Response explicitly commits to writing a failing test before writing implementation code — using language like 'write a failing test first', 'start with a test', or 'test first' — or describes each implementation slice as starting with a test rather than ending with one"
+      - "Response names lint, typecheck, test, and build as four distinct verification steps — either listed individually or explicitly stated as what a command like 'npm test' runs — rather than just saying 'run tests' with no further detail"

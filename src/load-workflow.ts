@@ -18,27 +18,10 @@ import type {
   CommandTask,
   ForEachTask,
   LogTask,
+  RawStep,
   Task,
   Workflow,
 } from "./types.js";
-
-type RawStep = {
-  name: string;
-  type?: "prompt" | "script" | "log" | "command";
-  prompt?: string;
-  command?: string;
-  message?: string;
-  continue_on_error?: boolean;
-  self_healing?: boolean;
-  max_healing_attempts?: number;
-  output?: string;
-  llm_as_judge?: boolean;
-  allowed_tools?: string[];
-  forEach?: string[] | string;
-  repeat?: number;
-  context?: string[];
-  steps?: RawStep[];
-};
 
 export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
   z.object({
@@ -87,6 +70,16 @@ export function loadWorkflow(filePath: string): Workflow {
   }
 
   const vars = doc.vars ?? {};
+
+  const seen = new Set<string>();
+  for (const step of doc.steps) {
+    if (seen.has(step.name)) {
+      throw new Error(
+        `Duplicate step name "${step.name}" — step names must be unique within a workflow`,
+      );
+    }
+    seen.add(step.name);
+  }
 
   return {
     goal: doc.goal,

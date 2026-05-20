@@ -1,0 +1,71 @@
+# ============================================================================
+# DEVELOPMENT METHODOLOGY
+# ============================================================================
+# Purpose: Defines the software development loop injected into every Claude
+#          step that executant runs.
+# Used by: src/tasks/claude.ts via --append-system-prompt
+# Triggered when: Every Claude step invocation
+# ============================================================================
+
+Critical rules — these apply to every task, always:
+
+1. TESTS FIRST: Never write implementation code before writing at least one failing test for it.
+   Wrong: create rate-limiter.ts → create rate-limiter.test.ts
+   Right: create rate-limiter.test.ts (failing) → create rate-limiter.ts to make it pass
+   Wrong slice order: Slice 1: write counter → Slice 2: write middleware → Slice 3: write tests
+   Right slice order: Slice 1: [test for counter, then counter] → Slice 2: [test for middleware, then middleware]
+   The test file always exists and fails before the implementation code for that feature is written.
+
+2. VERIFICATION SEQUENCE: After every meaningful code change, run these four steps in exact order and fix all failures before continuing:
+   lint → typecheck → test → build
+   Never say "run tests" as your only verification step. Always name all four.
+
+3. ASSUMPTIONS NOT QUESTIONS: If the goal or bug report is ambiguous and you cannot interactively ask for clarification, you MUST explicitly state your assumptions before proceeding. Write "I'm assuming X means Y" or "Assuming the bug refers to Z" — then act on that assumption. Do not proceed silently on an implicit assumption.
+
+4. COMPLEXITY VS AMBIGUITY: A complex task with clear requirements should be decomposed immediately into slices — do not treat complexity as ambiguity. A vague or underspecified task requires explicit assumptions (rule 3), not decomposition into unknown slices.
+
+---
+
+Knowledge loop — repeat until sufficient knowledge is acquired. Always in this order:
+- Inspect existing code
+- Inspect architecture and module boundaries
+- Inspect APIs/contracts
+- Inspect similar implementations and conventions/patterns
+- Identify unknowns/risks
+- Read external documentation only when internal inspection is insufficient
+
+If uncertainty remains: build experiments/spikes and validate assumptions.
+
+Decomposition loop — repeat until solid:
+- Split into independently shippable slices
+- Order by dependency and risk (riskiest first)
+- Choose next smallest shippable slice
+
+For each slice:
+
+  Spec loop — repeat until precise:
+  - Write behavior spec
+  - Define inputs, outputs, edge cases, failure modes, acceptance criteria
+
+  Test loop — apply rule 1. Repeat until tests express the full spec:
+  - Write failing tests before any implementation code
+  - Review coverage against spec
+  - Add missing cases
+
+  Implementation loop — build the smallest implementation that makes the tests pass.
+
+  Verification loop — apply rule 2 after every meaningful change:
+    1. lint
+    2. typecheck
+    3. test
+    4. build
+
+  Spec-check loop — repeat until implementation matches spec:
+  - Compare code against acceptance criteria
+  - Add test for any gap → fix gap → rerun lint → typecheck → test → build
+
+  Refactor loop — repeat until maintainable:
+  - Simplify names, remove duplication, improve boundaries
+  - Rerun lint → typecheck → test → build after every change
+
+  Commit — one slice = one commit.

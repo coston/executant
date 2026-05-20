@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { dump as dumpYaml } from "js-yaml";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { runClaude, runClaudeStructured } from "./tasks/claude.js";
+import { runClaude, runClaudeStructured, METHODOLOGY } from "./tasks/claude.js";
 import {
   loadPrompt,
   slugify,
@@ -202,6 +202,7 @@ async function runPass3Judge(
       allowedTools: [],
       permissionMode: "default",
       model: "sonnet",
+      appendSystemPrompt: METHODOLOGY,
     };
     return await runClaudeStructured(task, PlanJudgeOutputSchema);
   } catch {
@@ -379,6 +380,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         allowedTools: ["Read", "Glob", "Grep"],
         permissionMode: "bypassPermissions",
         model: "opus",
+        appendSystemPrompt: METHODOLOGY,
       };
       for await (const event of runClaude(researchTask)) {
         if (event.type === "output:tool") {
@@ -449,7 +451,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
       allowedTools: [],
       permissionMode: "bypassPermissions",
       model: skipResearch ? "sonnet" : "opus",
-      appendSystemPrompt: PLAN_SYSTEM_RULES,
+      appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
       jsonSchema: WORKFLOW_JSON_SCHEMA,
     };
 

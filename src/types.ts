@@ -291,3 +291,22 @@ export interface ExecutionState {
   /** Accumulated list of file paths written via the Write tool across all steps. */
   writtenFiles: string[];
 }
+
+/** Raw step shape as parsed from YAML before normalisation. */
+export type RawStep = {
+  name: string;
+  type?: "prompt" | "script" | "log" | "command";
+  prompt?: string;
+  command?: string;
+  message?: string;
+  continue_on_error?: boolean;
+  self_healing?: boolean;
+  max_healing_attempts?: number;
+  output?: string;
+  llm_as_judge?: boolean;
+  allowed_tools?: string[];
+  forEach?: string[] | string;
+  repeat?: number;
+  context?: string[];
+  steps?: RawStep[];
+};

@@ -272,6 +272,23 @@ steps:
       /Cannot read/i,
     );
   });
+
+  test("throws for duplicate step names", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: build
+    command: npm run build
+  - name: test
+    command: npm test
+  - name: build
+    command: npm run build:prod
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /Duplicate step name "build" — step names must be unique/,
+    );
+  });
 });
 
 // ----------------------------------------------------------------------------

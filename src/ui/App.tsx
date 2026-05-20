@@ -114,7 +114,7 @@ export function App({ workflow, events, options, updateCheck }: Props) {
       {/* Task list */}
       <Box flexDirection="column" marginBottom={1}>
         {state.tasks.map((taskState, i) => (
-          <Box key={taskState.task.name} flexDirection="column">
+          <Box key={i} flexDirection="column">
             <TaskRow
               index={i}
               tick={tick}

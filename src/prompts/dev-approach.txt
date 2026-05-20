@@ -1,0 +1,16 @@
+# ============================================================================
+# DEV APPROACH PROMPT
+# ============================================================================
+# Purpose: Eval-only template for testing development methodology adherence.
+#          Asks Claude to verbalize its process so behavioral criteria can be
+#          judged against the injected methodology system prompt.
+# Used by: evals/development-methodology.eval.yaml
+# Triggered when: npm run eval evals/development-methodology.eval.yaml
+#
+# Placeholders:
+#   {{TASK}} - The programming task to reason about
+# ============================================================================
+
+{{TASK}}
+
+Before writing any code, briefly describe: what is still unclear and any assumptions you're making, what you need to learn or inspect first, how you would break this into slices, and how you would verify the implementation is correct.
