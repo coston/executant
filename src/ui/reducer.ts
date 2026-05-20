@@ -5,7 +5,14 @@
 // from the workflow runner is dispatched into this reducer — keeping all state
 // transitions in one predictable, testable place.
 
-import type { Event, ExecutionState, TaskState, Workflow } from "../types.js";
+import type {
+  Event,
+  ExecutionState,
+  IterationRecord,
+  TaskState,
+  Workflow,
+} from "../types.js";
+import { stripAnsi } from "../lib/utils.js";
 import { formatToolCall } from "./formatTool.js";
 
 export function buildInitialState(workflow: Workflow): ExecutionState {
@@ -37,14 +44,10 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       });
 
     case "step:complete": {
-      const prev = state.tasks[event.index]?.iterationHistory;
-      const iterationHistory = prev?.length
-        ? prev.map((r) =>
-            r.status === "running"
-              ? { ...r, status: "complete" as const, endTime: Date.now() }
-              : r,
-          )
-        : undefined;
+      const iterationHistory = finalizeIterations(
+        state.tasks[event.index]?.iterationHistory,
+        "complete",
+      );
       return {
         ...updateTask(state, event.index, {
           status: "complete",
@@ -59,14 +62,10 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       // Advance currentIndex even on error so subsequent output events land on
       // the correct task. continueOnError steps resume at the next step rather
       // than replaying output into the failed one.
-      const prev = state.tasks[event.index]?.iterationHistory;
-      const iterationHistory = prev?.length
-        ? prev.map((r) =>
-            r.status === "running"
-              ? { ...r, status: "error" as const, endTime: Date.now() }
-              : r,
-          )
-        : undefined;
+      const iterationHistory = finalizeIterations(
+        state.tasks[event.index]?.iterationHistory,
+        "error",
+      );
       return {
         ...updateTask(state, event.index, {
           status: "error",
@@ -85,12 +84,11 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       };
 
     case "step:iteration": {
-      const prev = (state.tasks[event.index]?.iterationHistory ?? []).map(
-        (r) =>
-          r.status === "running"
-            ? { ...r, status: "complete" as const, endTime: Date.now() }
-            : r,
-      );
+      const prev =
+        finalizeIterations(
+          state.tasks[event.index]?.iterationHistory,
+          "complete",
+        ) ?? [];
       return updateTask(state, event.index, {
         iterationHistory: [
           ...prev,
@@ -133,7 +131,7 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       const idx = event.index;
       if (idx >= state.tasks.length) return state;
       const formatted = formatToolCall(event.tool, event.input);
-      const next = formatted ? appendLine(state, idx, formatted) : state;
+      const next = formatted ? appendLines(state, idx, formatted) : state;
       if (
         event.tool === "Write" &&
         typeof event.input["file_path"] === "string"
@@ -172,13 +170,6 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
 // Helpers
 // ----------------------------------------------------------------------------
 
-// Matches ANSI CSI sequences (ESC[...m, including ?-prefixed sequences like
-// cursor-hide ESC[?25l), OSC sequences (ESC]...\x07), and bare carriage returns.
-// Stripping these before storage prevents raw escape codes from leaking into
-// <Text> elements where the terminal would interpret them and corrupt Ink's
-// cursor-position tracking.
-const ANSI_RE = /\x1B(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07)|[\r]/g;
-
 // Hard cap on stored lines per task. Prevents unbounded growth for long-running
 // steps with verbose output (e.g. npm install).
 const MAX_LOG_LINES = 300;
@@ -190,7 +181,17 @@ const MAX_LOG_LINES = 300;
  * "spraying" above the UI area on re-renders.
  */
 export function normalizeLines(text: string): string[] {
-  return text.replace(ANSI_RE, "").split("\n");
+  return stripAnsi(text).split("\n");
+}
+
+function finalizeIterations(
+  prev: IterationRecord[] | undefined,
+  status: "complete" | "error",
+): IterationRecord[] | undefined {
+  if (!prev?.length) return undefined;
+  return prev.map((r) =>
+    r.status === "running" ? { ...r, status, endTime: Date.now() } : r,
+  );
 }
 
 function updateTask(
@@ -202,14 +203,6 @@ function updateTask(
     i === index ? { ...t, ...patch } : t,
   );
   return { ...state, tasks };
-}
-
-function appendLine(
-  state: ExecutionState,
-  index: number,
-  line: string,
-): ExecutionState {
-  return appendLines(state, index, line);
 }
 
 function appendLines(
@@ -229,5 +222,3 @@ function appendLines(
   });
   return { ...state, tasks };
 }
-
-/** Formats a tool call as a human-readable line for the log pane. */

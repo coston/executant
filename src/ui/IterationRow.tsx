@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { IterationRecord } from "../types.js";
-import { SPINNER, STATUS_ICON, STATUS_COLOR } from "./utils.js";
+import { STATUS_COLOR, statusIcon } from "./utils.js";
 import { theme } from "./theme.js";
 
 interface RowProps {
@@ -10,10 +10,7 @@ interface RowProps {
 }
 
 function IterationRow({ record, tick }: RowProps) {
-  const icon =
-    record.status === "running"
-      ? SPINNER[tick % SPINNER.length]
-      : (STATUS_ICON[record.status] ?? "·");
+  const icon = statusIcon(record.status, tick);
   const color = STATUS_COLOR[record.status] ?? theme.primary;
   const innerText = record.inner
     ? ` — ${stripItem(record.inner.name, record.item)} [${record.inner.index + 1}/${record.inner.total}]`

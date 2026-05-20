@@ -6,24 +6,11 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { loadWorkflow } from "../load-workflow.js";
 import { reducer, buildInitialState } from "../ui/reducer.js";
 import type { ExecutionState } from "../types.js";
-
-function tmpYaml(content: string): string {
-  const dir = join(tmpdir(), `executant-reducer-iter-test-${process.pid}`);
-  mkdirSync(dir, { recursive: true });
-  const file = join(
-    dir,
-    `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.yaml`,
-  );
-  writeFileSync(file, content, "utf8");
-  return file;
-}
+import { tmpYaml } from "./helpers.js";
 
 function forEachState(): ExecutionState {
   const wf = loadWorkflow(

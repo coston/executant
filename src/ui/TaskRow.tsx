@@ -1,12 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { TaskState } from "../types.js";
-import {
-  SPINNER,
-  STATUS_ICON,
-  STATUS_COLOR,
-  formatTaskElapsed,
-} from "./utils.js";
+import { STATUS_COLOR, formatTaskElapsed, statusIcon } from "./utils.js";
 import { theme } from "./theme.js";
 
 interface Props {
@@ -42,12 +37,6 @@ export function TaskRow({ taskState, isActive, index, tick }: Props) {
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
-
-function statusIcon(status: TaskState["status"], tick: number): string {
-  return status === "running"
-    ? SPINNER[tick % SPINNER.length]
-    : (STATUS_ICON[status] ?? "·");
-}
 
 function statusColor(status: TaskState["status"], isActive: boolean): string {
   if (isActive && status === "running") return theme.primary;

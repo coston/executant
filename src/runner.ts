@@ -25,7 +25,13 @@ import type {
 } from "./types.js";
 import { CommandError, runCommand } from "./tasks/command.js";
 import { runClaude, runClaudeStructured } from "./tasks/claude.js";
-import { loadPrompt, getErrorMessage, fillTemplate } from "./lib/utils.js";
+import {
+  loadPrompt,
+  getErrorMessage,
+  fillTemplate,
+  formatToolCall,
+  normalizeError,
+} from "./lib/utils.js";
 
 const JUDGE_RETRY_CONTEXT = loadPrompt("judge-retry-context");
 const SELF_HEALING_PROMPT = loadPrompt("self-healing-fix");
@@ -106,7 +112,7 @@ export async function* runWorkflow(
         durationMs: Date.now() - stepStart,
       };
     } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
+      const error = normalizeError(err);
       yield { type: "step:error", index: i, name: task.name, error };
       if (!task.continueOnError) throw error;
     }
@@ -202,7 +208,7 @@ async function* runForEach(task: ForEachTask): AsyncGenerator<Event> {
           }
         }
       } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+        const error = normalizeError(err);
         if (!substituted.continueOnError) {
           yield {
             type: "log",
@@ -521,13 +527,6 @@ function buildJudgePrompt(
     STEP_INSTRUCTIONS: instructions,
     OUTPUT: output,
   });
-}
-
-function formatToolCall(tool: string, input: Record<string, unknown>): string {
-  if (tool === "Edit" || tool === "Write")
-    return `${tool}(${String(input["file_path"] ?? "")})`;
-  if (tool === "Bash") return `Bash(${String(input["command"] ?? "")})`;
-  return tool;
 }
 
 function buildFixSummary(toolCalls: string[], claudeLines: string[]): string {

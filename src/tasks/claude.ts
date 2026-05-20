@@ -15,6 +15,7 @@ import {
   extractJsonObject,
   getErrorMessage,
   loadPrompt,
+  stripAnsi,
 } from "../lib/utils.js";
 
 export const METHODOLOGY = loadPrompt("development-methodology");
@@ -168,11 +169,6 @@ function* parseClaudeMessage(msg: unknown): Generator<Event> {
 export function buildExitError(code: number, plainLines: string[]): Error {
   const detail = plainLines.length > 0 ? `\n${plainLines.join("\n")}` : "";
   return new Error(`claude exited with code ${code}${detail}`);
-}
-
-const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\r/g;
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, "");
 }
 
 export function isObject(v: unknown): v is Record<string, unknown> {

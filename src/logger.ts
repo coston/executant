@@ -19,7 +19,12 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Event } from "./types.js";
-import { slugify, formatTimestamp, getErrorMessage } from "./lib/utils.js";
+import {
+  slugify,
+  formatTimestamp,
+  getErrorMessage,
+  getToolArg,
+} from "./lib/utils.js";
 
 // ============================================================================
 // Log directory resolution
@@ -82,21 +87,6 @@ const INIT_STATE: LogState = {
 // ============================================================================
 // Pure handlers — each performs its side-effects and returns the new state
 // ============================================================================
-
-const TOOL_SUMMARY: Record<string, (i: Record<string, unknown>) => string> = {
-  Read: (i) => String(i["file_path"] ?? i["path"] ?? ""),
-  Edit: (i) => String(i["file_path"] ?? ""),
-  Write: (i) => String(i["file_path"] ?? ""),
-  Bash: (i) => String(i["command"] ?? ""),
-  Glob: (i) => String(i["pattern"] ?? ""),
-  Grep: (i) => String(i["pattern"] ?? ""),
-};
-
-function toolSummary(tool: string, input: Record<string, unknown>): string {
-  return (
-    TOOL_SUMMARY[tool] ?? ((i: Record<string, unknown>) => JSON.stringify(i))
-  )(input);
-}
 
 function appendLog(logFile: string, text: string): void {
   if (logFile) appendFileSync(logFile, text + "\n");
@@ -165,21 +155,32 @@ function onStepError(s: LogState, error: Error): LogState {
   return s;
 }
 
+function buildHighlightHeader(
+  ctx: LogContext,
+  s: LogState,
+  title: string,
+  extra: string[] = [],
+): string {
+  return (
+    [
+      `# ${title}`,
+      "",
+      `**Task:** ${ctx.slug}`,
+      `**Step:** ${s.stepName}`,
+      ...extra,
+      `**Timestamp:** ${new Date().toISOString()}`,
+      "",
+      "---",
+      "",
+    ].join("\n") + "\n"
+  );
+}
+
 function complexSequenceHeader(ctx: LogContext, s: LogState): string {
-  return [
-    "# Complex Tool Sequence",
-    "",
-    `**Task:** ${ctx.slug}`,
-    `**Step:** ${s.stepName}`,
-    `**Timestamp:** ${new Date().toISOString()}`,
-    "",
-    "---",
-    "",
-    "## Claude's Tool Orchestration",
-    "",
-    "Claude used multiple tools to complete this step:",
-    "",
-  ].join("\n");
+  return (
+    buildHighlightHeader(ctx, s, "Complex Tool Sequence") +
+    "## Claude's Tool Orchestration\n\nClaude used multiple tools to complete this step:\n\n"
+  );
 }
 
 function createComplexSequenceFile(ctx: LogContext, s: LogState): string {
@@ -194,7 +195,7 @@ function onTool(
   tool: string,
   input: Record<string, unknown>,
 ): LogState {
-  const desc = toolSummary(tool, input);
+  const desc = getToolArg(tool, input);
   appendLog(s.logFile, `   [${tool}] ${desc}`);
   const toolCount = s.toolCount + 1;
   const complexSequenceFile =
@@ -216,23 +217,9 @@ function saveJudgeHighlight(
 ): void {
   writeFileSync(
     highlightPath(ctx, s.stepIndex, `judge_${verdict}`),
-    [
-      `# Judge Verdict: ${verdict}`,
-      "",
-      `**Task:** ${ctx.slug}`,
-      `**Step:** ${s.stepName}`,
+    buildHighlightHeader(ctx, s, `Judge Verdict: ${verdict}`, [
       `**Attempt:** ${s.judgeAttempt}`,
-      `**Timestamp:** ${new Date().toISOString()}`,
-      "",
-      "---",
-      "",
-      text,
-      "",
-      "---",
-      "",
-      "*Auto-captured*",
-      "",
-    ].join("\n"),
+    ]) + [text, "", "---", "", "*Auto-captured*", ""].join("\n"),
   );
 }
 
@@ -258,33 +245,26 @@ const LOG_MATCHERS: readonly LogMatcher[] = [
   },
   {
     pattern: /\[self-healing\].*failed.*exit\s+(\d+)/i,
-    apply: (ctx, s, text, match) => {
+    apply: (ctx, s, _text, match) => {
       const selfHealingFile = highlightPath(ctx, s.stepIndex, "self_healing");
       writeFileSync(
         selfHealingFile,
-        [
-          "# Self-Healing Activation",
-          "",
-          `**Task:** ${ctx.slug}`,
-          `**Step:** ${s.stepName}`,
-          `**Timestamp:** ${new Date().toISOString()}`,
-          "",
-          "---",
-          "",
-          "## ❌ Failure Detected",
-          "",
-          `**Exit Code:** ${match[1]}`,
-          "",
-          "**Recent Output:**",
-          "```",
-          s.recentOutput.join("\n"),
-          "```",
-          "",
-          "---",
-          "",
-          "## 🔧 Claude's Healing Process",
-          "",
-        ].join("\n"),
+        buildHighlightHeader(ctx, s, "Self-Healing Activation") +
+          [
+            "## ❌ Failure Detected",
+            "",
+            `**Exit Code:** ${match[1]}`,
+            "",
+            "**Recent Output:**",
+            "```",
+            s.recentOutput.join("\n"),
+            "```",
+            "",
+            "---",
+            "",
+            "## 🔧 Claude's Healing Process",
+            "",
+          ].join("\n"),
       );
       return { ...s, selfHealingFile, recentOutput: [] };
     },
@@ -323,16 +303,15 @@ function onLogMessage(
   text: string,
 ): LogState {
   appendLog(s.logFile, `[${level}] ${text}`);
-  return LOG_MATCHERS.reduce<{ matched: boolean; state: LogState }>(
-    ({ matched, state }, { pattern, apply }) => {
-      if (matched) return { matched, state };
-      const m = pattern.exec(text);
-      return m
-        ? { matched: true, state: apply(ctx, state, text, m) }
-        : { matched, state };
-    },
-    { matched: false, state: s },
-  ).state;
+  let state = s;
+  for (const { pattern, apply } of LOG_MATCHERS) {
+    const m = pattern.exec(text);
+    if (m) {
+      state = apply(ctx, state, text, m);
+      break;
+    }
+  }
+  return state;
 }
 
 function onWorkflowComplete(ctx: LogContext, s: LogState): LogState {

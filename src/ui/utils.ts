@@ -4,7 +4,7 @@ import { theme } from "./theme.js";
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** Icon glyphs shared across status-bearing rows (TaskRow, IterationRow). */
-export const STATUS_ICON: Partial<Record<TaskStatus, string>> = {
+const STATUS_ICON: Partial<Record<TaskStatus, string>> = {
   complete: "✓",
   error: "✗",
   skipped: "⊘",
@@ -17,6 +17,13 @@ export const STATUS_COLOR: Partial<Record<TaskStatus, string>> = {
   error: theme.error,
   pending: theme.muted,
 };
+
+/** Resolves the spinner or status glyph for a given status and tick. */
+export function statusIcon(status: string, tick: number): string {
+  return status === "running"
+    ? SPINNER[tick % SPINNER.length]!
+    : (STATUS_ICON[status as TaskStatus] ?? "·");
+}
 
 /** Delay before Ink unmounts to allow the final frame to render. */
 export const EXIT_DELAY_MS = 300;
