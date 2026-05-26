@@ -29,6 +29,11 @@ document for the task described at the bottom of this prompt.
 5. **Detect repetition intent** — If the task description says "do X N times", "repeat N times",
    "run N iterations", or similar, note this explicitly in the Step Breakdown section so Pass 2
    emits a `repeat: N` step rather than N separate steps.
+6. **Detect user-specified step structure** — If the task description contains explicit numbered
+   steps (e.g., "1. ... 2. ... 3. ..."), open the Step Breakdown section with the exact flag line:
+     USER SPECIFIED N STEPS — PRESERVE STRUCTURE
+   Then list each user step as a labeled subsection. Pass 2 reads this flag and treats the step
+   count as a hard constraint — it must not merge, split, or reorder those steps.
 
 ## Required Output Sections
 
@@ -79,6 +84,9 @@ Anything the step decomposer needs to know:
 - Cross-step data flow (does one step's output feed the next?)
 - Steps that are safe to skip if they fail (`continue_on_error`)
 - Repetition intent: if the description uses "N times" or "N iterations", flag it here so the decomposer uses `repeat: N`
+- User-specified step count (HARD CONSTRAINT for Pass 2): if the description contains N numbered
+  steps (e.g., "1. ... 2. ..."), write: "User specified N steps — decomposer must create exactly N
+  main workflow steps." Pass 2 treats this count as non-negotiable.
 
 ---
 

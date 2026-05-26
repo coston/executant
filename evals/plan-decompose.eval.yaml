@@ -49,3 +49,23 @@ test_cases:
       - "Each child step in the nested steps array uses {{item}} in its name or command field"
       - "No hardcoded file paths in any prompt field — all file references use {{var_name}} substitution"
       - "vars block is present and appears before the steps block"
+
+  - id: user-specified-steps
+    vars:
+      DESCRIPTION: |
+        Build a new blog platform using NextJS, Prisma, and Resend.
+        1. Set up the NextJS project with TypeScript and configure Prisma with a PostgreSQL schema (Post, Author, Tag models).
+        2. Create the GitHub repo, push the initial commit, and set up CI with GitHub Actions (lint, typecheck, test on push).
+        3. Develop the core blog features: post listing page, individual post page with MDX rendering, author profile page, and tag filtering.
+        4. Final polish: add Resend email subscription flow, dark mode toggle, SEO metadata, and deploy to Vercel.
+      RESEARCH_DOC: fixtures/research-doc-user-steps.md
+    criteria:
+      - "Output is valid JSON with a 'goal' field and a 'steps' array"
+      - "The steps array contains exactly 4 non-verification main steps (prompt steps, one per user-specified step)"
+      - "Step 1 (or its name/prompt) covers NextJS project setup and Prisma schema configuration"
+      - "Step 2 (or its name/prompt) covers GitHub repo creation and CI/GitHub Actions setup"
+      - "Step 3 (or its name/prompt) covers core blog feature development including post listing, post page, author profile, and tag filtering"
+      - "Step 4 (or its name/prompt) covers Resend email subscription, dark mode, SEO metadata, and Vercel deployment"
+      - "No hardcoded file paths in prompt fields — all paths use {{var_name}} substitution"
+      - "vars block is present and appears before the steps block"
+      - "Includes at least one type:script step running npm run lint, npm test, or npm run build appended after the 4 main steps"

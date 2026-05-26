@@ -70,6 +70,21 @@ If the user's goal mentions "N times", "repeat N", "N iterations", or "N passes"
 - Does any single step's `prompt` describe doing something "N times" or "across N passes" inline, instead of using `repeat: N`? A step that says "do this 10 times" or "perform N passes" inside its prompt text rather than setting `repeat: N` is wrong — reject it and require it to be restructured as a single-pass prompt with `repeat: N` on the step
 - Are there N consecutive steps with names like `step_1`, `step_2`, `step_3`? Sequential named steps are always wrong when they do the same thing — reject and require a single step with `repeat: N`
 
+### 6. User-Specified Step Preservation (if applicable)
+
+If the user's original goal contains N numbered steps (pattern "1. ... 2. ... 3. ..."):
+
+- Count the non-verification main steps (exclude `type: "script"` steps whose `command`
+  runs lint, test, or build — e.g., `npm run lint`, `npm test`, `npm run build`)
+- The workflow MUST contain at least N non-verification main steps, one per user step
+- If fewer than N non-verification main steps exist, user steps were merged or dropped — FAIL
+- FAIL with: "User specified N steps but workflow has only M main steps. Each user step
+  must map to exactly one workflow step."
+- Note: verification script steps appended after the N steps satisfy the verification gate
+  (criterion 1) and do NOT count against the N
+
+If the user's goal has no numbered steps, skip this criterion.
+
 ## Output Format
 
 Respond with ONLY a JSON object in this exact shape:
@@ -85,7 +100,7 @@ or
 ```
 
 Rules:
-- `pass` is `true` only if ALL five criteria above are met
+- `pass` is `true` only if ALL applicable criteria above are met
 - `feedback` is an empty string when `pass` is `true`
 - `feedback` must be specific and actionable when `pass` is `false` — say EXACTLY what is wrong
   and what the decomposer must do to fix it
