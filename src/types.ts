@@ -43,6 +43,8 @@ export interface CommandTask extends BaseTask {
    * field (which names a var whose value is the file path).
    */
   output?: string;
+  /** Kill the process and throw TimeoutError after this many seconds. */
+  timeoutSeconds?: number;
 }
 
 /** Invokes the Claude CLI via child_process.spawn. Streams AI output as structured events. */
@@ -70,6 +72,8 @@ export interface ClaudeTask extends BaseTask {
    * whose values are file paths).
    */
   contextFiles?: string[];
+  /** Kill the Claude subprocess and throw TimeoutError after this many seconds. */
+  timeoutSeconds?: number;
 }
 
 /**
@@ -106,6 +110,15 @@ export interface WorkflowCompleteEvent {
   type: "workflow:complete";
   workflow: Workflow;
   durationMs: number;
+  /** Last 100 lines of combined stdout/stderr from the final step. */
+  lastOutput?: string;
+}
+
+/** Fired when execution is stopped cooperatively via the .executant-cancel file. */
+export interface WorkflowCancelledEvent {
+  type: "workflow:cancelled";
+  workflow: Workflow;
+  durationMs: number;
 }
 
 /** Fired when a step begins executing. */
@@ -129,6 +142,8 @@ export interface StepErrorEvent {
   index: number;
   name: string;
   error: Error;
+  /** Last 100 lines of combined stdout/stderr from the failing step. */
+  lastOutput?: string;
 }
 
 /** Fired when a step is skipped due to --step or --from-step filters. */
@@ -214,6 +229,7 @@ export interface StepInterjectionEvent {
 export type Event =
   | WorkflowStartEvent
   | WorkflowCompleteEvent
+  | WorkflowCancelledEvent
   | StepStartEvent
   | StepCompleteEvent
   | StepErrorEvent
@@ -243,6 +259,8 @@ export interface RunOptions {
   stepFilter?: string;
   /** Resume from this 1-based path (e.g. [3] or [3,2] or [2,5,4,3]). */
   fromStep?: FromStepTarget;
+  /** Directory where the .executant-cancel file is checked. Defaults to process.cwd(). */
+  workDir?: string;
 }
 
 // ----------------------------------------------------------------------------
@@ -348,4 +366,14 @@ export type RawStep = {
   repeat?: number;
   context?: string[];
   steps?: RawStep[];
+  timeout_seconds?: number;
 };
+
+/** Thrown when a step exceeds its timeout_seconds limit. Exit code: 3. */
+export class TimeoutError extends Error {
+  readonly exitCode = 3;
+  constructor(stepName: string, seconds: number) {
+    super(`Step "${stepName}" timed out after ${seconds}s`);
+    this.name = "TimeoutError";
+  }
+}

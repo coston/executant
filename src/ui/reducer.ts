@@ -35,6 +35,7 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       return { ...state, startTime: Date.now() };
 
     case "workflow:complete":
+    case "workflow:cancelled":
       return { ...state, endTime: Date.now() };
 
     case "step:start":

@@ -171,6 +171,7 @@ function reduce(ctx: LogContext, s: LogState, event: Event): LogState {
     case "log":
       return onLogMessage(s, event.level, event.text);
     case "workflow:complete":
+    case "workflow:cancelled":
       return onWorkflowComplete(ctx, s);
     default:
       return s;

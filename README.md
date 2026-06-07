@@ -115,10 +115,43 @@ steps:
       This is pass {{item}} of 5. Review src/runner.ts for untested edge cases.
 ```
 
+## Variables at Runtime
+
+Pass `--var KEY=VALUE` on the command line to override or supply workflow vars without editing the YAML:
+
+```bash
+executant --var env=staging --var region=eu-west-1 deploy.yaml
+```
+
+CLI vars override any same-named vars in the workflow's `vars:` section. Multiple `--var` flags are accepted.
+
 ## Quality Controls
 
 - **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
 - **`self_healing: true`** — on script failure, Claude diagnoses and repairs the command, then re-runs it, up to 5×
+- **`timeout_seconds: N`** — kill the step after N seconds and fail with exit code 3. Works for both script and prompt steps.
+
+```yaml
+steps:
+  - name: install
+    command: npm ci
+    timeout_seconds: 120   # fail if install takes longer than 2 min
+
+  - name: implement
+    prompt: Implement the feature described above.
+    timeout_seconds: 1800  # 30 min ceiling for the Claude step
+```
+
+## Cancellation
+
+Write a `.executant-cancel` file in the **same directory as the workflow YAML** to stop the workflow cleanly **between steps**:
+
+```bash
+executant long-workflow.yaml &
+touch .executant-cancel   # workflow stops at the next step boundary; exits 4
+```
+
+The file is deleted automatically. This is a cooperative, process-safe alternative to SIGTERM — no mid-step git state corruption. The cancel file is always resolved relative to the workflow file, so the location is predictable regardless of which directory you invoked executant from.
 
 ## Interjection
 
@@ -162,8 +195,19 @@ executant workflow.yaml                         # run a workflow
 executant --ci workflow.yaml                    # headless, NDJSON to stdout
 executant --step <name|n> wf.yaml              # run one step by name or index
 executant --from-step <n> wf.yaml              # resume from step n
+executant --var KEY=VALUE wf.yaml              # override a workflow var at runtime
 executant update                                # upgrade to latest version
 ```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All steps completed successfully |
+| `1` | A step failed at runtime |
+| `2` | YAML or variable validation error |
+| `3` | A step timed out (`timeout_seconds` exceeded) |
+| `4` | Cancelled via `.executant-cancel` file |
 
 ## Development
 

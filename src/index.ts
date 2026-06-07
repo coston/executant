@@ -12,8 +12,8 @@
 
 import React from "react";
 import { render } from "ink";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadWorkflow } from "./load-workflow.js";
 import { runWorkflow } from "./runner.js";
@@ -22,8 +22,13 @@ import { App } from "./ui/App.js";
 import { parsePlanArgs, streamPlan } from "./plan.js";
 import { parseRefineArgs, streamRefine } from "./refine.js";
 import { PlanApp } from "./ui/PlanApp.js";
-import { createLogger, resolveLogDir, withLogger } from "./logger.js";
-import { InterjectChannel } from "./types.js";
+import {
+  createLogger,
+  findExecutantLocalDir,
+  resolveLogDir,
+  withLogger,
+} from "./logger.js";
+import { InterjectChannel, TimeoutError } from "./types.js";
 import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
 import { getErrorMessage } from "./lib/utils.js";
 
@@ -100,6 +105,7 @@ Options:
   --ci                  Headless mode — print events as NDJSON, no TUI
   --step <name|index>   Run only the named step or step at 1-based index
   --from-step <n>       Resume from step n (e.g. 3, 3.2, 2.5.4.3 — 1-based path)
+  --var KEY=VALUE       Override or supply a workflow var at runtime (repeatable)
   --help, -h            Show this help
 
 Commands:
@@ -141,6 +147,18 @@ YAML — script step fields (type: script | command, or inferred when command is
   self_healing      bool    On failure, Claude diagnoses and fixes iteratively
                             up to 5 attempts with accumulated context (default: false)
   max_healing_attempts  int   Override max self-healing retries (default: 5)
+  timeout_seconds   number  Kill the step and fail with exit code 3 after N seconds
+
+Cancellation:
+  Write a .executant-cancel file in the working directory to stop execution
+  cleanly between steps (exit code 4). The file is deleted automatically.
+
+Exit codes:
+  0  All steps completed successfully
+  1  A step failed at runtime
+  2  YAML or variable validation error
+  3  A step timed out (timeout_seconds exceeded)
+  4  Cancelled via .executant-cancel file
 
 YAML — log step fields (type: log, or inferred when message is present and prompt is absent):
   message           string  Text to emit as a progress marker
@@ -167,6 +185,7 @@ Example:
 let ciMode = false;
 let stepFilter: string | undefined;
 let fromStep: FromStepTarget | undefined;
+const cliVars: Record<string, string> = {};
 const positional: string[] = [];
 
 for (let i = 0; i < rawArgs.length; i++) {
@@ -193,6 +212,18 @@ for (let i = 0; i < rawArgs.length; i++) {
       process.exit(1);
     }
     fromStep = parts;
+  } else if (a === "--var") {
+    if (!rawArgs[i + 1]) {
+      console.error("--var requires a KEY=VALUE argument");
+      process.exit(1);
+    }
+    const pair = rawArgs[++i];
+    const eq = pair.indexOf("=");
+    if (eq <= 0) {
+      console.error(`--var value must be KEY=VALUE, got: ${pair}`);
+      process.exit(1);
+    }
+    cliVars[pair.slice(0, eq)] = pair.slice(eq + 1);
   } else {
     positional.push(a);
   }
@@ -207,12 +238,23 @@ if (!filePath) {
 
 let workflow: Workflow;
 try {
-  workflow = loadWorkflow(filePath);
+  workflow = loadWorkflow(filePath, cliVars);
 } catch (err) {
   console.error(getErrorMessage(err));
-  process.exit(1);
+  process.exit(2);
 }
-const options: RunOptions = { stepFilter, fromStep };
+
+// Auto-create task directories if this project uses executant's local dir layout.
+const localDir = findExecutantLocalDir(dirname(resolve(filePath)));
+if (localDir) {
+  mkdirSync(join(localDir, "tasks", "todo"), { recursive: true });
+  mkdirSync(join(localDir, "tasks", "done"), { recursive: true });
+}
+const options: RunOptions = {
+  stepFilter,
+  fromStep,
+  workDir: dirname(resolve(filePath)),
+};
 const channel = new InterjectChannel();
 const rawEvents = runWorkflow(workflow, options, channel);
 const logger = createLogger(resolveLogDir(filePath), workflow.goal);
@@ -235,11 +277,19 @@ if (ciMode) {
   // Useful for logs, piping into other tools, or running in a headless env.
   (async () => {
     for await (const event of events) {
-      process.stdout.write(JSON.stringify(event, errorReplacer) + "\n");
+      const line = JSON.stringify(event, errorReplacer) + "\n";
+      if (event.type === "workflow:cancelled") {
+        // Write then exit only after the data is flushed — process.exit() does
+        // not drain buffered stdout on piped streams without this callback.
+        process.stdout.write(line, () => process.exit(4));
+        return;
+      }
+      process.stdout.write(line);
     }
   })().catch((err) => {
+    const code = err instanceof TimeoutError ? 3 : 1;
     console.error(err);
-    process.exit(1);
+    process.exit(code);
   });
 } else {
   // Interactive mode: render the Ink TUI.

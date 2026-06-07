@@ -40,6 +40,7 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
     repeat: z.number().int().positive().optional(),
     context: z.array(z.string()).optional(),
     steps: z.array(RawStepSchema).min(1).optional(),
+    timeout_seconds: z.number().positive().optional(),
   }),
 );
 
@@ -49,7 +50,10 @@ const RawWorkflowSchema = z.object({
   vars: z.record(z.string(), z.string()).optional(),
 });
 
-export function loadWorkflow(filePath: string): Workflow {
+export function loadWorkflow(
+  filePath: string,
+  cliVars: Record<string, string> = {},
+): Workflow {
   let raw: string;
   try {
     raw = readFileSync(filePath, "utf8");
@@ -68,7 +72,7 @@ export function loadWorkflow(filePath: string): Workflow {
     throw new Error(`Invalid workflow file "${filePath}":\n${detail}`);
   }
 
-  const vars = doc.vars ?? {};
+  const vars = { ...(doc.vars ?? {}), ...cliVars };
 
   const seen = new Set<string>();
   for (const step of doc.steps) {
@@ -160,6 +164,9 @@ function convertInnerStep(
         ...(step.output && {
           output: resolveOutputFile(step.output, vars, name),
         }),
+        ...(step.timeout_seconds !== undefined && {
+          timeoutSeconds: step.timeout_seconds,
+        }),
       } satisfies CommandTask;
     }
 
@@ -186,6 +193,9 @@ function convertInnerStep(
         allowedTools: step.allowed_tools,
         model: "sonnet",
         ...(contextFiles.length > 0 && { contextFiles }),
+        ...(step.timeout_seconds !== undefined && {
+          timeoutSeconds: step.timeout_seconds,
+        }),
       } satisfies ClaudeTask;
     }
 

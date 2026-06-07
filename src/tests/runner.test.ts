@@ -6,12 +6,17 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 import type {
   Event,
+  StepErrorEvent,
   StepSkipEvent,
   StepStartEvent,
   Workflow,
+  WorkflowCancelledEvent,
+  WorkflowCompleteEvent,
 } from "../types.js";
 import { collectEvents, collectEventsUntilError, tmpYaml } from "./helpers.js";
 import { loadWorkflow } from "../load-workflow.js";
@@ -273,5 +278,214 @@ steps:
       ),
       "expected log message in output:text events",
     );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// lastOutput on step:error and workflow:complete
+// ----------------------------------------------------------------------------
+
+describe("runWorkflow — lastOutput", () => {
+  test("step:error includes lastOutput with command output", async () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: failing
+    command: echo "before failure" && exit 1
+    self_healing: false
+`);
+    const wf = loadWorkflow(file);
+    const { events } = await collectEventsUntilError(wf);
+    const errorEvent = events.find(
+      (e): e is StepErrorEvent => e.type === "step:error",
+    );
+    assert.ok(errorEvent, "expected step:error event");
+    assert.ok(
+      errorEvent.lastOutput !== undefined,
+      "expected lastOutput to be set",
+    );
+    assert.ok(
+      errorEvent.lastOutput!.includes("before failure"),
+      `expected "before failure" in lastOutput, got: ${errorEvent.lastOutput}`,
+    );
+  });
+
+  test("workflow:complete includes lastOutput from final step", async () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: produce
+    command: echo "final output line"
+`);
+    const wf = loadWorkflow(file);
+    const events = await collectEvents(wf);
+    const completeEvent = events.find(
+      (e): e is WorkflowCompleteEvent => e.type === "workflow:complete",
+    );
+    assert.ok(completeEvent, "expected workflow:complete event");
+    assert.ok(
+      completeEvent.lastOutput !== undefined,
+      "expected lastOutput to be set",
+    );
+    assert.ok(
+      completeEvent.lastOutput!.includes("final output line"),
+      `expected "final output line" in lastOutput, got: ${completeEvent.lastOutput}`,
+    );
+  });
+
+  test("workflow:complete lastOutput is undefined when final step has no output", async () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: silent
+    command: "exit 0"
+`);
+    const wf = loadWorkflow(file);
+    const events = await collectEvents(wf);
+    const completeEvent = events.find(
+      (e): e is WorkflowCompleteEvent => e.type === "workflow:complete",
+    );
+    assert.ok(completeEvent, "expected workflow:complete event");
+    assert.equal(completeEvent.lastOutput, undefined);
+  });
+
+  test("workflow:complete lastOutput reflects failing continueOnError step, not previous success", async () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: success
+    command: echo "success-output"
+  - name: failing
+    command: echo "failure-output" && exit 1
+    continue_on_error: true
+    self_healing: false
+`);
+    const wf = loadWorkflow(file);
+    const events = await collectEvents(wf);
+    const completeEvent = events.find(
+      (e): e is WorkflowCompleteEvent => e.type === "workflow:complete",
+    );
+    assert.ok(completeEvent, "expected workflow:complete event");
+    assert.ok(
+      completeEvent.lastOutput?.includes("failure-output"),
+      `expected lastOutput to reflect the failing step, got: ${completeEvent.lastOutput}`,
+    );
+    assert.ok(
+      !completeEvent.lastOutput?.includes("success-output"),
+      "lastOutput should not contain output from the prior successful step",
+    );
+  });
+
+  test("lines ring-buffer caps at LAST_OUTPUT_MAX_LINES without unbounded growth", async () => {
+    // Emit 150 lines; lastOutput should contain only the last 100.
+    const commands = Array.from(
+      { length: 150 },
+      (_, i) => `echo "line${i + 1}"`,
+    ).join(" && ");
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: verbose
+    command: ${commands}
+`);
+    const wf = loadWorkflow(file);
+    const events = await collectEvents(wf);
+    const completeEvent = events.find(
+      (e): e is WorkflowCompleteEvent => e.type === "workflow:complete",
+    );
+    assert.ok(completeEvent, "expected workflow:complete event");
+    const lines = completeEvent.lastOutput?.split("\n") ?? [];
+    assert.ok(
+      lines.length <= 100,
+      `expected at most 100 lines, got ${lines.length}`,
+    );
+    // Lines 51-150 are retained; lines 1-50 are dropped.
+    assert.ok(
+      lines.some((l) => l === "line150"),
+      "line150 must be present",
+    );
+    assert.ok(
+      !lines.some((l) => l === "line1"),
+      "line1 must have been dropped",
+    );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// File-based cancellation
+// ----------------------------------------------------------------------------
+
+describe("runWorkflow — cancellation", () => {
+  const cancelFile = join(process.cwd(), ".executant-cancel");
+
+  test("emits workflow:cancelled and stops when .executant-cancel exists", async () => {
+    writeFileSync(cancelFile, "");
+    try {
+      const file = tmpYaml(`
+goal: test
+steps:
+  - name: step-one
+    command: echo one
+  - name: step-two
+    command: echo two
+`);
+      const wf = loadWorkflow(file);
+      const events: Event[] = [];
+      for await (const e of runWorkflow(wf)) events.push(e);
+
+      const cancelled = events.find(
+        (e): e is WorkflowCancelledEvent => e.type === "workflow:cancelled",
+      );
+      assert.ok(cancelled, "expected workflow:cancelled event");
+      assert.ok(
+        events.every((e) => e.type !== "step:start"),
+        "no steps should have started before cancellation",
+      );
+    } finally {
+      // Clean up in case the test fails and the file wasn't deleted by the runner
+      try {
+        rmSync(cancelFile);
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+
+  test("deletes .executant-cancel file after cancelling", async () => {
+    writeFileSync(cancelFile, "");
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: step
+    command: echo hi
+`);
+    const wf = loadWorkflow(file);
+    for await (const _e of runWorkflow(wf)) {
+      /* consume */
+    }
+    assert.equal(
+      existsSync(cancelFile),
+      false,
+      ".executant-cancel should be deleted",
+    );
+  });
+
+  test("does not emit workflow:cancelled when cancel file is absent", async () => {
+    // Ensure no cancel file exists
+    try {
+      rmSync(cancelFile);
+    } catch {
+      /* not there */
+    }
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: step
+    command: echo hi
+`);
+    const wf = loadWorkflow(file);
+    const events = await collectEvents(wf);
+    const cancelled = events.find((e) => e.type === "workflow:cancelled");
+    assert.equal(cancelled, undefined, "should not cancel when file absent");
   });
 });

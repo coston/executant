@@ -446,3 +446,114 @@ steps:
     assert.equal(task.command, "show before\nafter");
   });
 });
+
+// ----------------------------------------------------------------------------
+// cliVars — runtime overrides via --var KEY=VALUE
+// ----------------------------------------------------------------------------
+
+describe("loadWorkflow — cliVars", () => {
+  test("CLI var is substituted into command", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    command: deploy --env {{env}}
+`);
+    const wf = loadWorkflow(file, { env: "staging" });
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.command, "deploy --env staging");
+  });
+
+  test("CLI var overrides YAML var", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  env: production
+steps:
+  - name: run
+    command: deploy --env {{env}}
+`);
+    const wf = loadWorkflow(file, { env: "staging" });
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.command, "deploy --env staging");
+  });
+
+  test("CLI var merged with unrelated YAML var", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region: us-east-1
+steps:
+  - name: run
+    command: deploy --env {{env}} --region {{region}}
+`);
+    const wf = loadWorkflow(file, { env: "staging" });
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.command, "deploy --env staging --region us-east-1");
+  });
+
+  test("CLI vars exposed on returned workflow.vars", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  base: foo
+steps:
+  - name: s
+    command: echo {{base}} {{extra}}
+`);
+    const wf = loadWorkflow(file, { extra: "bar" });
+    assert.equal(wf.vars["base"], "foo");
+    assert.equal(wf.vars["extra"], "bar");
+  });
+
+  test("throws for unknown placeholder when no CLI var provided", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    command: deploy --env {{env}}
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /unknown placeholder "\{\{env\}\}"/,
+    );
+  });
+
+  test("timeout_seconds is passed through to CommandTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: slow
+    command: sleep 60
+    timeout_seconds: 30
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.timeoutSeconds, 30);
+  });
+
+  test("timeout_seconds is passed through to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: think
+    prompt: Do some work
+    timeout_seconds: 120
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.timeoutSeconds, 120);
+  });
+
+  test("without timeout_seconds, timeoutSeconds is undefined", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    command: echo hi
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.timeoutSeconds, undefined);
+  });
+});

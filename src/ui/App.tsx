@@ -15,6 +15,7 @@ import type {
   RunOptions,
   Workflow,
 } from "../types.js";
+import { TimeoutError } from "../types.js";
 import { getErrorMessage } from "../lib/utils.js";
 import { reducer, buildInitialState } from "./reducer.js";
 import { TaskRow } from "./TaskRow.js";
@@ -63,10 +64,15 @@ export function App({
             // Leave the final state visible briefly, then exit.
             setTimeout(() => exit(), EXIT_DELAY_MS);
           }
+          if (event.type === "workflow:cancelled") {
+            process.exitCode = 4;
+            setTimeout(() => exit(), EXIT_DELAY_MS);
+          }
         }
       } catch (err) {
         if (!active) return;
         dispatch({ type: "log", level: "error", text: getErrorMessage(err) });
+        process.exitCode = err instanceof TimeoutError ? 3 : 1;
         setTimeout(
           () =>
             exit(err instanceof Error ? err : new Error(getErrorMessage(err))),

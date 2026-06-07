@@ -29,15 +29,15 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 
 ## Module Responsibilities
 
-**`src/index.ts`** — CLI entry point. Parses arguments, selects between TUI and CI output modes, handles the `plan` and `update` subcommands, and wires the runner to the logger.
+**`src/index.ts`** — CLI entry point. Parses arguments (`--ci`, `--step`, `--from-step`, `--var KEY=VALUE`), selects between TUI and CI output modes, handles the `plan` and `update` subcommands, auto-creates `tasks/todo` and `tasks/done` directories on startup, and wires the runner to the logger. Exit codes: 0 success, 1 runtime failure, 2 YAML/var validation, 3 timeout, 4 cancelled.
 
-**`src/runner.ts`** — Pure async generator. Accepts a `Workflow` and yields `Event`s. Owns all quality-control logic: step filtering, forEach iteration, self-healing retry loops, and LLM-as-judge evaluation. Has no knowledge of the UI.
+**`src/runner.ts`** — Pure async generator. Accepts a `Workflow` and yields `Event`s. Owns all quality-control logic: step filtering, forEach iteration, self-healing retry loops, and LLM-as-judge evaluation. Checks for a `.executant-cancel` file at the start of each step loop iteration; if present, deletes it and emits `workflow:cancelled`. Collects up to 100 lines of `output:text` per step and includes them as `lastOutput` on `step:error` and `workflow:complete` events. Has no knowledge of the UI.
 
-**`src/load-workflow.ts`** — Parses YAML into a typed `Workflow`. Validates the schema, resolves `vars`, infers step types, and wires up `context:` and `output:` fields.
+**`src/load-workflow.ts`** — Parses YAML into a typed `Workflow`. Validates the schema, resolves `vars`, infers step types, and wires up `context:`, `output:`, and `timeout_seconds:` fields. Accepts an optional `cliVars` parameter that is merged over YAML vars (CLI overrides YAML) before placeholder substitution.
 
 **`src/tasks/claude.ts`** — Spawns the Claude CLI as a child process and streams its NDJSON output as `Event`s. Handles tool call parsing, cost events, and structured output (`output:structured`). `runClaude(task: ClaudeTask, _channel?: InterjectChannel)` is the low-level generator; the `channel` parameter is accepted for API compatibility but is not used for stdin injection — the Claude CLI requires stdin EOF before processing a piped prompt, making mid-execution injection impossible. Interjections are instead queued by `InterjectChannel` and prepended to the next Claude step's prompt in `runner.ts`. `runClaudeStructured<T>(task, schema)` is a typed wrapper that passes a Zod schema as `--json-schema` and validates the result. Exports `METHODOLOGY` (the development loop loaded from `src/prompts/development-methodology.txt`) and `buildClaudeArgs(task, interactive?)` (pure function constructing the CLI args array, exported for testing; `interactive=true` omits `--print` from the returned args but is not used by the production path). `ClaudeTask` carries four internal runtime fields not present in YAML: `permissionMode` (defaults to `'bypassPermissions'`), `jsonSchema` (JSON Schema object for `--json-schema`), `appendSystemPrompt` (text appended via `--append-system-prompt`), and `model` (model override via `--model`).
 
-**`src/tasks/command.ts`** — Spawns a bash subprocess and streams stdout/stderr as `output:text` events. Exports `CommandError`, a typed error class that carries `exitCode` and `command` fields; `runner.ts` uses `instanceof CommandError` to extract the exit code when building `step:error` events.
+**`src/tasks/command.ts`** — Spawns a bash subprocess and streams stdout/stderr as `output:text` events. Exports `CommandError`, a typed error class that carries `exitCode` and `command` fields. Supports per-step `timeoutSeconds` via the shared `startTimeout` helper from `stream.ts`.
 
 **`src/tasks/stream.ts`** — Shared stream utilities: `AsyncQueue` (race-condition-free async queue), `mergeStreamsToLines` (merges multiple Readable streams into a line iterator), and `waitForExit`.
 
@@ -54,6 +54,28 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 **`src/ui/IterationRow.tsx`** — `IterationRow` renders a single `IterationRecord` (item name, optional child-step progress, elapsed time, spinner/icon). `IterationList` wraps a slice of the history array and prepends the truncation indicator when needed.
 
 **`src/lib/utils.ts`** — Shared pure utilities: `extractJsonObject` (extracts the first complete JSON object from text that may contain prose or markdown fences), `slugify`, `formatTimestamp`, and `timestamp`.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | All steps completed successfully |
+| `1` | A step failed at runtime |
+| `2` | YAML or variable validation error (from `loadWorkflow`) |
+| `3` | A step timed out (`TimeoutError` from `timeout_seconds`) |
+| `4` | Cancelled via `.executant-cancel` file (`workflow:cancelled` event) |
+
+### Cancellation
+
+`runWorkflow()` checks for a `.executant-cancel` file at the start of each step loop iteration. The file path is resolved from `options.workDir` (defaults to `process.cwd()`). In production, `index.ts` passes `workDir: dirname(resolve(filePath))` so the cancel file is always checked next to the workflow YAML, regardless of which directory executant was invoked from. If found, the file is deleted and a `workflow:cancelled` event is emitted, then the generator returns. In CI mode, the runner writes the event and exits with code 4 only after stdout is flushed (via write callback). In TUI mode, `App.tsx` handles `workflow:cancelled` by setting `process.exitCode = 4` and calling Ink's `exit()`.
+
+### `lastOutput` on events
+
+`step:error` and `workflow:complete` both carry an optional `lastOutput?: string` field: up to the last 100 lines of `output:text` from that step, joined with newlines. The runner uses a fixed-size ring buffer (shift-on-overflow) during execution, so memory cost is constant regardless of step verbosity. `workflow:complete.lastOutput` always reflects the last *executed* step — including a step that failed with `continue_on_error: true` — not merely the last *successful* step.
+
+### `startTimeout` helper (`src/tasks/stream.ts`)
+
+Both `runCommand` and `runClaude` support per-step timeouts via the shared `startTimeout(proc, taskName, timeoutSeconds)` helper exported from `stream.ts`. It arms a `setTimeout` that sets a `timedOut` flag and kills the process if the deadline elapses. The caller calls `timeout.check()` after `waitForExit()` to throw `TimeoutError` if timed out, and `timeout.cancel()` in `finally` to clear the timer on normal completion. The single-threaded event loop guarantees no race: `clearTimeout` in `finally` runs synchronously before any macrotask can fire the callback.
 
 ### Cached constants in `runner.ts`
 

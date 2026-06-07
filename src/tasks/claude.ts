@@ -10,7 +10,7 @@ import { execSync, spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ZodType } from "zod";
 import type { ClaudeTask, Event } from "../types.js";
-import { mergeStreamsToLines, waitForExit } from "./stream.js";
+import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
 import {
   extractJsonObject,
   getErrorMessage,
@@ -101,6 +101,7 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
   process.once("SIGTERM", cleanup);
   process.once("SIGHUP", cleanup);
 
+  const timeout = startTimeout(proc, task.name, task.timeoutSeconds);
   const plainLines: string[] = [];
 
   try {
@@ -122,8 +123,10 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
     }
 
     const code = await waitForExit(proc);
+    timeout.check();
     if (code !== 0) throw buildExitError(code, plainLines);
   } finally {
+    timeout.cancel();
     process.off("SIGTERM", cleanup);
     process.off("SIGHUP", cleanup);
   }

@@ -38,6 +38,7 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `forEach` - Optional inline array or shell command (newline-split stdout); runs the inner step once per item with `{{item}}` substituted
    - `repeat: N` - Runs the step N times sequentially (compiles to a ForEachTask at load time); mutually exclusive with `forEach`; `{{item}}` is the 1-based iteration number
    - `steps` - Optional array of child steps on a `forEach`/`repeat` step; each iteration runs all child steps in order with `{{item}}` substituted; mutually exclusive with `command`/`prompt`/`message` on the parent step; requires `forEach` or `repeat` to be present
+   - `timeout_seconds: N` - Optional; kill the step process after N seconds and throw TimeoutError (exit code 3); works for both script and prompt steps
 
 2. **TypeScript implementation** (`src/`)
    - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`refine`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`

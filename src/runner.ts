@@ -9,8 +9,14 @@
 // only know how to execute a single step.
 
 import { exec } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type {
@@ -79,15 +85,38 @@ export function shouldSkipStep(
  * delivered to running Claude steps via stdin. Messages sent during non-Claude
  * steps are queued and prepended to the next Claude step's prompt.
  */
+const LAST_OUTPUT_MAX_LINES = 100;
+
 export async function* runWorkflow(
   workflow: Workflow,
   options: RunOptions = {},
   channel?: InterjectChannel,
 ): AsyncGenerator<Event> {
   const workflowStart = Date.now();
+  const cancelFile = join(
+    options.workDir ?? process.cwd(),
+    ".executant-cancel",
+  );
   yield { type: "workflow:start", workflow };
 
+  let lastStepOutput: string | undefined;
+
   for (const [i, task] of workflow.tasks.entries()) {
+    // Cooperative cancellation: operator writes this file to stop between steps.
+    if (existsSync(cancelFile)) {
+      try {
+        unlinkSync(cancelFile);
+      } catch {
+        /* race — file already removed */
+      }
+      yield {
+        type: "workflow:cancelled",
+        workflow,
+        durationMs: Date.now() - workflowStart,
+      };
+      return;
+    }
+
     const stepNumber = i + 1; // 1-based
 
     if (shouldSkipStep(stepNumber, task.name, options)) {
@@ -103,6 +132,7 @@ export async function* runWorkflow(
         ? options.fromStep.slice(1)
         : undefined;
 
+    const lines: string[] = [];
     try {
       for await (const event of runStep(task, from, channel)) {
         if (
@@ -111,11 +141,16 @@ export async function* runWorkflow(
           event.type === "output:text" ||
           event.type === "output:tool"
         ) {
+          if (event.type === "output:text") {
+            if (lines.length >= LAST_OUTPUT_MAX_LINES) lines.shift();
+            lines.push(event.text);
+          }
           yield { ...event, index: i };
         } else {
           yield event;
         }
       }
+      lastStepOutput = lines.join("\n") || undefined;
       yield {
         type: "step:complete",
         index: i,
@@ -124,7 +159,15 @@ export async function* runWorkflow(
       };
     } catch (err) {
       const error = normalizeError(err);
-      yield { type: "step:error", index: i, name: task.name, error };
+      const lastOutput = lines.join("\n") || undefined;
+      lastStepOutput = lastOutput;
+      yield {
+        type: "step:error",
+        index: i,
+        name: task.name,
+        error,
+        lastOutput,
+      };
       if (!task.continueOnError) throw error;
     }
   }
@@ -133,6 +176,7 @@ export async function* runWorkflow(
     type: "workflow:complete",
     workflow,
     durationMs: Date.now() - workflowStart,
+    lastOutput: lastStepOutput,
   };
 }
 
