@@ -4,7 +4,7 @@
 // Tests for RunOptions: stepFilter by name, stepFilter by index, fromStep.
 // Uses real Workflow objects with script steps to avoid Claude API calls.
 
-import { test, describe } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +18,12 @@ import type {
   WorkflowCancelledEvent,
   WorkflowCompleteEvent,
 } from "../types.js";
-import { collectEvents, collectEventsUntilError, tmpYaml } from "./helpers.js";
+import {
+  collectEvents,
+  collectEventsUntilError,
+  tmpDir,
+  tmpYaml,
+} from "./helpers.js";
 import { loadWorkflow } from "../load-workflow.js";
 import { runWorkflow, shouldSkipStep } from "../runner.js";
 
@@ -416,12 +421,28 @@ steps:
 // ----------------------------------------------------------------------------
 
 describe("runWorkflow — cancellation", () => {
-  const cancelFile = join(process.cwd(), ".executant-cancel");
+  // Each test gets its own workDir so the cancel file never lands in process.cwd().
+  // Test files run concurrently on CI; a shared process.cwd() cancel file would
+  // be picked up by unrelated runWorkflow calls in other test files.
+  let workDir: string;
+  let cancelFile: string;
+
+  beforeEach(() => {
+    workDir = tmpDir();
+    cancelFile = join(workDir, ".executant-cancel");
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(cancelFile);
+    } catch {
+      /* already gone */
+    }
+  });
 
   test("emits workflow:cancelled and stops when .executant-cancel exists", async () => {
     writeFileSync(cancelFile, "");
-    try {
-      const file = tmpYaml(`
+    const file = tmpYaml(`
 goal: test
 steps:
   - name: step-one
@@ -429,26 +450,18 @@ steps:
   - name: step-two
     command: echo two
 `);
-      const wf = loadWorkflow(file);
-      const events: Event[] = [];
-      for await (const e of runWorkflow(wf)) events.push(e);
+    const wf = loadWorkflow(file);
+    const events: Event[] = [];
+    for await (const e of runWorkflow(wf, { workDir })) events.push(e);
 
-      const cancelled = events.find(
-        (e): e is WorkflowCancelledEvent => e.type === "workflow:cancelled",
-      );
-      assert.ok(cancelled, "expected workflow:cancelled event");
-      assert.ok(
-        events.every((e) => e.type !== "step:start"),
-        "no steps should have started before cancellation",
-      );
-    } finally {
-      // Clean up in case the test fails and the file wasn't deleted by the runner
-      try {
-        rmSync(cancelFile);
-      } catch {
-        /* already gone */
-      }
-    }
+    const cancelled = events.find(
+      (e): e is WorkflowCancelledEvent => e.type === "workflow:cancelled",
+    );
+    assert.ok(cancelled, "expected workflow:cancelled event");
+    assert.ok(
+      events.every((e) => e.type !== "step:start"),
+      "no steps should have started before cancellation",
+    );
   });
 
   test("deletes .executant-cancel file after cancelling", async () => {
@@ -460,7 +473,7 @@ steps:
     command: echo hi
 `);
     const wf = loadWorkflow(file);
-    for await (const _e of runWorkflow(wf)) {
+    for await (const _e of runWorkflow(wf, { workDir })) {
       /* consume */
     }
     assert.equal(
@@ -471,12 +484,6 @@ steps:
   });
 
   test("does not emit workflow:cancelled when cancel file is absent", async () => {
-    // Ensure no cancel file exists
-    try {
-      rmSync(cancelFile);
-    } catch {
-      /* not there */
-    }
     const file = tmpYaml(`
 goal: test
 steps:
@@ -484,7 +491,8 @@ steps:
     command: echo hi
 `);
     const wf = loadWorkflow(file);
-    const events = await collectEvents(wf);
+    const events: Event[] = [];
+    for await (const e of runWorkflow(wf, { workDir })) events.push(e);
     const cancelled = events.find((e) => e.type === "workflow:cancelled");
     assert.equal(cancelled, undefined, "should not cancel when file absent");
   });
