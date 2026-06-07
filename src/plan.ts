@@ -45,7 +45,6 @@ export const WorkflowSchema = z.object({
   goal: z.string(),
   steps: z.array(StepSchema).min(1),
   vars: z.record(z.string()).optional(),
-  self_improve: z.boolean().optional(),
 });
 
 const PlanJudgeOutputSchema = z.object({

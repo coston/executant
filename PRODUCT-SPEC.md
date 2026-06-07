@@ -21,7 +21,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 
 **3. Transparent execution.** The TUI shows every step's status, live output, and elapsed time. Nothing happens silently. CI mode (`--ci`) emits NDJSON for scripting.
 
-**4. Composable quality controls.** Self-healing, LLM-as-judge, and self-improvement are opt-in per step. They compose: a step can be self-healing *and* judge-evaluated.
+**4. Composable quality controls.** Self-healing and LLM-as-judge are opt-in per step. They compose: a step can be self-healing *and* judge-evaluated.
 
 **5. Non-destructive on failure.** If a workflow fails, the YAML file stays in `tasks/todo/` so it can be retried unchanged. Completed runs move to `tasks/done/` with a timestamp prefix.
 
@@ -42,7 +42,6 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 ### Quality Controls
 - **`llm_as_judge`** — evaluates step output and retries on FAIL (up to 5x)
 - **`self_healing`** — auto-repairs failed script steps via Claude (up to 5x)
-- **`self_improve`** — post-run retrospective generates an improved workflow YAML
 
 ### Context Injection
 - **`vars`** — shared key/value pairs substituted as `{{var_name}}`
@@ -55,6 +54,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 
 ### Tooling
 - **`executant plan`** — generates a workflow YAML from a natural language description
+- **`executant refine`** — applies natural language instructions to an existing workflow YAML
 - **`executant update`** — upgrades to the latest version
 - **`--ci`** — headless mode, NDJSON event stream to stdout
 

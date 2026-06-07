@@ -41,9 +41,7 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 
 **`src/tasks/stream.ts`** — Shared stream utilities: `AsyncQueue` (race-condition-free async queue), `mergeStreamsToLines` (merges multiple Readable streams into a line iterator), and `waitForExit`.
 
-**`src/logger.ts`** — Subscribes to the event stream via `withLogger()`. Writes timestamped log files and highlight files (judge verdicts, self-healing activations, complex tool sequences) to `.claude/executant.local/logs/`.
-
-**`src/retrospective.ts`** — Post-execution self-improvement. Reads highlight files from the logger, calls Claude with the retrospective prompt, and saves an improved task YAML to `tasks/backlog/`.
+**`src/logger.ts`** — Subscribes to the event stream via `withLogger()`. Writes timestamped log files to `.claude/executant.local/logs/`.
 
 **`src/plan.ts`** — The `executant plan` subcommand. Generates a workflow YAML from a natural language description by calling `runClaude()` (the same path as all other steps — no direct `spawn`). `streamPlan()` is an async generator that streams `PlanEvent`s to the TUI, validates the structured output via Zod, and writes the YAML file. Retries up to 3 times with corrective feedback on parse or schema errors. All three plan pipeline passes (research, decompose, judge) inject `METHODOLOGY` via `appendSystemPrompt` so the development loop shapes how plans are structured.
 
@@ -111,7 +109,7 @@ The eval system tests and iteratively refines the prompt templates in `src/promp
 
 **`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
 
-**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents. Covers `plan-decompose.txt`, `judge-evaluation.txt`, `self-healing-fix.txt`, `plan-judge.txt`, and `retrospective-analysis.txt`.
+**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents. Covers `plan-decompose.txt`, `judge-evaluation.txt`, `self-healing-fix.txt`, and `plan-judge.txt`.
 
 ### Refinement loop
 
@@ -129,10 +127,8 @@ score all cases
 The interjection feature lets users send a correction to a running workflow by pressing `i` in the TUI.
 
 **`InterjectChannel`** (defined in `src/types.ts`) bridges the TUI and the runner:
-- `register(sender)` — called by `runClaude` at step start. Flushes any queued messages via `sender`, then delivers future messages directly.
-- `unregister()` — called when a Claude step ends; returns to queueing mode.
-- `interject(message)` — called by `App.tsx` on user submit. Delivers to the current sender if one is registered; otherwise queues.
-- `consumeQueue()` — called by `runStep` at the start of each Claude step. Drains and returns any messages queued during non-Claude steps.
+- `interject(message)` — called by `App.tsx` on user submit. Queues the message for the next Claude step.
+- `consumeQueue()` — called by `runStep` at the start of each Claude step. Drains and returns any queued messages, which are prepended to the prompt.
 
 **Delivery path for queued messages:** `runStep` (case `"claude"`) calls `channel.consumeQueue()` before building the task. If messages are present they are prepended to the prompt as `[User correction from a previous step]\n<messages>\n\n---\n<original prompt>`.
 
@@ -144,4 +140,3 @@ The interjection feature lets users send a correction to a running workflow by p
 
 - **LLM-as-judge** (`llm_as_judge: true`) — after a step completes, a separate Claude call evaluates output quality. On `FAIL`, the step retries with feedback appended, up to 5 times.
 - **Self-healing** (`self_healing: true`) — on script failure, error output is passed to Claude for diagnosis. Claude applies a fix and the command re-runs, up to 5 times.
-- **Self-improvement** (`self_improve: true`) — after the entire workflow finishes, Claude reviews execution highlights and saves an improved YAML to `tasks/backlog/`.

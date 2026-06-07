@@ -292,35 +292,6 @@ steps:
 });
 
 // ----------------------------------------------------------------------------
-// self_improve field
-// ----------------------------------------------------------------------------
-
-describe("loadWorkflow — self_improve", () => {
-  test("selfImprove is true when self_improve: true", () => {
-    const file = tmpYaml(`
-goal: test
-self_improve: true
-steps:
-  - name: s
-    command: echo hi
-`);
-    const wf = loadWorkflow(file);
-    assert.equal(wf.selfImprove, true);
-  });
-
-  test("selfImprove is undefined when not specified", () => {
-    const file = tmpYaml(`
-goal: test
-steps:
-  - name: s
-    command: echo hi
-`);
-    const wf = loadWorkflow(file);
-    assert.equal(wf.selfImprove, undefined);
-  });
-});
-
-// ----------------------------------------------------------------------------
 // continueOnError field
 // ----------------------------------------------------------------------------
 

@@ -27,7 +27,6 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `goal`: High-level task description
    - `steps`: Array of step objects with `name` and either `prompt`, `command`, or `message`
    - `vars`: Optional map of key/value pairs substituted as `{{var_name}}` in prompts and commands
-   - `self_improve: true` - Optional, run retrospective analysis after completion (saves improved YAML to `tasks/backlog/`)
    - `type: prompt` (default) - Execute with Claude Code (all tools available)
    - `type: script` - Execute directly with bash (no API cost)
    - `type: log` - Emit a plain text progress marker (no API cost, no command)
@@ -41,11 +40,10 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `steps` - Optional array of child steps on a `forEach`/`repeat` step; each iteration runs all child steps in order with `{{item}}` substituted; mutually exclusive with `command`/`prompt`/`message` on the parent step; requires `forEach` or `repeat` to be present
 
 2. **TypeScript implementation** (`src/`)
-   - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`
+   - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`refine`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`
    - `src/load-workflow.ts` - YAML → typed `Workflow`
    - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
-   - `src/logger.ts` - Subscribes to event stream; writes `.log` files and highlight markdown files to `.claude/executant.local/logs/`
-   - `src/retrospective.ts` - Self-improvement: reads highlight files, calls Claude, saves improved YAML + changelog to `tasks/backlog/`
+   - `src/logger.ts` - Subscribes to event stream; writes `.log` files to `.claude/executant.local/logs/`
    - `src/types.ts` - All shared types: `Task`, `Event`, `Workflow`, `RawWorkflow`/`RawStep` (YAML schema), `InterjectChannel` class
 
 ### Module Architecture
@@ -54,12 +52,16 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
 
 ```
 src/
-├── index.ts              # Entry point (CLI, TUI, CI mode, plan/update subcommands)
+├── index.ts              # Entry point (CLI, TUI, CI mode, plan/refine/update subcommands)
 ├── load-workflow.ts      # YAML → typed Workflow
 ├── runner.ts             # Workflow execution (self-healing, judge, forEach, context)
-├── logger.ts             # Execution logger (log files + highlight files)
-├── retrospective.ts      # Self-improvement retrospective
+├── logger.ts             # Execution logger (log files)
+├── plan.ts               # `executant plan` subcommand
+├── refine.ts             # `executant refine` subcommand
+├── update.ts             # `executant update` upgrade logic
 ├── types.ts              # All shared types
+├── lib/
+│   └── utils.ts          # Shared pure utilities (slugify, formatTimestamp, etc.)
 ├── tasks/
 │   ├── claude.ts         # Claude CLI child process runner
 │   ├── command.ts        # Bash command runner
@@ -68,39 +70,39 @@ src/
 │   ├── App.tsx           # Root component; holds isInterjecting state; wires InterjectChannel
 │   ├── InterjectInput.tsx # Text input overlay shown when user presses i
 │   ├── KeyboardHandler.tsx # Handles q/Ctrl+C/i; disabled while isInterjecting
-│   ├── reducer.ts        # ExecutionState reducer; handles step:interjection event
-│   └── ...               # LogPane, TaskRow, IterationRow, BrandMark, theme, utils
-├── prompts/              # AI prompt templates
-│   ├── plan-research.txt        # Plan Pass 1: codebase research
-│   ├── plan-decompose.txt       # Plan Pass 2: step decomposition
-│   ├── plan-judge.txt           # Plan Pass 3: quality validation
-│   ├── plan-retry-judge.txt     # Plan retry after judge rejection
-│   ├── judge-evaluation.txt     # LLM-as-judge evaluation prompt
-│   ├── self-healing-fix.txt     # Self-healing error analysis prompt
-│   └── retrospective-analysis.txt  # Self-improvement analysis prompt
-├── eval/                 # Internal eval dev tooling (npm run eval)
-│   ├── index.ts          # CLI entry: arg parsing, orchestration
-│   ├── types.ts          # EvalFile, TestCase, CriterionResult, EvalRun
-│   ├── load.ts           # YAML → EvalFile (Zod validation, fixture resolution)
-│   ├── runner.ts         # runPrompt(): substitute vars, run Claude, return text
-│   ├── judge.ts          # judgeOutput(): score output against a criterion
-│   ├── refine.ts         # refinePrompt(): rewrite template to fix failures
-│   ├── report.ts         # Terminal output: pass/fail table with reasons
-│   └── prompts/          # Eval-specific prompt templates
-│       ├── criterion-judge.txt   # Judge: output × criterion → {pass, reason}
-│       └── prompt-refiner.txt    # Refiner: template × failures → improved template
-└── plan.ts               # `executant plan` subcommand
+│   ├── PlanApp.tsx        # TUI for plan/refine subcommands
+│   ├── TaskRow.tsx        # Renders a single step row
+│   ├── IterationRow.tsx   # Renders forEach iteration progress
+│   ├── LogPane.tsx        # Scrolling output pane
+│   ├── BrandMark.tsx      # Animated brand header
+│   └── reducer.ts        # ExecutionState reducer; handles step:interjection event
+└── prompts/              # AI prompt templates
+    ├── development-methodology.txt  # Dev loop injected into every Claude step
+    ├── dev-approach.txt             # Eval-only: tests methodology adherence
+    ├── plan-research.txt            # Plan Pass 1: codebase research
+    ├── plan-decompose.txt           # Plan Pass 2: step decomposition
+    ├── plan-judge.txt               # Plan Pass 3: quality validation
+    ├── plan-retry-judge.txt         # Plan retry after judge rejection
+    ├── plan-retry-parse-error.txt   # Retry after JSON parse failure
+    ├── plan-retry-schema-error.txt  # Retry after schema validation failure
+    ├── plan-refine.txt              # Refine pass: apply instructions to existing YAML
+    ├── plan-system-rules.txt        # Structural enforcement rules for plan generation
+    ├── judge-evaluation.txt         # LLM-as-judge evaluation prompt
+    ├── judge-retry-context.txt      # Retry context injected after judge FAIL
+    └── self-healing-fix.txt         # Self-healing error analysis prompt
 
 evals/                    # Eval test case definitions (run via npm run eval)
+├── development-methodology.eval.yaml # development-methodology.txt (dev loop)
 ├── plan-decompose.eval.yaml          # plan-decompose.txt (Pass 2)
 ├── judge-evaluation.eval.yaml        # judge-evaluation.txt (llm_as_judge)
 ├── self-healing-fix.eval.yaml        # self-healing-fix.txt (self_healing)
 ├── plan-judge.eval.yaml              # plan-judge.txt (Pass 3)
-├── retrospective-analysis.eval.yaml  # retrospective-analysis.txt (self_improve)
 └── fixtures/             # Reusable input fixtures for test cases
     ├── research-doc-simple.md
     ├── research-doc-complex.md
     ├── research-doc-repeat.md
+    ├── research-doc-monorepo.md
+    ├── research-doc-user-steps.md
     ├── self-healing-npm-start-output.txt
     ├── self-healing-npm-test-output.txt
     ├── self-healing-npm-build-output.txt
@@ -108,13 +110,10 @@ evals/                    # Eval test case definitions (run via npm run eval)
     ├── plan-judge-no-verification.json
     ├── plan-judge-hardcoded-paths.json
     ├── plan-judge-repeat-misuse.json
-    ├── goal-convert-legacy-api.txt
-    ├── retrospective-judge-fail-original.yaml
-    ├── retrospective-judge-fail-highlights.txt
-    ├── retrospective-self-heal-original.yaml
-    ├── retrospective-self-heal-highlights.txt
-    ├── retrospective-multi-issue-original.yaml
-    └── retrospective-multi-issue-highlights.txt
+    ├── plan-judge-nested-steps-valid.json
+    ├── plan-judge-nested-steps-atomicity-false-positive.json
+    ├── judge-injection-output.txt
+    └── goal-convert-legacy-api.txt
 ```
 
 #### Prompts (`src/prompts/*.txt`)
@@ -122,10 +121,11 @@ evals/                    # Eval test case definitions (run via npm run eval)
 Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSync` + `.replace()`. Support `{{VARIABLE}}` placeholder substitution.
 
 **Prompts directory** (`src/prompts/`):
-- Plan pipeline prompts (`plan-research.txt`, `plan-decompose.txt`, `plan-judge.txt`, `plan-retry-judge.txt`) - Used by `executant plan` three-pass pipeline (`plan.ts`)
-- Judge evaluation criteria (`judge-evaluation.txt`) - Used by `llm_as_judge: true` steps (`runner.ts`)
+- Development methodology (`development-methodology.txt`) - Injected via `--append-system-prompt` into every Claude step
+- Plan pipeline (`plan-research.txt`, `plan-decompose.txt`, `plan-judge.txt`, `plan-retry-judge.txt`, `plan-system-rules.txt`, `plan-retry-parse-error.txt`, `plan-retry-schema-error.txt`) - Used by `executant plan` three-pass pipeline (`plan.ts`)
+- Plan refine (`plan-refine.txt`) - Used by `executant refine` subcommand (`refine.ts`)
+- Judge evaluation (`judge-evaluation.txt`, `judge-retry-context.txt`) - Used by `llm_as_judge: true` steps (`runner.ts`)
 - Self-healing analysis (`self-healing-fix.txt`) - Used by `self_healing: true` failures (`runner.ts`)
-- Retrospective analysis (`retrospective-analysis.txt`) - Used by `self_improve: true` workflows (`retrospective.ts`)
 
 #### Adding New Prompts
 
@@ -162,10 +162,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 The `Logger` class subscribes to the runner's event stream via `withLogger()`:
 
 - **Log files**: Written to `.claude/executant.local/logs/{timestamp}_{task-name}.log`
-- **Highlights**: Written to `.claude/executant.local/logs/highlights/` — one file per judge verdict, self-healing activation, or complex tool sequence (3+ tools in one step)
-- **Index**: `highlights/README.md` is updated after each run
 - **Disable**: Set `EXECUTANT_LOG=0` to skip all logging with zero overhead
-- **Used by**: `src/retrospective.ts` reads highlight files to drive self-improvement analysis
 
 ### `context:` Field
 
@@ -268,6 +265,9 @@ EOF
 
 # Generate from piped input
 cat detailed-requirements.txt | executant plan
+
+# Refine an existing task YAML with natural language instructions
+executant refine tasks/todo/my-task.yaml "add a verification step at the end"
 
 # Show help
 executant plan --help
@@ -380,7 +380,7 @@ The `executant plan` subcommand generates YAML task files from natural language 
 npm test
 ```
 
-TypeScript test suite: `src/tests/` (7 files, ~280 test cases covering self-healing, forEach, output capture, context injection, plan generation, update subcommand, and UI reducer).
+TypeScript test suite: `src/tests/` (25 files, ~521 test cases covering self-healing, forEach, output capture, context injection, plan generation, refine subcommand, update subcommand, UI reducer, and more).
 
 ### Test Requirements for Contributors
 
@@ -418,106 +418,3 @@ cat > .claude/settings.local.json << 'EOF'
 EOF
 ```
 
-## Self-Improvement Feature
-
-The `self_improve: true` option enables automatic retrospective analysis after task completion. When enabled, Executant analyzes execution highlights (judge failures, self-healing events, complex tool sequences) and generates an improved version of the task with a detailed changelog.
-
-### How It Works
-
-1. **Execute task normally** - All steps run as usual
-2. **Analyze highlights** - After completion, Claude reviews:
-   - Judge verdict highlights (`*_judge_FAIL.md`, `*_judge_PASS.md`)
-   - Self-healing highlights (`*_self_healing.md`)
-   - Complex tool sequences (`*_complex_sequence.md`)
-3. **Generate improvements** - Claude identifies problems and creates:
-   - Improved task YAML with fixes (saved to `tasks/backlog/`)
-   - Detailed changelog explaining what changed and why
-4. **Non-blocking** - If retrospective fails, task still completes successfully
-
-### Enabling Self-Improvement
-
-Add `self_improve: true` to your task YAML:
-
-```yaml
-goal: "Convert CoffeeScript to TypeScript with validation"
-self_improve: true  # Enable automatic improvement
-
-steps:
-  - name: "convert"
-    type: script
-    command: coffee2ts convert app.coffee
-    self_healing: true
-
-  - name: "validate"
-    llm_as_judge: true
-    prompt: |
-      Validate the TypeScript conversion:
-      1. Check types are correct
-      2. Verify functionality matches
-      3. Run tests
-```
-
-### What Gets Analyzed
-
-**Judge Failures** - Indicate unclear prompts or missing success criteria
-- Fix: Add numbered sub-steps to prompts
-- Fix: Define explicit success criteria
-- Fix: Break large steps into smaller ones
-
-**Self-Healing Events** - Indicate brittle scripts or environment issues
-- Fix: Add prerequisite steps (install deps, create directories)
-- Fix: Use absolute paths instead of relative
-- Fix: Add checks before operations
-
-**Complex Tool Sequences** - Indicate vague instructions requiring exploration
-- Fix: Split research and implementation into separate steps
-- Fix: Provide specific file paths in prompts
-- Fix: Add discovery step before action step
-
-### Output Location
-
-Improved tasks are saved to `tasks/backlog/` directory:
-
-```
-.claude/executant.local/tasks/
-├── todo/              # Tasks to execute
-├── done/              # Completed tasks
-└── backlog/           # Improved versions
-    ├── 20260120-143022-my-task-improved.yaml
-    └── 20260120-143022-my-task-changelog.md
-```
-
-### Using Improved Tasks
-
-```bash
-# Review the improvement
-cat tasks/backlog/20260120-143022-my-task-changelog.md
-
-# Compare original vs improved
-diff tasks/done/20260120-143022-my-task.yaml \
-     tasks/backlog/20260120-143022-my-task-improved.yaml
-
-# Use the improved version
-mv tasks/backlog/20260120-143022-my-task-improved.yaml \
-   tasks/todo/my-task-v2.yaml
-
-executant
-```
-
-### Key Behaviors
-
-1. **Goal Preservation** - Improved tasks keep the original goal (proven workflow)
-2. **Evidence-Based** - Only fixes problems shown in highlights, no unnecessary changes
-3. **Non-Blocking** - Retrospective failures don't prevent task completion
-4. **Backlog Isolation** - Improved tasks saved separately for review before use
-5. **Recursive** - `self_improve: true` preserved for continuous refinement
-
-**TypeScript implementation:** `src/retrospective.ts`. Called from `src/index.ts` after `workflow:complete`. Non-blocking — all errors are caught; the workflow still completes successfully.
-
-### Error Handling
-
-All retrospective failures are non-blocking:
-- Missing highlights → Skip with message (task succeeded without issues)
-- No highlights directory → Skip (logging may be disabled)
-- Claude API failure → Log warning, task still completes
-- Invalid YAML generated → Save raw output for debug, task still completes

@@ -256,8 +256,6 @@ export interface Workflow {
   tasks: Task[];
   /** Shared key/value pairs substituted into prompts and commands. */
   vars?: Record<string, string>;
-  /** When true, after task completes Claude generates an improved version saved to tasks/backlog/. */
-  selfImprove?: boolean;
 }
 
 // ----------------------------------------------------------------------------

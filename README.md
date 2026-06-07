@@ -119,7 +119,6 @@ steps:
 
 - **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
 - **`self_healing: true`** — on script failure, Claude diagnoses and repairs the command, then re-runs it, up to 5×
-- **`self_improve: true`** — after the workflow finishes, Claude analyzes execution highlights and saves an improved YAML to `tasks/backlog/`
 
 ## Interjection
 
@@ -148,19 +147,22 @@ press i  →  ▷ don't delete that file, use git revert▌  esc to cancel
 | `logging-demo.yaml` | Log steps, self-healing, judge |
 | `git-status-summary.yaml` | Real-world git workflow |
 | `repeat-demo.yaml` | Running a step N times with `repeat` |
+| `file-demo.yaml` | File operations |
+| `from-step-test.yaml` | Using `--from-step` to resume mid-workflow |
 
 See the [`examples/`](examples/) directory.
 
 ## CLI
 
 ```bash
-executant plan "description"          # generate a workflow YAML (auto-detects fast path)
-executant plan -q "description"       # skip research pass (fast path)
-executant workflow.yaml               # run a workflow
-executant --ci workflow.yaml          # headless, NDJSON to stdout
-executant --step <name|n> wf.yaml     # run one step by name or index
-executant --from-step <n> wf.yaml     # resume from step n
-executant update                      # upgrade to latest version
+executant plan "description"                    # generate a workflow YAML (auto-detects fast path)
+executant plan -q "description"                 # skip research pass (fast path)
+executant refine workflow.yaml "instructions"   # refine an existing workflow YAML
+executant workflow.yaml                         # run a workflow
+executant --ci workflow.yaml                    # headless, NDJSON to stdout
+executant --step <name|n> wf.yaml              # run one step by name or index
+executant --from-step <n> wf.yaml              # resume from step n
+executant update                                # upgrade to latest version
 ```
 
 ## Development

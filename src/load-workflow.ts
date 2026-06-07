@@ -47,7 +47,6 @@ const RawWorkflowSchema = z.object({
   goal: z.string(),
   steps: z.array(RawStepSchema),
   vars: z.record(z.string(), z.string()).optional(),
-  self_improve: z.boolean().optional(),
 });
 
 export function loadWorkflow(filePath: string): Workflow {
@@ -84,7 +83,6 @@ export function loadWorkflow(filePath: string): Workflow {
   return {
     goal: doc.goal,
     vars,
-    selfImprove: doc.self_improve,
     tasks: doc.steps.map((step) => convertStep(step, vars)),
   };
 }

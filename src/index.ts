@@ -22,13 +22,7 @@ import { App } from "./ui/App.js";
 import { parsePlanArgs, streamPlan } from "./plan.js";
 import { parseRefineArgs, streamRefine } from "./refine.js";
 import { PlanApp } from "./ui/PlanApp.js";
-import {
-  type Logger,
-  createLogger,
-  resolveLogDir,
-  withLogger,
-} from "./logger.js";
-import { runRetrospective } from "./retrospective.js";
+import { createLogger, resolveLogDir, withLogger } from "./logger.js";
 import { InterjectChannel } from "./types.js";
 import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
 import { getErrorMessage } from "./lib/utils.js";
@@ -236,27 +230,6 @@ function errorReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
-async function maybeRunRetrospective(
-  filePath: string,
-  workflow: Workflow,
-  logger?: Logger,
-): Promise<void> {
-  if (!logger) return;
-  try {
-    await runRetrospective(
-      filePath,
-      workflow,
-      logger.getHighlightsDir(),
-      logger.getTimestamp(),
-    );
-  } catch (err) {
-    console.warn(
-      "[executant] retrospective failed (non-fatal):",
-      getErrorMessage(err),
-    );
-  }
-}
-
 if (ciMode) {
   // CI / headless mode: print each event as NDJSON, no terminal UI.
   // Useful for logs, piping into other tools, or running in a headless env.
@@ -264,16 +237,13 @@ if (ciMode) {
     for await (const event of events) {
       process.stdout.write(JSON.stringify(event, errorReplacer) + "\n");
     }
-    if (workflow.selfImprove) {
-      await maybeRunRetrospective(filePath, workflow, logger);
-    }
   })().catch((err) => {
     console.error(err);
     process.exit(1);
   });
 } else {
   // Interactive mode: render the Ink TUI.
-  const inkApp = render(
+  render(
     React.createElement(App, {
       workflow,
       events,
@@ -282,12 +252,4 @@ if (ciMode) {
       interjectChannel: channel,
     }),
   );
-  if (workflow.selfImprove) {
-    inkApp
-      .waitUntilExit()
-      .then(() => maybeRunRetrospective(filePath, workflow, logger))
-      .catch(() => {
-        // Workflow failed — skip retrospective
-      });
-  }
 }
