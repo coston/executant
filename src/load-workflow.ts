@@ -41,6 +41,9 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
     context: z.array(z.string()).optional(),
     steps: z.array(RawStepSchema).min(1).optional(),
     timeout_seconds: z.number().positive().optional(),
+    provider: z.enum(["claude", "opencode"]).optional(),
+    model: z.string().optional(),
+    agent: z.string().optional(),
   }),
 );
 
@@ -191,7 +194,9 @@ function convertInnerStep(
         continueOnError,
         llmAsJudge: step.llm_as_judge,
         allowedTools: step.allowed_tools,
-        model: "sonnet",
+        model: step.model ?? "sonnet",
+        ...(step.provider && { provider: step.provider }),
+        ...(step.agent && { agent: step.agent }),
         ...(contextFiles.length > 0 && { contextFiles }),
         ...(step.timeout_seconds !== undefined && {
           timeoutSeconds: step.timeout_seconds,

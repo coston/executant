@@ -47,20 +47,30 @@ export interface CommandTask extends BaseTask {
   timeoutSeconds?: number;
 }
 
-/** Invokes the Claude CLI via child_process.spawn. Streams AI output as structured events. */
+/** Which coding-agent CLI backend executes a prompt step. */
+export type AgentProvider = "claude" | "opencode";
+
+/** Invokes a coding-agent CLI (Claude or OpenCode) via child_process.spawn. Streams AI output as structured events. */
 export interface ClaudeTask extends BaseTask {
   type: "claude";
   prompt: string;
+  /**
+   * Which provider runs this step. Defaults to the EXECUTANT_PROVIDER env var,
+   * then falls back to "claude".
+   */
+  provider?: AgentProvider;
   /** Subset of Claude tools to allow. Defaults to a safe general-purpose set. */
   allowedTools?: string[];
-  /** Permission mode passed to the claude CLI. Defaults to 'bypassPermissions'. */
+  /** Permission mode passed to the agent CLI. Defaults to 'bypassPermissions'. */
   permissionMode?: "bypassPermissions" | "default";
-  /** JSON Schema object passed via --json-schema to enforce structured output. */
+  /** JSON Schema object passed via --json-schema to enforce structured output (Claude only). */
   jsonSchema?: Record<string, unknown>;
-  /** Text appended to the system prompt via --append-system-prompt. */
+  /** Text appended to the system prompt via --append-system-prompt (Claude only). */
   appendSystemPrompt?: string;
-  /** Model override passed via --model. Defaults to the CLI's configured model. */
+  /** Model override. For Claude: model name like "sonnet". For OpenCode: "provider/model" like "opencode-go/kimi-k2.6". */
   model?: string;
+  /** OpenCode --agent flag. Ignored by the Claude runner. */
+  agent?: string;
   /**
    * When true, after the step completes Claude evaluates its own output.
    * If the verdict is FAIL the step retries up to 5 times.
@@ -72,7 +82,7 @@ export interface ClaudeTask extends BaseTask {
    * whose values are file paths).
    */
   contextFiles?: string[];
-  /** Kill the Claude subprocess and throw TimeoutError after this many seconds. */
+  /** Kill the agent subprocess and throw TimeoutError after this many seconds. */
   timeoutSeconds?: number;
 }
 
@@ -367,6 +377,12 @@ export type RawStep = {
   context?: string[];
   steps?: RawStep[];
   timeout_seconds?: number;
+  /** Which provider runs this prompt step. */
+  provider?: AgentProvider;
+  /** Model override for this step. */
+  model?: string;
+  /** OpenCode agent name. */
+  agent?: string;
 };
 
 /** Thrown when a step exceeds its timeout_seconds limit. Exit code: 3. */

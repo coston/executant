@@ -14,6 +14,8 @@ Known improvements deferred from code reviews and audits.
 
 - **True mid-step interjection (kill + resume)** — The current `i` key queues a correction for the *next* Claude step. To truly stop a running Claude step and redirect it mid-execution, the approach is: kill the subprocess, then re-invoke with `--resume <session_id>` (captured from the result event) and the user's correction prepended. This preserves conversation context while immediately stopping the bad action. The `session_id` is available in Claude CLI's `result` event. The TUI would show a "restarting with correction…" log line. Blocked on: deciding UX (separate keybinding like `I` vs. a mode toggle), and verifying `--resume` behavior with `--output-format stream-json`.
 
+- **OpenCode server-mode integration** — The current OpenCode runner uses `opencode run --format json` (CLI subprocess). A more robust integration would use OpenCode's HTTP server API (sessions, SSE event stream, messages endpoint). This enables better session management, lower startup overhead, and potentially mid-session context carry-over. Blocked on: OpenCode server API stabilizing.
+
 ## Implemented (code review fixes, 2026-06)
 
 - ✅ **`workDir` in `RunOptions`** — `.executant-cancel` is now checked next to the workflow YAML (`dirname(resolve(filePath))`) rather than fixed to `process.cwd()` at module load time; predictable regardless of invocation directory.

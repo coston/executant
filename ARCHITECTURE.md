@@ -35,7 +35,11 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 
 **`src/load-workflow.ts`** — Parses YAML into a typed `Workflow`. Validates the schema, resolves `vars`, infers step types, and wires up `context:`, `output:`, and `timeout_seconds:` fields. Accepts an optional `cliVars` parameter that is merged over YAML vars (CLI overrides YAML) before placeholder substitution.
 
-**`src/tasks/claude.ts`** — Spawns the Claude CLI as a child process and streams its NDJSON output as `Event`s. Handles tool call parsing, cost events, and structured output (`output:structured`). `runClaude(task: ClaudeTask, _channel?: InterjectChannel)` is the low-level generator; the `channel` parameter is accepted for API compatibility but is not used for stdin injection — the Claude CLI requires stdin EOF before processing a piped prompt, making mid-execution injection impossible. Interjections are instead queued by `InterjectChannel` and prepended to the next Claude step's prompt in `runner.ts`. `runClaudeStructured<T>(task, schema)` is a typed wrapper that passes a Zod schema as `--json-schema` and validates the result. Exports `METHODOLOGY` (the development loop loaded from `src/prompts/development-methodology.txt`) and `buildClaudeArgs(task, interactive?)` (pure function constructing the CLI args array, exported for testing; `interactive=true` omits `--print` from the returned args but is not used by the production path). `ClaudeTask` carries four internal runtime fields not present in YAML: `permissionMode` (defaults to `'bypassPermissions'`), `jsonSchema` (JSON Schema object for `--json-schema`), `appendSystemPrompt` (text appended via `--append-system-prompt`), and `model` (model override via `--model`).
+**`src/tasks/agent.ts`** — Provider dispatch layer. `resolveAgentProvider(task)` checks `task.provider` then `EXECUTANT_PROVIDER` env then defaults to `"claude"`. `runAgent(task)` and `runAgentStructured(task, schema)` route to the appropriate backend and are the only entry points used by `runner.ts`, `plan.ts`, and `refine.ts`. Adding a new provider requires only a new case in each switch and a new `src/tasks/<provider>.ts` file.
+
+**`src/tasks/claude.ts`** — Spawns the Claude CLI as a child process and streams its NDJSON output as `Event`s. Handles tool call parsing, cost events, and structured output (`output:structured`). `runClaude(task: ClaudeTask)` is the low-level generator. `runClaudeStructured<T>(task, schema)` is a typed wrapper that passes a Zod schema as `--json-schema` and validates the result. Exports `METHODOLOGY` (the development loop loaded from `src/prompts/development-methodology.txt`) and `buildClaudeArgs(task, interactive?)` (pure function constructing the CLI args array, exported for testing). `ClaudeTask` carries runtime fields not present in YAML: `provider` (optional — routes through `agent.ts` dispatch), `permissionMode`, `jsonSchema`, `appendSystemPrompt`, `model`, and `agent` (OpenCode `--agent` flag).
+
+**`src/tasks/opencode.ts`** — Spawns the OpenCode CLI (`opencode run --format json`) and streams its JSON events as `Event`s. `buildOpenCodeArgs(task)` constructs the args array (model from `task.model` then `EXECUTANT_MODEL` env; agent from `task.agent` then `EXECUTANT_AGENT` env; `--dangerously-skip-permissions` for `bypassPermissions` mode). `parseOpenCodeMessage(msg)` normalises OpenCode's event types (`text`, `tool_use`, `error`) to Executant's `output:text` and `output:tool` events. `runOpenCodeStructured` appends a JSON-only instruction to the prompt and parses the response via `extractJsonObject`.
 
 **`src/tasks/command.ts`** — Spawns a bash subprocess and streams stdout/stderr as `output:text` events. Exports `CommandError`, a typed error class that carries `exitCode` and `command` fields. Supports per-step `timeoutSeconds` via the shared `startTimeout` helper from `stream.ts`.
 
@@ -117,17 +121,19 @@ Large text passed to Claude lives in `src/prompts/*.txt`. They use `{{PLACEHOLDE
 
 The eval system tests and iteratively refines the prompt templates in `src/prompts/`. It is not user-facing — run via `npm run eval` during development.
 
-**`src/eval/index.ts`** — CLI entry point. Parses `--refine` and `--max-iter` flags, orchestrates the score → collect-failures → refine → re-score loop, and delegates rendering to `report.ts`.
+**`src/eval/index.ts`** — CLI entry point. Parses `--refine`, `--max-iter`, `--models`, `--output-json`, and `--output-csv` flags. Single-model mode: existing score → refine loop. Multi-model mode (2+ models via `--models`): runs each model independently, builds an `EvalComparison`, and prints a side-by-side table. Output files are written via `export.ts` when `--output-json` / `--output-csv` are set.
 
 **`src/eval/load.ts`** — Parses `evals/*.eval.yaml` via Zod. Resolves fixture paths (values in `vars` that end in `.md` / `.txt` are read and substituted with file contents).
 
-**`src/eval/runner.ts`** — `runPrompt()`: substitutes `{{PLACEHOLDER}}` vars into a prompt template, calls Claude with no tools, and returns the raw text output.
+**`src/eval/runner.ts`** — `runPrompt(templatePath, vars, model?)`: substitutes `{{PLACEHOLDER}}` vars, runs the prompt through the specified model via `runAgent`, and returns the raw text output. Claude receives `METHODOLOGY` as `appendSystemPrompt`; OpenCode does not (flag not supported).
 
-**`src/eval/judge.ts`** — `judgeOutput()`: takes a single output string and a criterion string, calls Claude with the criterion-judge prompt, and returns `{ pass: boolean, reason: string }`.
+**`src/eval/judge.ts`** — `judgeOutput()`: takes a single output string and a criterion string, always uses Claude for judgment (the authoritative judge), and returns `{ pass: boolean, reason: string }`.
 
-**`src/eval/refine.ts`** — `refinePrompt()`: given the current template and a list of failures (case id + criterion + reason), calls Claude with the prompt-refiner prompt and returns a rewritten template.
+**`src/eval/refine.ts`** — `refinePrompt()`: given the current template and a list of failures, calls Claude with the prompt-refiner prompt and returns a rewritten template.
 
-**`src/eval/report.ts`** — Terminal output: renders a per-case pass/fail table with criterion reasons.
+**`src/eval/report.ts`** — Terminal output: `printRun()` for single-model pass/fail table; `printComparison()` for multi-model side-by-side comparison table.
+
+**`src/eval/export.ts`** — `toJson(comparison)` and `toCsv(comparison)`: serialize `EvalComparison` for white-paper analysis. CSV is denormalized (one row per criterion judgment per model) with columns `eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason`.
 
 **`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
 

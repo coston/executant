@@ -13,7 +13,9 @@ Built for personal use by Coston. Public for sharing the approach. Use at your o
 npm install -g executant
 ```
 
-Requires [Node.js](https://nodejs.org) and the [Claude Code CLI](https://claude.ai/code).
+Requires [Node.js](https://nodejs.org) and at least one coding-agent CLI:
+- [Claude Code CLI](https://claude.ai/code) (default)
+- [OpenCode CLI](https://opencode.ai/docs/cli) (optional alternative)
 
 ## Quick Start
 
@@ -125,6 +127,51 @@ executant --var env=staging --var region=eu-west-1 deploy.yaml
 
 CLI vars override any same-named vars in the workflow's `vars:` section. Multiple `--var` flags are accepted.
 
+## Provider & Model Selection
+
+Executant supports multiple coding-agent CLI backends. Claude is the default; OpenCode is a first-class alternative that supports a wide range of open models.
+
+### Global defaults via env vars
+
+```bash
+# Use OpenCode for all prompt steps
+export EXECUTANT_PROVIDER=opencode
+export EXECUTANT_MODEL=opencode-go/kimi-k2.6
+export EXECUTANT_AGENT=build
+
+executant workflow.yaml
+```
+
+### Per-step in YAML
+
+```yaml
+goal: "Review and implement changes"
+
+steps:
+  - name: implement
+    provider: opencode
+    model: opencode-go/kimi-k2.6
+    agent: build
+    prompt: |
+      Implement the requested change and run tests.
+
+  - name: review
+    provider: claude
+    model: sonnet
+    prompt: |
+      Review the git diff and summarise risks.
+```
+
+### Env vars reference
+
+| Variable | Description | Default |
+|---|---|---|
+| `EXECUTANT_PROVIDER` | Agent backend: `claude` or `opencode` | `claude` |
+| `EXECUTANT_MODEL` | Model name. Claude: `sonnet`/`opus`. OpenCode: `opencode-go/kimi-k2.6` etc. | per-provider default |
+| `EXECUTANT_AGENT` | OpenCode `--agent` name (ignored by Claude) | — |
+
+Step-level `provider`, `model`, and `agent` fields take priority over env vars.
+
 ## Quality Controls
 
 - **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
@@ -218,3 +265,24 @@ npm run eval -- --refine evals/plan-decompose.eval.yaml  # refine until all case
 ```
 
 The eval system tests and iteratively refines the prompt templates in `src/prompts/`. Eval definitions live in `evals/*.eval.yaml`; see `AGENTS.md` for the full format.
+
+### Multi-model comparison
+
+Run the same eval against multiple providers and export the results for analysis:
+
+```bash
+# Compare Claude vs OpenCode on a single eval
+npm run eval -- \
+  --models claude/sonnet,opencode/opencode-go/kimi-k2.6 \
+  --output-json results/comparison.json \
+  --output-csv results/comparison.csv \
+  evals/judge-evaluation.eval.yaml
+
+# Run all evals and produce a white-paper CSV
+npm run eval -- \
+  --models claude/sonnet,opencode/opencode-go/kimi-k2.6 \
+  --output-csv results/full-comparison.csv \
+  evals/plan-decompose.eval.yaml
+```
+
+The `--output-csv` file is denormalized (one row per criterion judgment per model) — ready for pivot tables and charts. See `docs/eval-comparison.md` for column definitions and interpretation guidance.

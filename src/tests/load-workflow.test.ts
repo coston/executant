@@ -557,3 +557,119 @@ steps:
     assert.equal(task.timeoutSeconds, undefined);
   });
 });
+
+// ----------------------------------------------------------------------------
+// provider / model / agent fields
+// ----------------------------------------------------------------------------
+
+describe("loadWorkflow — provider, model, agent fields", () => {
+  test("prompt step defaults to model: sonnet and no provider", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.model, "sonnet");
+    assert.equal(task.provider, undefined);
+    assert.equal(task.agent, undefined);
+  });
+
+  test("provider: opencode is loaded and passed to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    provider: opencode
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.provider, "opencode");
+  });
+
+  test("custom model is passed through to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    model: opencode-go/kimi-k2.6
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.model, "opencode-go/kimi-k2.6");
+  });
+
+  test("agent field is passed through to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    provider: opencode
+    model: opencode-go/kimi-k2.6
+    agent: build
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.provider, "opencode");
+    assert.equal(task.model, "opencode-go/kimi-k2.6");
+    assert.equal(task.agent, "build");
+  });
+
+  test("provider: claude is loaded correctly", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: review
+    provider: claude
+    model: opus
+    prompt: Review this
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.provider, "claude");
+    assert.equal(task.model, "opus");
+  });
+
+  test("unknown provider value fails Zod validation", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    provider: gemini
+    prompt: Do the work
+`);
+    assert.throws(() => loadWorkflow(file), /provider/i);
+  });
+
+  test("agent field without provider is still accepted", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    agent: review
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.agent, "review");
+    assert.equal(task.provider, undefined);
+  });
+
+  test("step with no model field defaults to sonnet", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    provider: opencode
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.model, "sonnet");
+  });
+});

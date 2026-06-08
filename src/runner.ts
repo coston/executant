@@ -32,6 +32,7 @@ import type {
 } from "./types.js";
 import { CommandError, runCommand } from "./tasks/command.js";
 import { runClaude, runClaudeStructured } from "./tasks/claude.js";
+import { runAgent } from "./tasks/agent.js";
 import {
   loadPrompt,
   getErrorMessage,
@@ -221,7 +222,7 @@ async function* runStep(
           : expanded;
       yield* enriched.llmAsJudge
         ? runClaudeWithJudge(enriched)
-        : runClaude(enriched);
+        : runAgent(enriched);
       break;
     }
     case "forEach":
@@ -490,7 +491,7 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
         : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, { FEEDBACK: judgeContext })}`;
 
     const lines: string[] = [];
-    yield* collectLines(runClaude({ ...task, prompt }), lines);
+    yield* collectLines(runAgent({ ...task, prompt }), lines);
 
     // Evaluate output quality.
     yield {
