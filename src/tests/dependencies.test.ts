@@ -17,10 +17,12 @@ function hasCli(name: string): boolean {
 
 // ── claude ───────────────────────────────────────────────────────────────────
 
-describe("claude dependency", () => {
+const claudeInstalled = hasCli("claude");
+
+describe("claude dependency", { skip: !claudeInstalled }, () => {
   test("claude CLI is on PATH", () => {
     assert.ok(
-      hasCli("claude"),
+      claudeInstalled,
       "claude not found — install: npm install -g @anthropic-ai/claude-code",
     );
   });
