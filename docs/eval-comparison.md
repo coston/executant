@@ -4,10 +4,16 @@ This document explains how to use Executant's multi-model eval system to benchma
 
 ## Quick start
 
-```bash
-# Start the model server first
-docker compose --profile qwen7b up -d
+Start the local model servers (optional — required only if comparing against local models):
 
+```bash
+npm run models:start   # start llama-server instances (Apple Silicon)
+npm run setup          # verify all servers are healthy
+```
+
+Run a single eval with multi-model comparison:
+
+```bash
 npm run eval -- \
   --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
   --output-json results/comparison.json \
@@ -15,17 +21,14 @@ npm run eval -- \
   evals/judge-evaluation.eval.yaml
 ```
 
-Run all evals in a single sweep:
+Run all evals in a single sweep and generate a report:
 
 ```bash
-docker compose --profile qwen7b --profile qwen14b --profile llama8b up -d
-for f in evals/*.eval.yaml; do
-  npm run eval -- \
-    --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
-    --output-csv "results/$(basename $f .eval.yaml).csv" \
-    "$f"
-done
+npm run eval:compare          # runs all evals × all configured models
+npm run eval:compare:report   # regenerate the report from existing CSVs
 ```
+
+See [docs/local-models.md](local-models.md) for model server setup.
 
 ## How it works
 
@@ -170,9 +173,9 @@ Executant includes purpose-built evals for benchmarking coding agent quality acr
 | Claude Sonnet | `claude/sonnet` | Default Executant model |
 | Claude Haiku | `claude/haiku` | Fastest Claude |
 | ~~Claude Opus~~ | ~~`claude/opus`~~ | ~~Excluded from default run (cost)~~ |
-| Qwen2.5 Coder 7B | `opencode/llama-qwen7b/qwen2.5-coder-7b` | Local via llama.cpp in Docker (~4.7 GB) |
-| Qwen2.5 Coder 14B | `opencode/llama-qwen14b/qwen2.5-coder-14b` | Local via llama.cpp in Docker (~9 GB) |
-| Llama 3.1 8B | `opencode/llama-llama8b/llama-3.1-8b` | Local via llama.cpp in Docker (~4.7 GB) |
+| Qwen2.5 Coder 7B | `opencode/llama-qwen7b/qwen2.5-coder-7b` | Local via llama-server, Apple Silicon Metal GPU (~4.7 GB) |
+| Qwen2.5 Coder 14B | `opencode/llama-qwen14b/qwen2.5-coder-14b` | Local via llama-server, Apple Silicon Metal GPU (~9 GB) |
+| Llama 3.1 8B | `opencode/llama-llama8b/llama-3.1-8b` | Local via llama-server, Apple Silicon Metal GPU (~4.7 GB) |
 
 ### Benchmark Eval Dimensions
 

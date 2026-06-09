@@ -35,7 +35,7 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 
 **`src/load-workflow.ts`** — Parses YAML into a typed `Workflow`. Validates the schema, resolves `vars`, infers step types, and wires up `context:`, `output:`, and `timeout_seconds:` fields. Accepts an optional `cliVars` parameter that is merged over YAML vars (CLI overrides YAML) before placeholder substitution.
 
-**`src/tasks/agent.ts`** — Provider dispatch layer. `resolveAgentProvider(task)` checks `task.provider` then `EXECUTANT_PROVIDER` env then defaults to `"claude"`. `runAgent(task)` and `runAgentStructured(task, schema)` route to the appropriate backend and are the only entry points used by `runner.ts`, `plan.ts`, and `refine.ts`. Adding a new provider requires only a new case in each switch and a new `src/tasks/<provider>.ts` file.
+**`src/tasks/agent.ts`** — Provider dispatch layer. `resolveAgentProvider(task)` resolves the provider in this order: (1) `task.provider` field, (2) `EXECUTANT_PROVIDER` env var, (3) `"claude"` default. `runAgent(task)` and `runAgentStructured(task, schema)` route to the appropriate backend and are the only entry points used by `runner.ts`, `plan.ts`, and `refine.ts`. Adding a new provider requires only a new case in each switch and a new `src/tasks/<provider>.ts` file.
 
 **`src/tasks/claude.ts`** — Spawns the Claude CLI as a child process and streams its NDJSON output as `Event`s. Handles tool call parsing, cost events, and structured output (`output:structured`). `runClaude(task: ClaudeTask)` is the low-level generator. `runClaudeStructured<T>(task, schema)` is a typed wrapper that passes a Zod schema as `--json-schema` and validates the result. Exports `METHODOLOGY` (the development loop loaded from `src/prompts/development-methodology.txt`) and `buildClaudeArgs(task, interactive?)` (pure function constructing the CLI args array, exported for testing). `ClaudeTask` carries runtime fields not present in YAML: `provider` (optional — routes through `agent.ts` dispatch), `permissionMode`, `jsonSchema`, `appendSystemPrompt`, `model`, and `agent` (OpenCode `--agent` flag).
 
@@ -121,7 +121,7 @@ Large text passed to Claude lives in `src/prompts/*.txt`. They use `{{PLACEHOLDE
 
 The eval system tests and iteratively refines the prompt templates in `src/prompts/`. It is not user-facing — run via `npm run eval` during development.
 
-**`src/eval/index.ts`** — CLI entry point. Parses `--refine`, `--max-iter`, `--models`, `--output-json`, and `--output-csv` flags. Single-model mode: existing score → refine loop. Multi-model mode (2+ models via `--models`): runs each model independently, builds an `EvalComparison`, and prints a side-by-side table. Output files are written via `export.ts` when `--output-json` / `--output-csv` are set.
+**`src/eval/index.ts`** — CLI entry point. Parses `--refine`, `--max-iter`, `--models`, `--cases`, `--output-json`, and `--output-csv` flags. Accepts one or more eval file paths as positional arguments. `--cases` accepts comma-separated case IDs or 1-based index ranges (e.g. `simple,1-3`) to run a subset without editing YAML. Single-model mode: loads existing CSV results for resume (skips already-scored cases), runs remaining cases, optional refine loop. Multi-model mode (2+ models via `--models`): runs each model independently, builds an `EvalComparison`, prints a side-by-side table. When multiple files are passed, output paths are auto-suffixed per eval name.
 
 **`src/eval/load.ts`** — Parses `evals/*.eval.yaml` via Zod. Resolves fixture paths (values in `vars` that end in `.md` / `.txt` are read and substituted with file contents).
 
@@ -137,9 +137,7 @@ The eval system tests and iteratively refines the prompt templates in `src/promp
 
 **`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
 
-**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents. Covers `plan-decompose.txt`, `judge-evaluation.txt`, `self-healing-fix.txt`, and `plan-judge.txt`.
-
-**`evals/workflow/`** — End-to-end agentic eval tasks. Each YAML is a valid executant workflow (runs via `executant workflow.yaml`) with an extra `eval_criteria` top-level field (ignored by executant, read by the harness). Tasks cover real feature additions to the executant codebase at three difficulty levels. Run via `npm run eval:workflow`.
+**`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents. Covers prompt-quality evals (`plan-decompose`, `judge-evaluation`, `self-healing-fix`, `plan-judge`, `development-methodology`) and benchmark evals (`code-generation-quality`, `code-review-depth`, `instruction-following-precision`, `structured-output-reliability`, `methodology-context-sensitivity`).
 
 ## Workflow Eval System
 
