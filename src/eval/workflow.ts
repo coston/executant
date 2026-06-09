@@ -12,9 +12,8 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildDockerArgs, isDockerEnabled } from "./container.js";
 import { load as parseYaml } from "js-yaml";
 import { judgeAllCriteria } from "./judge.js";
 import { modelLabel } from "./export.js";
@@ -92,14 +91,9 @@ function createWorktree(model: ModelTarget, ts: number): Worktree {
   const initialSha = shaResult.stdout.trim();
 
   // Symlink node_modules so npm test works without reinstalling.
-  // In Docker mode this is skipped — node_modules are volume-mounted instead.
   const mainModules = join(REPO_ROOT, "node_modules");
   const worktreeModules = join(worktreePath, "node_modules");
-  if (
-    !isDockerEnabled() &&
-    existsSync(mainModules) &&
-    !existsSync(worktreeModules)
-  ) {
+  if (existsSync(mainModules) && !existsSync(worktreeModules)) {
     symlinkSync(mainModules, worktreeModules);
   }
 
@@ -137,40 +131,11 @@ function runInWorktree(
   return new Promise((res) => {
     // Run with --ci so executant emits NDJSON; filter to step lifecycle events
     // for a readable progress display without the full Ink TUI.
-    //
-    // Docker mode: spawn executant inside an isolated container so Claude/
-    // OpenCode agents can only write to the worktree (/workspace) and cannot
-    // touch the host filesystem outside it. The main repo is mounted read-only
-    // as /app; node_modules are volume-mounted read-only at /workspace/node_modules.
-    const child = isDockerEnabled()
-      ? spawn(
-          "docker",
-          buildDockerArgs({
-            workdir: worktreePath,
-            readOnlyMounts: [
-              { host: REPO_ROOT, container: "/app" },
-              {
-                host: join(REPO_ROOT, "node_modules"),
-                container: "/workspace/node_modules",
-              },
-            ],
-            env,
-            cmd: [
-              "node",
-              "--import",
-              "/workspace/node_modules/tsx/dist/esm.mjs",
-              `/app/src/index.ts`,
-              "--ci",
-              `/app/${relative(REPO_ROOT, taskAbsPath)}`,
-            ],
-          }),
-          { stdio: ["ignore", "pipe", "inherit"] },
-        )
-      : spawn(TSX_BIN, [INDEX_TS, "--ci", taskAbsPath], {
-          cwd: worktreePath,
-          env,
-          stdio: ["ignore", "pipe", "inherit"],
-        });
+    const child = spawn(TSX_BIN, [INDEX_TS, "--ci", taskAbsPath], {
+      cwd: worktreePath,
+      env,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
 
     // Print step-lifecycle progress lines
     let buffer = "";
