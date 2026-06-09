@@ -1,0 +1,15 @@
+# ============================================================================
+# EVAL INSTRUCTION FOLLOWING PRECISION
+# ============================================================================
+# Purpose: Eval-only template for testing precise multi-constraint instruction
+#          following — are every constraint honored exactly, with zero omissions?
+#          Weak models drop constraints silently; strong models honor all of them.
+#          The minimal wrapper ensures no system-level scaffolding interferes.
+# Used by: evals/instruction-following-precision.eval.yaml
+# Triggered when: npm run eval evals/instruction-following-precision.eval.yaml
+#
+# Placeholders:
+#   {{INSTRUCTIONS}} - Self-contained multi-constraint task (includes all context)
+# ============================================================================
+
+{{INSTRUCTIONS}}

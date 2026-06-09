@@ -1,0 +1,43 @@
+name: methodology-context-sensitivity
+prompt: src/prompts/dev-approach.txt
+placeholders:
+  - TASK
+test_cases:
+  - id: tests-first-explicit
+    vars:
+      TASK: |
+        Add a caching layer to the database query module. Specifically: wrap the existing `db.findUserById(id)` call in a function that checks an in-memory Map before hitting the database, sets the cache on miss, and supports a configurable TTL that evicts stale entries.
+    criteria:
+      - "Response explicitly states that a failing test will be written before the cache implementation — using language like 'write a failing test first', 'start with the test', or 'test first'"
+      - "Response identifies at least one specific test case to write before implementing — e.g., a cache hit should not call the database, or TTL eviction should return a fresh result after expiry"
+      - "Response does NOT describe writing the implementation first and tests afterward"
+      - "Response names at least two of the four verification steps: lint, typecheck, test, build"
+
+  - id: verification-sequence
+    vars:
+      TASK: |
+        Refactor the authentication middleware to use async/await instead of promise chains. The behavior must be identical — only the style changes. The middleware validates JWTs, checks a user blocklist in Redis, and attaches the user object to req.user.
+    criteria:
+      - "Response names all four verification steps — lint, typecheck, test, and build — either individually or as an explicit sequence"
+      - "Response explicitly states the verification sequence runs AFTER the refactor is complete, not just at end of a larger project"
+      - "Response identifies the refactor as behavior-preserving and notes that existing tests should pass unchanged without modification"
+      - "Response does NOT propose deleting or rewriting existing tests — the existing test suite is the primary correctness signal for a refactor"
+
+  - id: slice-ordering
+    vars:
+      TASK: |
+        Build a file upload feature: users can upload profile pictures (JPEG/PNG, max 5MB), images are resized to a 200x200 thumbnail on upload, stored in S3, and the URL is saved to the user record in the database. The upload endpoint requires authentication.
+    criteria:
+      - "Response identifies at least 4 distinct implementation slices — e.g., upload endpoint, file validation, S3 storage, database persistence, thumbnail generation, authentication middleware"
+      - "Response orders slices by dependency — storage and validation are mentioned before thumbnail generation; authentication before the endpoint is callable"
+      - "Response mentions writing failing tests before implementing at least one slice, or references tests-first explicitly"
+      - "Response identifies at least one risk or unknown — e.g., S3 credentials setup, multipart parsing library, image processing library availability, or file size limit enforcement"
+
+  - id: ambiguity-vs-complexity
+    vars:
+      TASK: "Fix the payment processing bug."
+    criteria:
+      - "Response does NOT immediately decompose into implementation slices — it recognizes this is an ambiguous bug report, not a well-scoped implementation task"
+      - "Response explicitly states at least one assumption about what 'payment processing bug' refers to — naming a failure mode, symptom, error message, or affected component"
+      - "Response describes what investigation or clarification is needed first, before any code is written"
+      - "Response does not write any code or propose a specific fix without first clarifying what the bug is"

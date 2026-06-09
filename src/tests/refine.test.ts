@@ -323,9 +323,12 @@ const JUDGE_FAIL = JSON.stringify({
 describe("streamRefine", () => {
   let tmpFile: string;
   let savedPath: string;
+  let savedProvider: string | undefined;
 
   beforeEach(() => {
     savedPath = process.env["PATH"] ?? "";
+    savedProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
     tmpFile = join(
       tmpdir(),
       `executant-refine-${process.pid}-${Date.now()}.yaml`,
@@ -335,6 +338,8 @@ describe("streamRefine", () => {
 
   afterEach(() => {
     process.env["PATH"] = savedPath;
+    if (savedProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = savedProvider;
     rmSync(tmpFile, { force: true });
   });
 

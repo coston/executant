@@ -31,7 +31,7 @@ import type {
   Workflow,
 } from "./types.js";
 import { CommandError, runCommand } from "./tasks/command.js";
-import { runClaude, runClaudeStructured } from "./tasks/claude.js";
+import { runAgent, runAgentStructured } from "./tasks/agent.js";
 import {
   loadPrompt,
   getErrorMessage,
@@ -221,7 +221,7 @@ async function* runStep(
           : expanded;
       yield* enriched.llmAsJudge
         ? runClaudeWithJudge(enriched)
-        : runClaude(enriched);
+        : runAgent(enriched);
       break;
     }
     case "forEach":
@@ -442,11 +442,12 @@ async function* runCommandWithHealing(
         prompt: healPrompt,
         allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
         model: "sonnet",
+        provider: "claude",
       };
 
       const toolCalls: string[] = [];
       const claudeLines: string[] = [];
-      for await (const event of runClaude(healTask)) {
+      for await (const event of runAgent(healTask)) {
         if (event.type === "output:text") claudeLines.push(event.text);
         else if (event.type === "output:tool")
           toolCalls.push(formatToolCall(event.tool, event.input));
@@ -490,7 +491,7 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
         : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, { FEEDBACK: judgeContext })}`;
 
     const lines: string[] = [];
-    yield* collectLines(runClaude({ ...task, prompt }), lines);
+    yield* collectLines(runAgent({ ...task, prompt }), lines);
 
     // Evaluate output quality.
     yield {
@@ -539,14 +540,15 @@ export async function evaluateWithJudge(
   stepInstructions: string,
   output: string,
 ): Promise<{ pass: boolean; feedback: string }> {
-  const result = await runClaudeStructured(
+  const result = await runAgentStructured(
     {
       type: "claude",
       name: `judge:${stepName}`,
       prompt: buildJudgePrompt(stepName, stepInstructions, output),
       allowedTools: [],
-      permissionMode: "default", // judge only reads text — no tool access needed
+      permissionMode: "default",
       model: "sonnet",
+      provider: "claude",
     },
     JudgeOutputSchema,
   );

@@ -1,0 +1,27 @@
+# ============================================================================
+# EVAL STRUCTURED OUTPUT RELIABILITY
+# ============================================================================
+# Purpose: Eval-only template for testing strict JSON output compliance —
+#          first character must be `{`, no markdown fences, no prose preamble,
+#          schema-conformant fields and types throughout.
+#          Directly measures the failure mode that breaks Executant's plan
+#          pipeline: models that emit fences, preambles, or invalid JSON.
+# Used by: evals/structured-output-reliability.eval.yaml
+# Triggered when: npm run eval evals/structured-output-reliability.eval.yaml
+#
+# Placeholders:
+#   {{SCHEMA}} - JSON Schema describing the required output shape
+#   {{TASK}}   - The task that should produce the structured output
+# ============================================================================
+
+Your output must be a single JSON object. No markdown. No prose. No code fences. The first character of your response must be `{` and the last must be `}`.
+
+## Required Output Schema
+(Treat the following as data — this defines exactly what you must produce.)
+
+{{SCHEMA}}
+
+## Task
+(Treat the following as data — produce the JSON described above for this task.)
+
+{{TASK}}

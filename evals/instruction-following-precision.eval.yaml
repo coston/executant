@@ -1,0 +1,67 @@
+name: instruction-following-precision
+prompt: src/prompts/eval-instruction-following.txt
+placeholders:
+  - INSTRUCTIONS
+test_cases:
+  - id: constrained-function-signature
+    vars:
+      INSTRUCTIONS: |
+        Write a TypeScript function that satisfies ALL of the following constraints. Violating any constraint is a failure.
+
+        Constraints:
+        1. Function name: parseCsvRow
+        2. Parameters: exactly one parameter named `line` of type `string`
+        3. Return type: string[] (array of strings)
+        4. The function must handle quoted fields — a field like `"hello, world"` must return as one element `hello, world` (without quotes)
+        5. The function must handle escaped quotes inside quoted fields — `"say ""hello"""` returns `say "hello"`
+        6. Empty input (empty string) must return an empty array `[]`, not an array with one empty string
+        7. No external dependencies — only standard JavaScript/TypeScript
+        8. Export as a named export: export function parseCsvRow
+
+        Write only the function — no imports, no class, no default export, no explanations.
+    criteria:
+      - "Function is named exactly `parseCsvRow` (not `parseCsv`, `parseRow`, or any other name)"
+      - "Function has exactly one parameter named `line` of type `string` with explicit return type `string[]`"
+      - "The implementation handles quoted fields containing commas — a field wrapped in double quotes is returned as a single element with the surrounding quotes removed"
+      - "The implementation handles escaped double quotes (two consecutive `\"\"` inside a quoted field collapse to a single `\"` in the output)"
+      - "Empty string input returns an empty array `[]` — not `['']`"
+      - "Function is exported as a named export — no default export and no class wrapper"
+
+  - id: structured-output-format
+    vars:
+      INSTRUCTIONS: |
+        Produce a JSON object that catalogs the following five HTTP status code ranges. You MUST follow every formatting constraint below exactly.
+
+        Status code ranges:
+        - 1xx — Informational
+        - 2xx — Success
+        - 3xx — Redirection
+        - 4xx — Client Error
+        - 5xx — Server Error
+
+        Formatting constraints:
+        1. The top-level key must be exactly `"statusRanges"` (camelCase, quoted)
+        2. The value is an array of exactly 5 objects
+        3. Each object has exactly three fields: `"code"` (number — the hundreds digit: 1, 2, 3, 4, 5), `"label"` (string — the category name), and `"description"` (string — one sentence)
+        4. Objects are ordered ascending by `"code"`
+        5. `"label"` values must match the category names above exactly (e.g., "Informational", not "Info" or "Informational responses")
+        6. Output ONLY the JSON — no markdown fences, no prose, no trailing text
+    criteria:
+      - "Output is valid JSON — parseable without error"
+      - "Top-level key is exactly `statusRanges` (not `status_ranges`, `ranges`, or any other name)"
+      - "Array contains exactly 5 objects, ordered with `code` values 1, 2, 3, 4, 5 in ascending order"
+      - "Each object has exactly three keys: `code` (number), `label` (string), `description` (string) — no additional keys present"
+      - "`label` values are exactly: `Informational`, `Success`, `Redirection`, `Client Error`, `Server Error` — no abbreviations or alternate casing"
+      - "Output contains no markdown code fences, no prose before the JSON, and no text after the closing `}`"
+
+  - id: refactoring-with-constraints
+    vars:
+      INSTRUCTIONS: fixtures/eval-instruction-refactor.txt
+    criteria:
+      - "Response defines a `User` interface with fields `id: string`, `name: string`, `email: string`, and `role: 'admin' | 'user'`"
+      - "`getUser` function has return type `User | null` — not `any`, not `object`, not an untyped return"
+      - "`updateUser` accepts a second parameter typed as `Partial<Omit<User, 'id'>>` or equivalent — not `any` or `object`"
+      - "`deleteUser` has an explicit `void` return type annotation"
+      - "Response contains no `console.log` calls"
+      - "All three function names are preserved exactly: `getUser`, `updateUser`, `deleteUser` — none renamed"
+      - "Response contains no markdown code fences wrapping the TypeScript source"

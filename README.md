@@ -13,7 +13,17 @@ Built for personal use by Coston. Public for sharing the approach. Use at your o
 npm install -g executant
 ```
 
-Requires [Node.js](https://nodejs.org) and the [Claude Code CLI](https://claude.ai/code).
+**Requirements:**
+- [Node.js](https://nodejs.org) 18+
+- At least one coding-agent CLI on `PATH`:
+  - [Claude Code](https://claude.ai/code) — `npm install -g @anthropic-ai/claude-code` (default)
+  - [OpenCode](https://opencode.ai/docs/cli) — `npm install -g opencode-ai` (local/alternative models)
+
+That's it. Executant has no other system dependencies. It runs on macOS and Linux.
+
+For local LLM inference via llama.cpp (Apple Silicon Metal GPU), see [docs/local-models.md](docs/local-models.md).
+
+Run `npm run setup` to verify all dependencies are installed and configured.
 
 ## Quick Start
 
@@ -125,11 +135,71 @@ executant --var env=staging --var region=eu-west-1 deploy.yaml
 
 CLI vars override any same-named vars in the workflow's `vars:` section. Multiple `--var` flags are accepted.
 
+## Provider & Model Selection
+
+Executant supports multiple coding-agent CLI backends. Claude is the default; OpenCode is a first-class alternative that supports a wide range of open models.
+
+### Global defaults via env vars
+
+```bash
+# Use OpenCode for all prompt steps
+export EXECUTANT_PROVIDER=opencode
+export EXECUTANT_MODEL=llama-qwen7b/qwen2.5-coder-7b
+export EXECUTANT_AGENT=build
+
+executant workflow.yaml
+```
+
+### Per-step in YAML
+
+```yaml
+goal: "Review and implement changes"
+
+steps:
+  - name: implement
+    provider: opencode
+    model: llama-qwen7b/qwen2.5-coder-7b
+    agent: build
+    prompt: |
+      Implement the requested change and run tests.
+
+  - name: review
+    provider: claude
+    model: sonnet
+    prompt: |
+      Review the git diff and summarise risks.
+```
+
+### Env vars reference
+
+| Variable | Description | Default |
+|---|---|---|
+| `EXECUTANT_PROVIDER` | Agent backend: `claude` or `opencode` | `claude` |
+| `EXECUTANT_MODEL` | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc. | per-provider default |
+| `EXECUTANT_AGENT` | OpenCode `--agent` name (ignored by Claude) | — |
+
+Step-level `provider`, `model`, and `agent` fields take priority over env vars.
+
 ## Quality Controls
 
 - **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
 - **`self_healing: true`** — on script failure, Claude diagnoses and repairs the command, then re-runs it, up to 5×
 - **`timeout_seconds: N`** — kill the step after N seconds and fail with exit code 3. Works for both script and prompt steps.
+- **`allowed_tools`** — restrict which tools a prompt step can use:
+  - Omit entirely → all tools available (default)
+  - `allowed_tools: []` → text-only mode, no tools
+  - `allowed_tools: [Bash, Read, Write]` → only those tools; names are case-insensitive
+
+```yaml
+steps:
+  - name: analyse
+    prompt: Review the architecture and list concerns.
+    allowed_tools: [Read, Glob, Grep]   # read-only: no edits or bash
+
+  - name: summarise
+    prompt: Write a one-paragraph summary.
+    allowed_tools: []                   # no tools — pure text generation
+```
 
 ```yaml
 steps:
@@ -212,9 +282,51 @@ executant update                                # upgrade to latest version
 ## Development
 
 ```bash
-npm test                                          # run tests
-npm run eval evals/plan-decompose.eval.yaml       # score prompt templates
-npm run eval -- --refine evals/plan-decompose.eval.yaml  # refine until all cases pass
+npm test                                                     # run tests
+npm run eval -- evals/plan-decompose.eval.yaml               # score a prompt template
+npm run eval -- --refine evals/plan-decompose.eval.yaml      # refine until all cases pass
+npm run eval -- --cases simple-feature,1-3 evals/plan-decompose.eval.yaml  # run a subset of cases
 ```
 
 The eval system tests and iteratively refines the prompt templates in `src/prompts/`. Eval definitions live in `evals/*.eval.yaml`; see `AGENTS.md` for the full format.
+
+Pass `--output-csv results/out.csv` to any eval run to save results. Re-running with the same path resumes from where it left off — already-scored cases are skipped.
+
+### Multi-model comparison
+
+```bash
+# Run all evals × all configured models and generate a benchmark report
+npm run eval:compare
+npm run eval:compare:report   # regenerate report from existing CSVs
+
+# Compare specific models on a single eval
+npm run eval -- \
+  --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
+  --output-csv results/comparison.csv \
+  evals/judge-evaluation.eval.yaml
+
+# Run multiple eval files in one command
+npm run eval -- evals/plan-decompose.eval.yaml evals/judge-evaluation.eval.yaml
+```
+
+The `--output-csv` file is denormalized (one row per criterion judgment per model) — ready for pivot tables and charts. See [docs/eval-comparison.md](docs/eval-comparison.md) for column definitions and interpretation guidance.
+
+### Workflow evals (end-to-end agentic testing)
+
+Workflow evals test models on complete coding tasks — the full development lifecycle — rather than just prompt quality. Each task runs in an isolated git worktree:
+
+```
+explore → plan → implement → npm test → commit
+```
+
+After the model finishes, Claude (always Claude, never the model being tested) reviews the git diff and judges it against the task criteria.
+
+```bash
+npm run eval:workflow -- --models claude/sonnet path/to/task.yaml
+npm run eval:workflow -- \
+  --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
+  --output-csv results/workflow-comparison.csv \
+  path/to/task.yaml
+```
+
+Task files are valid executant workflow YAMLs with an extra `eval_criteria` top-level field the harness reads for post-run judging.

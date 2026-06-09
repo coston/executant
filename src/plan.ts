@@ -14,7 +14,8 @@ import { join, resolve } from "node:path";
 import { dump as dumpYaml } from "js-yaml";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { runClaude, runClaudeStructured, METHODOLOGY } from "./tasks/claude.js";
+import { METHODOLOGY } from "./tasks/claude.js";
+import { runAgent, runAgentStructured } from "./tasks/agent.js";
 import {
   loadPrompt,
   slugify,
@@ -22,6 +23,7 @@ import {
   getErrorMessage,
   fillTemplate,
   formatZodIssues,
+  extractJsonObject,
 } from "./lib/utils.js";
 import { RawStepSchema as StepSchema } from "./load-workflow.js";
 import type { PlanEvent } from "./ui/PlanApp.js";
@@ -203,7 +205,7 @@ async function runPass3Judge(
       model: "sonnet",
       appendSystemPrompt: METHODOLOGY,
     };
-    return await runClaudeStructured(task, PlanJudgeOutputSchema);
+    return await runAgentStructured(task, PlanJudgeOutputSchema);
   } catch {
     return { pass: true, feedback: "", skipped: true };
   }
@@ -421,7 +423,7 @@ export async function* runRetryLoop(
     const textLines: string[] = [];
 
     try {
-      for await (const event of runClaude(task)) {
+      for await (const event of runAgent(task)) {
         if (event.type === "output:tool") {
           yield { type: "plan:tool", tool: event.tool, input: event.input };
         } else if (event.type === "output:text") {
@@ -442,6 +444,16 @@ export async function* runRetryLoop(
         EXCERPT: textLines.join("\n"),
       });
       continue;
+    }
+
+    // Non-Claude providers (e.g. OpenCode) don't emit output:structured events.
+    // Fall back to extracting JSON from the collected text output.
+    if (structuredOutput === undefined && textLines.length > 0) {
+      try {
+        structuredOutput = JSON.parse(extractJsonObject(textLines.join("\n")));
+      } catch {
+        // fall through — let the undefined check below handle the retry
+      }
     }
 
     if (structuredOutput === undefined) {
@@ -558,7 +570,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         model: "opus",
         appendSystemPrompt: METHODOLOGY,
       };
-      for await (const event of runClaude(researchTask)) {
+      for await (const event of runAgent(researchTask)) {
         if (event.type === "output:tool") {
           yield { type: "plan:tool", tool: event.tool, input: event.input };
         } else if (event.type === "output:text") {

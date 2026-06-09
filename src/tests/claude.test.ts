@@ -123,21 +123,15 @@ describe("buildClaudeArgs", () => {
     );
   });
 
-  test("uses default tools when allowedTools is not specified", () => {
+  test("omits --allowedTools when allowedTools is not specified (all tools)", () => {
     const args = buildClaudeArgs({
       type: "claude",
       name: "test",
       prompt: "test",
     });
-    const idx = args.indexOf("--allowedTools");
-    assert.ok(idx !== -1, "missing --allowedTools");
     assert.ok(
-      args[idx + 1].includes("Read"),
-      "default tools should include Read",
-    );
-    assert.ok(
-      args[idx + 1].includes("Bash"),
-      "default tools should include Bash",
+      !args.includes("--allowedTools"),
+      "--allowedTools should be absent when not specified",
     );
   });
 
@@ -194,7 +188,7 @@ describe("buildClaudeArgs", () => {
     assert.ok(!args.includes("--model"), "--model should be absent");
   });
 
-  test("allowedTools: [] produces empty string value (no tools)", () => {
+  test("allowedTools: [] produces 'none' (no tools)", () => {
     const args = buildClaudeArgs({
       type: "claude",
       name: "test",
@@ -203,11 +197,7 @@ describe("buildClaudeArgs", () => {
     });
     const idx = args.indexOf("--allowedTools");
     assert.ok(idx !== -1, "missing --allowedTools");
-    assert.equal(
-      args[idx + 1],
-      "",
-      "--allowedTools should be empty string when allowedTools is []",
-    );
+    assert.equal(args[idx + 1], "none");
   });
 
   test("interactive=true omits --print and the prompt from args", () => {

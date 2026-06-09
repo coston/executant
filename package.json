@@ -19,8 +19,16 @@
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/index.js && rm -rf dist/prompts && cp -r src/prompts dist/prompts",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "env -u NODE_TEST_CONTEXT node --import tsx/esm --test src/tests/*.test.ts",
+    "test": "env -u NODE_TEST_CONTEXT -u EXECUTANT_PROVIDER -u EXECUTANT_MODEL -u EXECUTANT_AGENT node --import tsx/esm --test src/tests/*.test.ts",
     "eval": "tsx src/eval/index.ts",
+    "eval:workflow": "tsx src/eval/workflow-index.ts",
+    "setup": "tsx src/setup.ts",
+    "models:download": "tsx src/native-models.ts",
+    "models:start": "tsx src/model-server.ts start",
+    "models:stop": "tsx src/model-server.ts stop",
+    "models:status": "tsx src/model-server.ts status",
+    "eval:compare": "for f in evals/*.eval.yaml; do npm run eval -- --models claude/opus,claude/sonnet,claude/haiku,opencode/llama-qwen7b/qwen2.5-coder-7b,opencode/llama-qwen14b/qwen2.5-coder-14b,opencode/llama-llama8b/llama-3.1-8b --output-csv \"results/$(basename $f .eval.yaml).csv\" \"$f\"; done && npm run eval:compare:report",
+    "eval:compare:report": "tsx src/eval/report-gen.ts",
     "lint": "eslint src",
     "knip": "knip"
   },
@@ -85,7 +93,13 @@
   },
   "knip": {
     "entry": [
-      "src/index.ts"
+      "src/index.ts",
+      "src/setup.ts",
+      "src/native-models.ts",
+      "src/model-server.ts",
+      "src/eval/index.ts",
+      "src/eval/workflow-index.ts",
+      "src/eval/report-gen.ts"
     ],
     "project": [
       "src/**/*.ts",
