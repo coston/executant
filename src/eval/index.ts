@@ -531,7 +531,7 @@ async function runEvalFile(
     run = await runEval(
       evalFile,
       undefined,
-      undefined,
+      singleModel,
       undefined,
       args.caseFilter,
     );
