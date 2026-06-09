@@ -28,6 +28,9 @@
     "models:stop": "tsx src/model-server.ts stop",
     "models:status": "tsx src/model-server.ts status",
     "eval:compare": "for f in evals/*.eval.yaml; do npm run eval -- --models claude/opus,claude/sonnet,claude/haiku,opencode/llama-qwen7b/qwen2.5-coder-7b,opencode/llama-qwen14b/qwen2.5-coder-14b,opencode/llama-llama8b/llama-3.1-8b --output-csv \"results/$(basename $f .eval.yaml).csv\" \"$f\"; done && npm run eval:compare:report",
+    "eval:compare:docker": "EVAL_DOCKER=1 npm run eval:compare",
+    "eval:workflow:docker": "EVAL_DOCKER=1 npm run eval:workflow",
+    "eval:docker:build": "docker build -f Dockerfile.eval -t executant-eval .",
     "eval:compare:report": "tsx src/eval/report-gen.ts",
     "lint": "eslint src",
     "knip": "knip"
@@ -99,7 +102,8 @@
       "src/model-server.ts",
       "src/eval/index.ts",
       "src/eval/workflow-index.ts",
-      "src/eval/report-gen.ts"
+      "src/eval/report-gen.ts",
+      "src/eval/container.ts"
     ],
     "project": [
       "src/**/*.ts",
