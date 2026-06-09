@@ -40,9 +40,10 @@ export async function runPrompt(
     name: `eval:${basename(templatePath, ".txt")}`,
     prompt,
     allowedTools: [],
-    // OpenCode: bypass permissions so tool-call permission prompts don't block
-    // headless eval runs indefinitely. Timeout as a secondary safety net.
-    permissionMode: isOpenCode ? "bypassPermissions" : "default",
+    // Use default permission mode for all providers so that OPENCODE_PERMISSION
+    // deny rules are respected. --dangerously-skip-permissions overrides
+    // OPENCODE_PERMISSION and allows OpenCode to write files despite allowedTools: [].
+    permissionMode: "default",
     timeoutSeconds: isOpenCode ? 1200 : undefined,
     provider,
     ...(model?.model ? { model: model.model } : {}),
