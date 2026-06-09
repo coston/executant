@@ -6,11 +6,12 @@
 //   npm run eval -- evals/plan-decompose.eval.yaml
 //   npm run eval -- --refine evals/plan-decompose.eval.yaml
 //   npm run eval -- --refine --max-iter 3 evals/plan-decompose.eval.yaml
+//   npm run eval -- --cases simple-feature,1-3 evals/plan-decompose.eval.yaml
 //   npm run eval -- --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b evals/*.eval.yaml
 //   npm run eval -- --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
 //                   --output-json results/comparison.json \
 //                   --output-csv results/comparison.csv \
-//                   evals/plan-decompose.eval.yaml
+//                   evals/plan-decompose.eval.yaml evals/judge-evaluation.eval.yaml
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
@@ -32,6 +33,7 @@ import type {
   EvalArgs,
   EvalRun,
   EvalComparison,
+  EvalTestCase,
   FailureContext,
   ModelTarget,
   ModelEvalRun,
@@ -148,13 +150,54 @@ export function parseModelTarget(s: string): ModelTarget {
   return { provider: provider as "claude" | "opencode", model };
 }
 
+/**
+ * Filters test cases by a comma-separated spec of case IDs and/or index ranges.
+ * - "simple-feature,complex-case" → those two IDs
+ * - "1-3" → cases at 1-based indices 1 through 3
+ * - "1-3,named-case" → mixed
+ * Warns when a named ID matches nothing.
+ */
+export function applyCaseFilter(
+  testCases: EvalTestCase[],
+  filter: string,
+): EvalTestCase[] {
+  const parts = filter
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const ids = new Set<string>();
+
+  for (const part of parts) {
+    const rangeMatch = /^(\d+)-(\d+)$/.exec(part);
+    if (rangeMatch) {
+      const start = Math.max(1, parseInt(rangeMatch[1]!, 10));
+      const end = Math.min(testCases.length, parseInt(rangeMatch[2]!, 10));
+      for (let i = start - 1; i < end; i++) ids.add(testCases[i]!.id);
+    } else {
+      ids.add(part);
+    }
+  }
+
+  // Warn on IDs that don't match any case
+  for (const id of ids) {
+    if (!testCases.some((tc) => tc.id === id)) {
+      process.stderr.write(
+        `[eval] warning: --cases filter "${id}" matched no test case\n`,
+      );
+    }
+  }
+
+  return testCases.filter((tc) => ids.has(tc.id));
+}
+
 export function parseArgs(rawArgs: string[]): EvalArgs {
   let refine = false;
   let maxIter = 5;
-  let evalFile = "";
+  const evalFiles: string[] = [];
   const models: ModelTarget[] = [];
   let outputJson: string | undefined;
   let outputCsv: string | undefined;
+  let caseFilter: string | undefined;
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]!;
@@ -170,34 +213,45 @@ export function parseArgs(rawArgs: string[]): EvalArgs {
       outputJson = rawArgs[++i];
     } else if (arg === "--output-csv" && rawArgs[i + 1]) {
       outputCsv = rawArgs[++i];
-    } else if (!arg.startsWith("-") && !evalFile) {
-      evalFile = arg;
-    } // first positional wins
+    } else if (arg === "--cases" && rawArgs[i + 1]) {
+      caseFilter = rawArgs[++i];
+    } else if (!arg.startsWith("-")) {
+      evalFiles.push(arg);
+    }
   }
 
   if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
     console.log(
       [
-        "Usage: npm run eval -- [OPTIONS] <eval-file.yaml>",
+        "Usage: npm run eval -- [OPTIONS] <eval-file.yaml> [more-files...]",
         "",
         "Options:",
         "  --refine              Iteratively improve the prompt template",
         "  --max-iter N          Max refinement iterations (default: 5)",
         "  --models M1,M2,...    Compare multiple models, e.g. claude/sonnet,opencode/kimi",
+        "  --cases <filter>      Run a subset of cases: IDs or index ranges, e.g. simple,1-3",
         "  --output-json <path>  Write comparison JSON to file",
-        "  --output-csv <path>   Write comparison CSV to file",
+        "  --output-csv <path>   Write comparison CSV to file (supports resume)",
       ].join("\n"),
     );
     process.exit(0);
   }
 
-  if (!evalFile) {
+  if (evalFiles.length === 0) {
     throw new Error(
-      "Usage: npm run eval -- [--refine] [--max-iter N] <eval-file.yaml>",
+      "Usage: npm run eval -- [--refine] [--max-iter N] [--cases <filter>] <eval-file.yaml> [more-files...]",
     );
   }
 
-  return { evalFile, refine, maxIter, models, outputJson, outputCsv };
+  return {
+    evalFiles,
+    caseFilter,
+    refine,
+    maxIter,
+    models,
+    outputJson,
+    outputCsv,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +263,15 @@ async function runEval(
   templatePath?: string,
   model?: ModelTarget,
   cached?: Map<string, TestResult>,
+  caseFilter?: string,
 ): Promise<EvalRun> {
   const path = templatePath ?? evalFile.prompt;
+  const cases = caseFilter
+    ? applyCaseFilter(evalFile.testCases, caseFilter)
+    : evalFile.testCases;
   const results: TestResult[] = [];
 
-  for (const tc of evalFile.testCases) {
+  for (const tc of cases) {
     const hit = cached?.get(tc.id);
     if (hit) {
       process.stdout.write(`  skipping ${tc.id} (cached)\n`);
@@ -323,13 +381,20 @@ async function runMultiModelEval(
   evalFile: ReturnType<typeof loadEvalFile>,
   models: ModelTarget[],
   existingCsv?: string,
+  caseFilter?: string,
 ): Promise<EvalComparison> {
   const existing = existingCsv ? loadExistingResults(existingCsv) : new Map();
   const runs: ModelEvalRun[] = [];
   for (const model of models) {
     const label = modelLabel(model);
     console.log(`\n[${label}]`);
-    const run = await runEval(evalFile, undefined, model, existing.get(label));
+    const run = await runEval(
+      evalFile,
+      undefined,
+      model,
+      existing.get(label),
+      caseFilter,
+    );
     runs.push({ ...run, model });
     printRun(run);
   }
@@ -354,16 +419,49 @@ function writeOutputFile(filePath: string, content: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Output path helper for multi-file runs
 // ---------------------------------------------------------------------------
 
-export async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  const evalFile = loadEvalFile(args.evalFile);
+/**
+ * Derives a per-eval output path when multiple eval files share a base path.
+ * e.g. "results/out.csv" + "plan-decompose" → "results/out-plan-decompose.csv"
+ */
+function deriveOutputPath(base: string, evalName: string): string {
+  const extMatch = /(\.[^./]+)$/.exec(base);
+  if (extMatch) {
+    return base.slice(0, -extMatch[1].length) + `-${evalName}` + extMatch[1];
+  }
+  return `${base}-${evalName}`;
+}
 
-  console.log(
-    `\nEval: ${evalFile.name} (${evalFile.testCases.length} test case(s))`,
-  );
+// ---------------------------------------------------------------------------
+// Run a single eval file (shared logic for single and multi-file modes)
+// ---------------------------------------------------------------------------
+
+async function runEvalFile(
+  evalFilePath: string,
+  args: EvalArgs,
+  multiFile: boolean,
+): Promise<void> {
+  const evalFile = loadEvalFile(evalFilePath);
+  const caseCount = args.caseFilter
+    ? applyCaseFilter(evalFile.testCases, args.caseFilter).length
+    : evalFile.testCases.length;
+
+  const caseNote = args.caseFilter
+    ? ` (${caseCount} of ${evalFile.testCases.length} after --cases filter)`
+    : ` (${evalFile.testCases.length} test case(s))`;
+  console.log(`\nEval: ${evalFile.name}${caseNote}`);
+
+  // Derive output paths: when running multiple files, auto-suffix each path.
+  const outputCsv =
+    multiFile && args.outputCsv
+      ? deriveOutputPath(args.outputCsv, evalFile.name)
+      : args.outputCsv;
+  const outputJson =
+    multiFile && args.outputJson
+      ? deriveOutputPath(args.outputJson, evalFile.name)
+      : args.outputJson;
 
   // Multi-model comparison mode
   if (args.models.length > 1) {
@@ -375,22 +473,31 @@ export async function main(): Promise<void> {
     const comparison = await runMultiModelEval(
       evalFile,
       args.models,
-      args.outputCsv,
+      outputCsv,
+      args.caseFilter,
     );
     printComparison(comparison);
 
-    if (args.outputJson) writeOutputFile(args.outputJson, toJson(comparison));
-    if (args.outputCsv) writeOutputFile(args.outputCsv, toCsv(comparison));
+    if (outputJson) writeOutputFile(outputJson, toJson(comparison));
+    if (outputCsv) writeOutputFile(outputCsv, toCsv(comparison));
     return;
   }
 
-  // Single-model mode (default: Claude, or first entry in --models)
+  // Single-model mode — load cached results for resume support
   const singleModel = args.models[0];
-  let run = await runEval(evalFile, undefined, singleModel);
+  const existing = outputCsv ? loadExistingResults(outputCsv) : new Map();
+  const label = singleModel ? modelLabel(singleModel) : "claude/sonnet";
+  let run = await runEval(
+    evalFile,
+    undefined,
+    singleModel,
+    existing.get(label),
+    args.caseFilter,
+  );
   printRun(run);
 
-  // Write output files for single-model run too (wraps in a minimal comparison)
-  if (args.outputJson || args.outputCsv) {
+  // Write output files (wraps single-model run in a minimal comparison)
+  if (outputJson || outputCsv) {
     const model = singleModel ?? {
       provider: "claude" as const,
       model: "sonnet",
@@ -402,8 +509,8 @@ export async function main(): Promise<void> {
       runs: [{ ...run, model }],
       comparisonTable: buildComparisonTable([{ ...run, model }]),
     };
-    if (args.outputJson) writeOutputFile(args.outputJson, toJson(comparison));
-    if (args.outputCsv) writeOutputFile(args.outputCsv, toCsv(comparison));
+    if (outputJson) writeOutputFile(outputJson, toJson(comparison));
+    if (outputCsv) writeOutputFile(outputCsv, toCsv(comparison));
   }
 
   if (!args.refine || run.totalPass === run.totalCriteria) return;
@@ -421,7 +528,13 @@ export async function main(): Promise<void> {
     saveRefinedTemplate(evalFile.prompt, improved);
 
     printRefinementHeader(iter, args.maxIter);
-    run = await runEval(evalFile);
+    run = await runEval(
+      evalFile,
+      undefined,
+      undefined,
+      undefined,
+      args.caseFilter,
+    );
     printRun(run);
 
     if (run.totalPass > bestRun.totalPass) {
@@ -445,6 +558,19 @@ export async function main(): Promise<void> {
 
   const finalTemplate = readFileSync(evalFile.prompt, "utf8");
   printDiff(originalTemplate, finalTemplate);
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+export async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const multiFile = args.evalFiles.length > 1;
+
+  for (const evalFilePath of args.evalFiles) {
+    await runEvalFile(evalFilePath, args, multiFile);
+  }
 }
 
 // Only run when invoked directly, not when imported by tests

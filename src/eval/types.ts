@@ -70,7 +70,10 @@ export interface EvalComparison {
 }
 
 export interface EvalArgs {
-  evalFile: string;
+  /** One or more eval YAML file paths to run. */
+  evalFiles: string[];
+  /** Raw --cases filter string (comma-separated IDs or index ranges like "1-3"). */
+  caseFilter?: string;
   refine: boolean;
   maxIter: number;
   /** Models to compare. Empty array means "use Claude default" (single-model mode). */

@@ -97,9 +97,12 @@ exit 0
 describe("runWorkflow queued interjection", () => {
   let mockDir: string;
   let originalPath: string;
+  let originalProvider: string | undefined;
 
   beforeEach(() => {
     originalPath = process.env["PATH"] ?? "";
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
     mockDir = join(
       tmpdir(),
       `executant-interject-wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -129,6 +132,8 @@ describe("runWorkflow queued interjection", () => {
 
   afterEach(() => {
     process.env["PATH"] = originalPath;
+    if (originalProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
     rmSync(mockDir, { recursive: true, force: true });
   });
 

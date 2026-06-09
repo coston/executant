@@ -234,14 +234,19 @@ describe('runWorkflow — output capture', () => {
 
 describe('runWorkflow — output with self-healing', () => {
   let originalPath: string;
+  let originalProvider: string | undefined;
 
   beforeEach(() => {
+    originalProvider = process.env['EXECUTANT_PROVIDER'];
+    delete process.env['EXECUTANT_PROVIDER'];
     const mock = installMockClaude();
     originalPath = mock.originalPath;
   });
 
   afterEach(() => {
     process.env['PATH'] = originalPath;
+    if (originalProvider === undefined) delete process.env['EXECUTANT_PROVIDER'];
+    else process.env['EXECUTANT_PROVIDER'] = originalProvider;
   });
 
   test('captures final successful output after healing', async () => {

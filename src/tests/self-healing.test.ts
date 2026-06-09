@@ -32,6 +32,10 @@ function logEvents(events: Event[]): LogEvent[] {
   return events.filter((e): e is LogEvent => e.type === "log");
 }
 
+// Top-level wrapper serialises all describe blocks: Node.js 22+ runs sibling
+// describes concurrently by default, which causes process.env mutations in the
+// "provider routing" describe to leak into the "retry loop" describe.
+describe("self-healing tests", { concurrency: 1 }, () => {
 // ----------------------------------------------------------------------------
 // load-workflow: self_healing field parsing
 // ----------------------------------------------------------------------------
@@ -207,24 +211,32 @@ steps:
 });
 
 // ----------------------------------------------------------------------------
-// runner: self-healing uses provider routing (not hardcoded runClaude)
+// runner: self-healing heal task always uses Claude regardless of EXECUTANT_PROVIDER
 // ----------------------------------------------------------------------------
 
 describe("runWorkflow — self-healing provider routing", () => {
+  let originalPath: string;
   let originalProvider: string | undefined;
 
   beforeEach(() => {
+    originalPath = process.env["PATH"] ?? "";
     originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
   });
 
   afterEach(() => {
+    process.env["PATH"] = originalPath;
     if (originalProvider === undefined)
       delete process.env["EXECUTANT_PROVIDER"];
     else process.env["EXECUTANT_PROVIDER"] = originalProvider;
   });
 
-  test("self-healing heal task goes through runAgent (respects EXECUTANT_PROVIDER)", async () => {
+  test("self-healing heal task always uses Claude regardless of EXECUTANT_PROVIDER", async () => {
+    // Heal tasks hardcode provider:"claude" so they're never routed to OpenCode
+    // or broken by an unsupported EXECUTANT_PROVIDER value.
     process.env["EXECUTANT_PROVIDER"] = "unsupported-provider-xyz";
+    installMockClaude();
+
     const wf: Workflow = {
       goal: "test",
       tasks: [
@@ -233,14 +245,17 @@ describe("runWorkflow — self-healing provider routing", () => {
           name: "fail_once",
           command: "exit 1",
           selfHealing: true,
-          maxHealingAttempts: 2,
+          maxHealingAttempts: 1,
         },
       ],
     };
     const { error } = await collectEventsUntilError(wf);
+    // The mock succeeds, so healing runs and exhausts its attempts.
+    // The error should be about exhausted attempts (not a provider routing error).
+    assert.ok(error, "Expected an error after healing exhausted");
     assert.ok(
-      error?.message.includes("unsupported-provider-xyz"),
-      `Expected provider routing error, got: ${error?.message}`,
+      !error!.message.includes("unsupported-provider-xyz"),
+      `Expected healing to use Claude (not fail on provider routing), got: ${error!.message}`,
     );
   });
 });
@@ -251,14 +266,19 @@ describe("runWorkflow — self-healing provider routing", () => {
 
 describe("runWorkflow — self-healing retry loop", () => {
   let originalPath: string;
+  let originalProvider: string | undefined;
 
   beforeEach(() => {
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
     const mock = installMockClaude();
     originalPath = mock.originalPath;
   });
 
   afterEach(() => {
     process.env["PATH"] = originalPath;
+    if (originalProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
   });
 
   test("invokes Claude on failure and retries", async () => {
@@ -469,9 +489,13 @@ describe("runWorkflow — self-healing retry loop", () => {
 
 describe("self-healing fix summary in attempt history", () => {
   let originalPath: string;
+  let originalProvider: string | undefined;
   let promptLogFile: string;
 
   beforeEach(() => {
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
+
     const dir = join(tmpdir(), `executant-heal-fix-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     promptLogFile = join(dir, "prompts.log");
@@ -499,6 +523,8 @@ exit 0
 
   afterEach(() => {
     process.env["PATH"] = originalPath;
+    if (originalProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
   });
 
   test("records tool calls as fix summary in subsequent attempt prompt", async () => {
@@ -660,14 +686,19 @@ describe("self-healing prompt template", () => {
 
 describe("regression — loader + runner integration", () => {
   let originalPath: string;
+  let originalProvider: string | undefined;
 
   beforeEach(() => {
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
     const mock = installMockClaude();
     originalPath = mock.originalPath;
   });
 
   afterEach(() => {
     process.env["PATH"] = originalPath;
+    if (originalProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
   });
 
   test("script step WITHOUT self_healing does NOT trigger healing on failure (loader sets selfHealing=false)", async () => {
@@ -764,3 +795,4 @@ steps:
     );
   });
 });
+}); // end self-healing tests

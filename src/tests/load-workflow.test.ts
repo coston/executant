@@ -502,8 +502,8 @@ steps:
     command: echo {{base}} {{extra}}
 `);
     const wf = loadWorkflow(file, { extra: "bar" });
-    assert.equal(wf.vars["base"], "foo");
-    assert.equal(wf.vars["extra"], "bar");
+    assert.equal(wf.vars!["base"], "foo");
+    assert.equal(wf.vars!["extra"], "bar");
   });
 
   test("throws for unknown placeholder when no CLI var provided", () => {

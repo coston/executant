@@ -139,7 +139,7 @@ describe("parseArgs — models / output flags", () => {
     assert.equal(args.models.length, 1);
     assert.equal(args.outputJson, "out.json");
     assert.equal(args.outputCsv, "out.csv");
-    assert.equal(args.evalFile, "evals/test.yaml");
+    assert.deepEqual(args.evalFiles, ["evals/test.yaml"]);
   });
 });
 

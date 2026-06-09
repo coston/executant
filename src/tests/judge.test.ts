@@ -55,6 +55,7 @@ describe("evaluateWithJudge", () => {
   beforeEach(() => {
     originalPath = process.env["PATH"] ?? "";
     originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
   });
 
   afterEach(() => {
@@ -64,18 +65,13 @@ describe("evaluateWithJudge", () => {
     else process.env["EXECUTANT_PROVIDER"] = originalProvider;
   });
 
-  test("evaluateWithJudge respects EXECUTANT_PROVIDER routing", async () => {
+  test("evaluateWithJudge always uses Claude regardless of EXECUTANT_PROVIDER", async () => {
+    // Judge tasks hardcode provider:"claude" so they're never routed to OpenCode
+    // or broken by an unsupported provider env var.
     process.env["EXECUTANT_PROVIDER"] = "unsupported-provider-xyz";
-    await assert.rejects(
-      () => evaluateWithJudge("step", "Do X", "output"),
-      (err: Error) => {
-        assert.ok(
-          err.message.includes("unsupported-provider-xyz"),
-          `Expected provider routing error, got: ${err.message}`,
-        );
-        return true;
-      },
-    );
+    installJudgeMock('{"pass":true,"reasoning":"ok","feedback":""}');
+    const result = await evaluateWithJudge("step", "Do X", "output");
+    assert.equal(result.pass, true);
   });
 
   test("PASS verdict returns pass:true and empty feedback", async () => {
@@ -211,13 +207,19 @@ function judgeWorkflow(stepName: string): Workflow {
 
 describe("runClaudeWithJudge — integration", () => {
   let originalPath: string;
+  let originalProvider: string | undefined;
 
   beforeEach(() => {
     originalPath = process.env["PATH"] ?? "";
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
   });
 
   afterEach(() => {
     process.env["PATH"] = originalPath;
+    if (originalProvider === undefined)
+      delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
   });
 
   test("passing verdict on first attempt skips retries", async () => {

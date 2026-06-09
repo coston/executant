@@ -850,9 +850,12 @@ const JUDGE_FAIL_NO_TESTS = JSON.stringify({
 describe("streamPlan", () => {
   let tmpRoot: string;
   let savedPath: string;
+  let savedProvider: string | undefined;
 
   beforeEach(() => {
     savedPath = process.env["PATH"] ?? "";
+    savedProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
     tmpRoot = join(
       tmpdir(),
       `executant-streamplan-${process.pid}-${Date.now()}`,
@@ -862,6 +865,8 @@ describe("streamPlan", () => {
 
   afterEach(() => {
     process.env["PATH"] = savedPath;
+    if (savedProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = savedProvider;
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
