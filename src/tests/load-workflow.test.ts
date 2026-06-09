@@ -595,12 +595,12 @@ steps:
 goal: test
 steps:
   - name: implement
-    model: opencode-go/kimi-k2.6
+    model: llama-qwen7b/qwen2.5-coder-7b
     prompt: Do the work
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ClaudeTask;
-    assert.equal(task.model, "opencode-go/kimi-k2.6");
+    assert.equal(task.model, "llama-qwen7b/qwen2.5-coder-7b");
   });
 
   test("agent field is passed through to ClaudeTask", () => {
@@ -609,14 +609,14 @@ goal: test
 steps:
   - name: implement
     provider: opencode
-    model: opencode-go/kimi-k2.6
+    model: llama-qwen7b/qwen2.5-coder-7b
     agent: build
     prompt: Do the work
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ClaudeTask;
     assert.equal(task.provider, "opencode");
-    assert.equal(task.model, "opencode-go/kimi-k2.6");
+    assert.equal(task.model, "llama-qwen7b/qwen2.5-coder-7b");
     assert.equal(task.agent, "build");
   });
 

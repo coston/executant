@@ -13,8 +13,6 @@ import type { ClaudeTask, Event } from "../types.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
 import { extractJsonObject, getErrorMessage, stripAnsi } from "../lib/utils.js";
 
-const DEFAULT_TOOLS = ["Read", "Edit", "Write", "Bash", "Glob", "Grep"];
-
 /**
  * Resolves the absolute path to the opencode binary.
  * Throws with install instructions if not found.
@@ -28,6 +26,45 @@ export function resolveOpenCodePath(): string {
         "  npm install -g opencode-ai  OR  see https://opencode.ai/docs/cli",
     );
   }
+}
+
+const OPENCODE_ALL_TOOLS = [
+  "bash",
+  "read",
+  "edit",
+  "write",
+  "glob",
+  "grep",
+  "webfetch",
+  "websearch",
+  "task",
+  "skill",
+  "lsp",
+  "todowrite",
+  "question",
+  "external_directory",
+  "doom_loop",
+];
+
+/**
+ * Builds the OPENCODE_PERMISSION env var value from allowedTools:
+ *   undefined        → no env set (unrestricted, default behavior)
+ *   []               → deny all tools (text-only mode)
+ *   ['bash','read']  → deny every tool NOT in the list
+ *
+ * Tool names are matched case-insensitively so Claude names ('Bash', 'Read')
+ * and opencode names ('bash', 'read') both work.
+ */
+export function buildOpenCodePermissionEnv(
+  allowedTools: string[] | undefined,
+): string | undefined {
+  if (!allowedTools) return undefined;
+  const allowed = new Set(allowedTools.map((t) => t.toLowerCase()));
+  const denied = OPENCODE_ALL_TOOLS.filter((t) => !allowed.has(t));
+  if (denied.length === 0) return undefined;
+  return JSON.stringify(
+    denied.map((t) => ({ permission: t, action: "deny", pattern: "*" })),
+  );
 }
 
 /** Constructs the CLI args array for an OpenCode invocation. Exported for testing. */
@@ -66,9 +103,13 @@ export async function* runOpenCode(task: ClaudeTask): AsyncGenerator<Event> {
 
   let proc: ReturnType<typeof spawn>;
   try {
+    const permissionEnv = buildOpenCodePermissionEnv(task.allowedTools);
     proc = spawn(opencodeBin, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        ...(permissionEnv ? { OPENCODE_PERMISSION: permissionEnv } : {}),
+      },
     });
   } catch (err) {
     throw new Error(
@@ -179,8 +220,26 @@ export async function runOpenCodeStructured<T>(
     if (event.type === "output:text") lines.push(event.text);
   }
 
-  const raw = extractJsonObject(lines.join("\n").trim());
-  return schema.parse(JSON.parse(raw));
+  const combined = lines.join("\n").trim();
+  if (!combined) {
+    throw new Error(
+      `opencode returned no output for structured task "${task.name}". ` +
+        `Check the model and prompt.`,
+    );
+  }
+
+  const raw = extractJsonObject(combined);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      `opencode did not return a JSON object for task "${task.name}".\n` +
+        `Output was:\n${combined.slice(0, 500)}`,
+    );
+  }
+
+  return schema.parse(parsed);
 }
 
 // ----------------------------------------------------------------------------
@@ -231,6 +290,3 @@ function nestedObject(
   }
   return isObject(cur) ? cur : undefined;
 }
-
-// Re-export DEFAULT_TOOLS for tests that need to verify defaults.
-;

@@ -1,0 +1,79 @@
+name: code-generation-quality
+prompt: src/prompts/eval-code-generation.txt
+placeholders:
+  - CONTEXT
+  - TASK
+test_cases:
+  - id: async-queue
+    vars:
+      CONTEXT: |
+        export interface QueueItem<T> {
+          id: string;
+          payload: T;
+          enqueuedAt: number;
+        }
+
+        export interface AsyncQueue<T> {
+          enqueue(payload: T): QueueItem<T>;
+          dequeue(): QueueItem<T> | undefined;
+          peek(): QueueItem<T> | undefined;
+          size(): number;
+          clear(): void;
+        }
+      TASK: |
+        Implement AsyncQueue<T> as a class. Requirements:
+        1. enqueue() assigns a monotonically incrementing numeric id (as a string: "1", "2", …) and records enqueuedAt as Date.now().
+        2. dequeue() returns and removes the oldest item (FIFO). Returns undefined if empty.
+        3. peek() returns the oldest item without removing it. Returns undefined if empty.
+        4. size() returns the current count.
+        5. clear() removes all items.
+        6. The class must be generic — AsyncQueue<string> and AsyncQueue<number> must both be valid.
+        Export the class as the default export. Export nothing else.
+    criteria:
+      - "Response contains a TypeScript class definition with a generic type parameter <T>"
+      - "The enqueue method returns a QueueItem<T> with an id that is a numeric string and an enqueuedAt field set to a number (Date.now() or equivalent)"
+      - "The dequeue method removes and returns the oldest item — the implementation uses FIFO ordering (first-in, first-out), not LIFO"
+      - "No use of `any` type — all method signatures use the generic parameter T or concrete types from the interface"
+      - "The class is exported as the default export with no additional named exports"
+
+  - id: retry-with-backoff
+    vars:
+      CONTEXT: fixtures/eval-retry-context.ts
+      TASK: |
+        Implement a function:
+
+          export async function withRetry<T>(fn: AsyncFn<T>, opts: RetryOptions): Promise<T>
+
+        Requirements:
+        1. Call fn(). If it resolves, return the result immediately.
+        2. If it throws and maxAttempts > 1, wait initialDelayMs milliseconds, then retry.
+        3. Each subsequent wait multiplies the previous delay by backoffFactor (exponential backoff).
+        4. If shouldRetry is provided, only retry when shouldRetry(err) returns true — otherwise rethrow immediately.
+        5. After exhausting all attempts, rethrow the last error.
+        6. The function must be generic — T is inferred from fn's return type.
+        Named export only — no default export.
+    criteria:
+      - "Response exports `withRetry` as a named export (not a default export)"
+      - "The implementation calls fn() inside a try-catch and re-calls it on failure — not calling fn once and branching on a result"
+      - "Exponential backoff is implemented: each retry delay multiplies by backoffFactor (e.g. delay = initialDelayMs * backoffFactor^attempt or equivalent)"
+      - "The shouldRetry predicate is respected — when it returns false the error is rethrown immediately without further retries"
+      - "The generic type parameter T is preserved end-to-end — the return type is Promise<T> (explicit or inferrable)"
+
+  - id: typed-event-emitter
+    vars:
+      CONTEXT: fixtures/eval-emitter-context.ts
+      TASK: |
+        Implement TypedEmitter<Events> as a class named EventEmitter.
+
+        Requirements:
+        1. on() registers a handler. Multiple handlers for the same event are all called.
+        2. off() unregisters a specific handler by reference. Does nothing if not registered.
+        3. emit() calls all registered handlers for the event with the payload synchronously, in registration order.
+        4. once() registers a handler that fires at most once, then auto-removes itself.
+        5. Export the class as a named export: export class EventEmitter<Events extends EventMap>
+    criteria:
+      - "Response exports `EventEmitter` as a named class export (not a default export)"
+      - "The once() method auto-removes the handler after the first call — the implementation does not require the caller to call off() manually"
+      - "The off() method performs reference equality comparison to find and remove the correct handler"
+      - "The class uses a Map or equivalent per-event data structure — not a flat array of {event, handler} pairs"
+      - "All four method signatures preserve the type constraint K extends keyof Events so the payload type is derived from the event key"

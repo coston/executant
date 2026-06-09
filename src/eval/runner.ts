@@ -40,7 +40,10 @@ export async function runPrompt(
     name: `eval:${basename(templatePath, ".txt")}`,
     prompt,
     allowedTools: [],
-    permissionMode: "default",
+    // OpenCode: bypass permissions so tool-call permission prompts don't block
+    // headless eval runs indefinitely. Timeout as a secondary safety net.
+    permissionMode: isOpenCode ? "bypassPermissions" : "default",
+    timeoutSeconds: isOpenCode ? 1200 : undefined,
     provider,
     ...(model?.model ? { model: model.model } : {}),
     // METHODOLOGY is injected via --append-system-prompt (Claude only).

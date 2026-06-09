@@ -5,7 +5,12 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { resolveAgentProvider } from "../tasks/agent.js";
+import { resolveAgentProvider, runAgentStructured } from "../tasks/agent.js";
+
+// Verify runAgentStructured is a public export (not just an internal helper).
+test("runAgentStructured is exported from the agent module", () => {
+  assert.equal(typeof runAgentStructured, "function");
+});
 
 // Snapshot the original env value so tests don't bleed.
 const ORIGINAL_PROVIDER = process.env["EXECUTANT_PROVIDER"];

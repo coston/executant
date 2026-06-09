@@ -67,7 +67,7 @@ export interface ClaudeTask extends BaseTask {
   jsonSchema?: Record<string, unknown>;
   /** Text appended to the system prompt via --append-system-prompt (Claude only). */
   appendSystemPrompt?: string;
-  /** Model override. For Claude: model name like "sonnet". For OpenCode: "provider/model" like "opencode-go/kimi-k2.6". */
+  /** Model override. For Claude: model name like "sonnet". For OpenCode: "provider/model" like "llama-qwen7b/qwen2.5-coder-7b". */
   model?: string;
   /** OpenCode --agent flag. Ignored by the Claude runner. */
   agent?: string;

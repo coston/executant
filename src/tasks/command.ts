@@ -1,7 +1,8 @@
 // ============================================================================
 // COMMAND RUNNER
 // ============================================================================
-// Runs a bash command via child_process.spawn and streams output as events.
+// Runs a command via `sh -c` and streams output as events.
+// Uses POSIX sh (not bash) so it works on macOS, Linux, and Alpine containers.
 // stdout and stderr are merged and emitted line-by-line as output:text events.
 // A non-zero exit code throws, which the workflow runner converts to step:error.
 
@@ -27,7 +28,7 @@ export class CommandError extends Error {
 export async function* runCommand(task: CommandTask): AsyncGenerator<Event> {
   yield { type: "log", level: "info", text: `$ ${task.command}` };
 
-  const proc = spawn("bash", ["-c", task.command], {
+  const proc = spawn("sh", ["-c", task.command], {
     stdio: ["ignore", "pipe", "pipe"],
   });
 

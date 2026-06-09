@@ -13,9 +13,13 @@ Built for personal use by Coston. Public for sharing the approach. Use at your o
 npm install -g executant
 ```
 
-Requires [Node.js](https://nodejs.org) and at least one coding-agent CLI:
-- [Claude Code CLI](https://claude.ai/code) (default)
-- [OpenCode CLI](https://opencode.ai/docs/cli) (optional alternative)
+**Requirements:**
+- [Node.js](https://nodejs.org) 18+
+- At least one coding-agent CLI on `PATH`:
+  - [Claude Code](https://claude.ai/code) — `npm install -g @anthropic-ai/claude-code` (default)
+  - [OpenCode](https://opencode.ai/docs/cli) — `npm install -g opencode-ai` (local/alternative models)
+
+That's it. Executant has no other system dependencies. It runs on macOS and Linux, including inside Docker containers.
 
 ## Quick Start
 
@@ -136,7 +140,7 @@ Executant supports multiple coding-agent CLI backends. Claude is the default; Op
 ```bash
 # Use OpenCode for all prompt steps
 export EXECUTANT_PROVIDER=opencode
-export EXECUTANT_MODEL=opencode-go/kimi-k2.6
+export EXECUTANT_MODEL=llama-qwen7b/qwen2.5-coder-7b
 export EXECUTANT_AGENT=build
 
 executant workflow.yaml
@@ -150,7 +154,7 @@ goal: "Review and implement changes"
 steps:
   - name: implement
     provider: opencode
-    model: opencode-go/kimi-k2.6
+    model: llama-qwen7b/qwen2.5-coder-7b
     agent: build
     prompt: |
       Implement the requested change and run tests.
@@ -167,7 +171,7 @@ steps:
 | Variable | Description | Default |
 |---|---|---|
 | `EXECUTANT_PROVIDER` | Agent backend: `claude` or `opencode` | `claude` |
-| `EXECUTANT_MODEL` | Model name. Claude: `sonnet`/`opus`. OpenCode: `opencode-go/kimi-k2.6` etc. | per-provider default |
+| `EXECUTANT_MODEL` | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc. | per-provider default |
 | `EXECUTANT_AGENT` | OpenCode `--agent` name (ignored by Claude) | — |
 
 Step-level `provider`, `model`, and `agent` fields take priority over env vars.
@@ -273,16 +277,40 @@ Run the same eval against multiple providers and export the results for analysis
 ```bash
 # Compare Claude vs OpenCode on a single eval
 npm run eval -- \
-  --models claude/sonnet,opencode/opencode-go/kimi-k2.6 \
+  --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
   --output-json results/comparison.json \
   --output-csv results/comparison.csv \
   evals/judge-evaluation.eval.yaml
 
-# Run all evals and produce a white-paper CSV
+# Run all evals and write per-eval CSVs
 npm run eval -- \
-  --models claude/sonnet,opencode/opencode-go/kimi-k2.6 \
+  --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
   --output-csv results/full-comparison.csv \
   evals/plan-decompose.eval.yaml
 ```
 
 The `--output-csv` file is denormalized (one row per criterion judgment per model) — ready for pivot tables and charts. See `docs/eval-comparison.md` for column definitions and interpretation guidance.
+
+### Workflow evals (end-to-end agentic testing)
+
+Workflow evals test models on complete coding tasks — the full development lifecycle — rather than just prompt quality. Each task runs in an isolated git worktree:
+
+```
+explore → plan → implement → npm test → commit
+```
+
+After the model finishes, Claude (always Claude, never the model being tested) reviews the git diff and judges it against the task criteria.
+
+```bash
+# Test a single task with Claude Sonnet
+npm run eval:workflow -- --models claude/sonnet \
+  evals/workflow/add-workflow-description.yaml
+
+# Compare Claude vs a local model
+npm run eval:workflow -- \
+  --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
+  --output-csv results/workflow-comparison.csv \
+  evals/workflow/add-step-tag.yaml
+```
+
+Tasks live in `evals/workflow/` and are valid executant workflow YAMLs with an extra `eval_criteria` field the harness reads for post-run judging.

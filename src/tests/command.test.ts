@@ -1,7 +1,7 @@
 // ============================================================================
 // COMMAND RUNNER TESTS
 // ============================================================================
-// Tests for runCommand from src/tasks/command.ts using real bash subprocesses.
+// Tests for runCommand from src/tasks/command.ts using real sh subprocesses.
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";

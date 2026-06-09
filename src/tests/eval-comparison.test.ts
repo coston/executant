@@ -10,7 +10,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseModelTarget, parseArgs } from "../eval/index.js";
+import {
+  parseModelTarget,
+  parseArgs,
+  loadExistingResults,
+} from "../eval/index.js";
 import { toJson, toCsv, modelLabel } from "../eval/export.js";
 import type {
   EvalComparison,
@@ -29,16 +33,16 @@ describe("parseModelTarget", () => {
     assert.equal(t.model, "sonnet");
   });
 
-  test("parses opencode with nested slash in model name", () => {
-    const t = parseModelTarget("opencode/opencode-go/kimi-k2.6");
+  test("parses opencode with nested slash in model name (llama.cpp)", () => {
+    const t = parseModelTarget("opencode/llama-qwen7b/qwen2.5-coder-7b");
     assert.equal(t.provider, "opencode");
-    assert.equal(t.model, "opencode-go/kimi-k2.6");
+    assert.equal(t.model, "llama-qwen7b/qwen2.5-coder-7b");
   });
 
-  test("parses opencode/deepseek correctly", () => {
-    const t = parseModelTarget("opencode/opencode-go/deepseek-v4");
+  test("parses opencode with deeper nested model name", () => {
+    const t = parseModelTarget("opencode/llama-qwen14b/qwen2.5-coder-14b");
     assert.equal(t.provider, "opencode");
-    assert.equal(t.model, "opencode-go/deepseek-v4");
+    assert.equal(t.model, "llama-qwen14b/qwen2.5-coder-14b");
   });
 
   test("throws when no slash present", () => {
@@ -84,13 +88,13 @@ describe("parseArgs — models / output flags", () => {
   test("--models parses comma-separated list", () => {
     const args = parseArgs([
       "--models",
-      "claude/sonnet,opencode/opencode-go/kimi-k2.6",
+      "claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b",
       "evals/test.yaml",
     ]);
     assert.equal(args.models.length, 2);
     assert.equal(args.models[0]!.provider, "claude");
     assert.equal(args.models[1]!.provider, "opencode");
-    assert.equal(args.models[1]!.model, "opencode-go/kimi-k2.6");
+    assert.equal(args.models[1]!.model, "llama-qwen7b/qwen2.5-coder-7b");
   });
 
   test("--output-json is parsed", () => {
@@ -161,9 +165,9 @@ describe("modelLabel", () => {
   test("handles nested model name", () => {
     const m: ModelTarget = {
       provider: "opencode",
-      model: "opencode-go/kimi-k2.6",
+      model: "llama-qwen7b/qwen2.5-coder-7b",
     };
-    assert.equal(modelLabel(m), "opencode/opencode-go/kimi-k2.6");
+    assert.equal(modelLabel(m), "opencode/llama-qwen7b/qwen2.5-coder-7b");
   });
 });
 
@@ -175,7 +179,7 @@ function makeComparison(): EvalComparison {
   const claudeModel: ModelTarget = { provider: "claude", model: "sonnet" };
   const ocModel: ModelTarget = {
     provider: "opencode",
-    model: "opencode-go/kimi-k2.6",
+    model: "llama-qwen7b/qwen2.5-coder-7b",
   };
 
   const claudeRun: ModelEvalRun = {
@@ -196,6 +200,7 @@ function makeComparison(): EvalComparison {
         ],
         passCount: 1,
         failCount: 1,
+        durationMs: 1200,
       },
       {
         caseId: "case-b",
@@ -205,6 +210,7 @@ function makeComparison(): EvalComparison {
         ],
         passCount: 1,
         failCount: 0,
+        durationMs: 800,
       },
     ],
     totalPass: 2,
@@ -225,6 +231,7 @@ function makeComparison(): EvalComparison {
         ],
         passCount: 2,
         failCount: 0,
+        durationMs: 4500,
       },
       {
         caseId: "case-b",
@@ -234,6 +241,7 @@ function makeComparison(): EvalComparison {
         ],
         passCount: 1,
         failCount: 0,
+        durationMs: 3200,
       },
     ],
     totalPass: 3,
@@ -250,14 +258,22 @@ function makeComparison(): EvalComparison {
         caseId: "case-a",
         scores: {
           "claude/sonnet": { pass: 1, total: 2, pct: 0.5 },
-          "opencode/opencode-go/kimi-k2.6": { pass: 2, total: 2, pct: 1 },
+          "opencode/llama-qwen7b/qwen2.5-coder-7b": {
+            pass: 2,
+            total: 2,
+            pct: 1,
+          },
         },
       },
       {
         caseId: "case-b",
         scores: {
           "claude/sonnet": { pass: 1, total: 1, pct: 1 },
-          "opencode/opencode-go/kimi-k2.6": { pass: 1, total: 1, pct: 1 },
+          "opencode/llama-qwen7b/qwen2.5-coder-7b": {
+            pass: 1,
+            total: 1,
+            pct: 1,
+          },
         },
       },
     ],
@@ -306,7 +322,7 @@ describe("toCsv", () => {
     const lines = csv.trim().split("\n");
     assert.equal(
       lines[0],
-      "eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason",
+      "eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason,duration_ms",
     );
   });
 
@@ -322,7 +338,7 @@ describe("toCsv", () => {
     const c = makeComparison();
     const csv = toCsv(c);
     assert.ok(csv.includes("claude/sonnet"));
-    assert.ok(csv.includes("opencode/opencode-go/kimi-k2.6"));
+    assert.ok(csv.includes("opencode/llama-qwen7b/qwen2.5-coder-7b"));
   });
 
   test("pass column contains true/false values", () => {
@@ -338,5 +354,79 @@ describe("toCsv", () => {
     c.runs[0]!.results[0]!.criteria[1]!.reason = 'failed, "badly"';
     const csv = toCsv(c);
     assert.ok(csv.includes('"failed, ""badly"""'));
+  });
+});
+
+// ----------------------------------------------------------------------------
+// loadExistingResults
+// ----------------------------------------------------------------------------
+
+describe("loadExistingResults", () => {
+  test("returns empty map when file does not exist", () => {
+    const result = loadExistingResults("/nonexistent/path.csv");
+    assert.equal(result.size, 0);
+  });
+
+  test("round-trips toCsv output back into TestResult objects", async () => {
+    const c = makeComparison();
+    const csv = toCsv(c);
+
+    // Write to a temp file
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const tmpPath = `/tmp/eval-resume-test-${Date.now()}.csv`;
+    writeFileSync(tmpPath, csv, "utf8");
+
+    try {
+      const byModel = loadExistingResults(tmpPath);
+
+      // Should have 2 models
+      assert.equal(byModel.size, 2);
+
+      // Check claude/sonnet case-a
+      const claudeResults = byModel.get("claude/sonnet");
+      assert.ok(claudeResults, "claude/sonnet should be present");
+      const caseA = claudeResults.get("case-a");
+      assert.ok(caseA, "case-a should be present");
+      assert.equal(caseA.caseId, "case-a");
+      assert.equal(caseA.criteria.length, 2);
+      assert.equal(caseA.passCount, 1);
+      assert.equal(caseA.failCount, 1);
+      assert.equal(caseA.durationMs, 1200);
+
+      // Check opencode model case-b
+      const ocResults = byModel.get("opencode/llama-qwen7b/qwen2.5-coder-7b");
+      assert.ok(ocResults, "opencode model should be present");
+      const caseB = ocResults.get("case-b");
+      assert.ok(caseB);
+      assert.equal(caseB.passCount, 1);
+      assert.equal(caseB.durationMs, 3200);
+    } finally {
+      unlinkSync(tmpPath);
+    }
+  });
+
+  test("correctly parses pass=true and pass=false", async () => {
+    const csv =
+      [
+        "eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason,duration_ms",
+        '"e","t","case-1","criterion A","m/x","m","x",true,"ok",500',
+        '"e","t","case-1","criterion B","m/x","m","x",false,"nope",500',
+      ].join("\n") + "\n";
+
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const tmpPath = `/tmp/eval-resume-test2-${Date.now()}.csv`;
+    writeFileSync(tmpPath, csv, "utf8");
+
+    try {
+      const byModel = loadExistingResults(tmpPath);
+      const result = byModel.get("m/x")?.get("case-1");
+      assert.ok(result);
+      assert.equal(result.passCount, 1);
+      assert.equal(result.failCount, 1);
+      assert.equal(result.criteria[0]!.pass, true);
+      assert.equal(result.criteria[1]!.pass, false);
+    } finally {
+      unlinkSync(tmpPath);
+    }
   });
 });

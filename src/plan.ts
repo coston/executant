@@ -23,6 +23,7 @@ import {
   getErrorMessage,
   fillTemplate,
   formatZodIssues,
+  extractJsonObject,
 } from "./lib/utils.js";
 import { RawStepSchema as StepSchema } from "./load-workflow.js";
 import type { PlanEvent } from "./ui/PlanApp.js";
@@ -443,6 +444,16 @@ export async function* runRetryLoop(
         EXCERPT: textLines.join("\n"),
       });
       continue;
+    }
+
+    // Non-Claude providers (e.g. OpenCode) don't emit output:structured events.
+    // Fall back to extracting JSON from the collected text output.
+    if (structuredOutput === undefined && textLines.length > 0) {
+      try {
+        structuredOutput = JSON.parse(extractJsonObject(textLines.join("\n")));
+      } catch {
+        // fall through — let the undefined check below handle the retry
+      }
     }
 
     if (structuredOutput === undefined) {

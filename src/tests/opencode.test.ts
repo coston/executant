@@ -15,11 +15,14 @@ import { join } from "node:path";
 
 import {
   buildOpenCodeArgs,
+  buildOpenCodePermissionEnv,
   resolveOpenCodePath,
   runOpenCode,
+  runOpenCodeStructured,
   isObject,
 } from "../tasks/opencode.js";
 import type { ClaudeTask } from "../types.js";
+import { z } from "zod";
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -100,29 +103,29 @@ describe("buildOpenCodeArgs", () => {
 
   test("includes --model from task.model", () => {
     const args = buildOpenCodeArgs(
-      baseTask({ model: "opencode-go/kimi-k2.6" }),
+      baseTask({ model: "llama-qwen7b/qwen2.5-coder-7b" }),
     );
     const idx = args.indexOf("--model");
     assert.ok(idx !== -1);
-    assert.equal(args[idx + 1], "opencode-go/kimi-k2.6");
+    assert.equal(args[idx + 1], "llama-qwen7b/qwen2.5-coder-7b");
   });
 
   test("includes --model from EXECUTANT_MODEL env when task has no model", () => {
-    process.env["EXECUTANT_MODEL"] = "opencode-go/deepseek-v4";
+    process.env["EXECUTANT_MODEL"] = "llama-llama8b/llama-3.1-8b";
     const args = buildOpenCodeArgs(baseTask());
     const idx = args.indexOf("--model");
     assert.ok(idx !== -1);
-    assert.equal(args[idx + 1], "opencode-go/deepseek-v4");
+    assert.equal(args[idx + 1], "llama-llama8b/llama-3.1-8b");
   });
 
   test("task.model takes priority over EXECUTANT_MODEL env", () => {
-    process.env["EXECUTANT_MODEL"] = "opencode-go/deepseek-v4";
+    process.env["EXECUTANT_MODEL"] = "llama-llama8b/llama-3.1-8b";
     const args = buildOpenCodeArgs(
-      baseTask({ model: "opencode-go/kimi-k2.6" }),
+      baseTask({ model: "llama-qwen7b/qwen2.5-coder-7b" }),
     );
     const idx = args.indexOf("--model");
     assert.ok(idx !== -1);
-    assert.equal(args[idx + 1], "opencode-go/kimi-k2.6");
+    assert.equal(args[idx + 1], "llama-qwen7b/qwen2.5-coder-7b");
   });
 
   test("omits --model when neither task.model nor EXECUTANT_MODEL is set", () => {
@@ -310,6 +313,88 @@ exit 0`,
 });
 
 // ----------------------------------------------------------------------------
+// runOpenCodeStructured
+// ----------------------------------------------------------------------------
+
+describe("runOpenCodeStructured", () => {
+  const schema = z.object({ answer: z.string() });
+
+  test("returns parsed object when model outputs valid JSON", async () => {
+    // Use \\" so the bash script contains \" (literal backslash+quote in single-quoted string)
+    // which JSON.parse will decode to " inside the part.text string value.
+    const { restorePath } = installMockOpenCode(
+      `echo '{"type":"text","part":{"text":"{\\"answer\\":\\"hello\\"}"}}'\nexit 0`,
+    );
+    try {
+      const result = await runOpenCodeStructured(baseTask(), schema);
+      assert.equal(result.answer, "hello");
+    } finally {
+      restorePath();
+    }
+  });
+
+  test("throws descriptive error when model produces no output", async () => {
+    const { restorePath } = installMockOpenCode("exit 0");
+    try {
+      await assert.rejects(
+        () => runOpenCodeStructured(baseTask(), schema),
+        (err) => {
+          assert.ok(err instanceof Error);
+          assert.ok(
+            err.message.includes("no output"),
+            `unexpected message: ${err.message}`,
+          );
+          return true;
+        },
+      );
+    } finally {
+      restorePath();
+    }
+  });
+
+  test("throws descriptive error when output is plain text with no JSON", async () => {
+    const { restorePath } = installMockOpenCode(
+      `echo '{"type":"text","part":{"text":"rate limit exceeded"}}'
+exit 0`,
+    );
+    try {
+      await assert.rejects(
+        () => runOpenCodeStructured(baseTask(), schema),
+        (err) => {
+          assert.ok(err instanceof Error);
+          assert.ok(
+            err.message.includes("did not return a JSON object") ||
+              err.message.toLowerCase().includes("json"),
+            `unexpected message: ${err.message}`,
+          );
+          return true;
+        },
+      );
+    } finally {
+      restorePath();
+    }
+  });
+
+  test("throws when schema validation fails", async () => {
+    const { restorePath } = installMockOpenCode(
+      `echo '{"type":"text","part":{"text":"{\"wrong_field\":42}"}}'
+exit 0`,
+    );
+    try {
+      await assert.rejects(
+        () => runOpenCodeStructured(baseTask(), schema),
+        (err) => {
+          assert.ok(err instanceof Error);
+          return true;
+        },
+      );
+    } finally {
+      restorePath();
+    }
+  });
+});
+
+// ----------------------------------------------------------------------------
 // isObject
 // ----------------------------------------------------------------------------
 
@@ -330,5 +415,76 @@ describe("isObject", () => {
     assert.ok(!isObject("string"));
     assert.ok(!isObject(42));
     assert.ok(!isObject(true));
+  });
+});
+
+describe("buildOpenCodePermissionEnv", () => {
+  test("returns undefined when allowedTools is undefined (unrestricted)", () => {
+    assert.equal(buildOpenCodePermissionEnv(undefined), undefined);
+  });
+
+  test("returns deny-all JSON when allowedTools is empty (text-only mode)", () => {
+    const result = buildOpenCodePermissionEnv([]);
+    assert.ok(result);
+    const rules = JSON.parse(result!);
+    assert.ok(Array.isArray(rules));
+    assert.ok(rules.every((r: { action: string }) => r.action === "deny"));
+    assert.ok(
+      rules.some((r: { permission: string }) => r.permission === "bash"),
+    );
+    assert.ok(
+      rules.some((r: { permission: string }) => r.permission === "read"),
+    );
+    assert.ok(
+      rules.some((r: { permission: string }) => r.permission === "webfetch"),
+    );
+  });
+
+  test("denies only tools not in the allowed list", () => {
+    const result = buildOpenCodePermissionEnv(["bash", "read"]);
+    assert.ok(result);
+    const rules = JSON.parse(result!) as {
+      permission: string;
+      action: string;
+    }[];
+    const denied = new Set(rules.map((r) => r.permission));
+    assert.ok(!denied.has("bash"), "bash should not be denied");
+    assert.ok(!denied.has("read"), "read should not be denied");
+    assert.ok(denied.has("edit"), "edit should be denied");
+    assert.ok(denied.has("webfetch"), "webfetch should be denied");
+  });
+
+  test("is case-insensitive — Claude-style names ('Bash', 'Read') work", () => {
+    const result = buildOpenCodePermissionEnv(["Bash", "Read"]);
+    assert.ok(result);
+    const rules = JSON.parse(result!) as {
+      permission: string;
+      action: string;
+    }[];
+    const denied = new Set(rules.map((r) => r.permission));
+    assert.ok(!denied.has("bash"));
+    assert.ok(!denied.has("read"));
+    assert.ok(denied.has("edit"));
+  });
+
+  test("returns undefined when all tools are explicitly allowed", () => {
+    const allTools = [
+      "bash",
+      "read",
+      "edit",
+      "write",
+      "glob",
+      "grep",
+      "webfetch",
+      "websearch",
+      "task",
+      "skill",
+      "lsp",
+      "todowrite",
+      "question",
+      "external_directory",
+      "doom_loop",
+    ];
+    assert.equal(buildOpenCodePermissionEnv(allTools), undefined);
   });
 });

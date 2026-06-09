@@ -1,0 +1,83 @@
+# Workflow eval task — medium scope (touches CLI + runner, ~4 files)
+# eval_criteria is read by the eval harness; ignored by executant when run standalone.
+eval_criteria:
+  - "src/index.ts parses a --list flag from CLI arguments"
+  - "When --list is set, executant prints each step name to stdout and exits 0 without running steps"
+  - "The output format is one step name per line (no extra decoration required)"
+  - "forEach steps are listed with their parent name (not expanded per item)"
+  - "At least one test covers the --list flag behavior"
+  - "No changes to the runner.ts execution path — listing is purely a CLI concern"
+
+goal: "Add a --list flag that prints step names without executing"
+
+vars:
+  research_doc: .eval/research.md
+  plan_doc: .eval/plan.md
+
+steps:
+  - name: explore
+    prompt: |
+      Research the executant codebase to understand how to add a --list CLI flag.
+      The flag should print each step name to stdout without executing anything.
+
+      Explore these files and note exact line numbers:
+      1. src/index.ts — find where CLI flags are parsed (the rawArgs loop), how the
+         workflow is loaded, and where runWorkflow is called
+      2. src/load-workflow.ts — understand what Workflow looks like after loading
+         (Workflow.tasks array, Task types including ForEachTask)
+      3. src/types.ts — find the Task union type and ForEachTask interface
+      4. src/tests/ — find how CLI integration tests are done (if any); also look at
+         runner.test.ts or index.test.ts for testing patterns
+
+      Run: grep -n "ciMode\|stepFilter\|rawArgs\|positional" src/index.ts
+      to understand the existing arg parsing pattern.
+
+      Write complete findings to {{research_doc}} including:
+      - The exact location in src/index.ts where to add the --list arg
+      - How to access step names from a loaded Workflow (task.name, task.type)
+      - The right place to print and exit (before runWorkflow is called)
+      - Which test file and pattern to use for testing
+
+  - name: plan
+    context: [research_doc]
+    prompt: |
+      Based on the research above, write a precise plan for adding --list flag.
+
+      The flag prints step names, one per line, without executing. ForEachTask steps
+      should be listed by their parent name (not expanded per item). Then exits 0.
+
+      Write to {{plan_doc}}:
+      1. Exactly where in src/index.ts to add the flag (line number context)
+      2. The logic: after loading the workflow, if listMode, iterate workflow.tasks and
+         print each task.name, then process.exit(0)
+      3. Test file and test cases to add (what inputs, what expected stdout/exit code)
+
+  - name: implement
+    context: [research_doc, plan_doc]
+    prompt: |
+      Implement the --list flag.
+
+      In src/index.ts:
+      - Add `let listMode = false;` alongside other flag variables
+      - In the rawArgs loop, handle `"--list"` to set listMode = true
+      - After the workflow is loaded (after the loadWorkflow call), add:
+        if (listMode) { for (const t of workflow.tasks) console.log(t.name); process.exit(0); }
+      - Add --list to the help text
+
+      Add tests that:
+      1. Load a workflow and call the listing logic (verify names printed to stdout)
+      2. Verify non-list mode is unaffected
+
+      Keep implementation minimal — no changes to runner.ts needed.
+
+  - name: test
+    type: script
+    command: npm test
+    self_healing: true
+
+  - name: commit
+    type: script
+    command: |
+      git add -A
+      git commit -m "feat: add --list flag to print step names without executing"
+    continue_on_error: true

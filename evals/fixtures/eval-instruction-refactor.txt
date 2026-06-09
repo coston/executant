@@ -1,0 +1,35 @@
+Refactor the following TypeScript module. Apply ALL constraints below — each one is mandatory.
+
+MODULE TO REFACTOR:
+
+// Legacy user service
+export function getUser(id: any) {
+  const users: any = {
+    '1': { name: 'Alice', email: 'alice@example.com', role: 'admin' },
+    '2': { name: 'Bob', email: 'bob@example.com', role: 'user' },
+  };
+  if (users[id]) {
+    return users[id];
+  } else {
+    return null;
+  }
+}
+
+export function updateUser(id: any, data: any) {
+  console.log('updating user', id, data);
+  // TODO: implement
+  return true;
+}
+
+export function deleteUser(id: any) {
+  console.log('deleting', id);
+}
+
+CONSTRAINTS (all are mandatory — violating any one is a failure):
+1. Introduce a `User` interface with fields: `id: string`, `name: string`, `email: string`, `role: 'admin' | 'user'`
+2. `getUser` must accept `id: string` and return `User | null`
+3. `updateUser` must accept `id: string` and `data: Partial<Omit<User, 'id'>>` and return `User | null`
+4. `deleteUser` must have an explicit `void` return type annotation
+5. Remove all `console.log` calls — replace with nothing or a no-op
+6. Keep all three exported function names exactly as they are: `getUser`, `updateUser`, `deleteUser`
+7. Output only the refactored TypeScript source — no explanations, no markdown code fences

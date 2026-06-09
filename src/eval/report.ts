@@ -104,7 +104,7 @@ export function printDiff(original: string, refined: string): void {
  * Example output:
  *   judge-evaluation — 2 models compared
  *
- *                       claude/sonnet   opencode/kimi-k2.6
+ *                       claude/sonnet   opencode/llama-qwen7b/qwen2.5-coder-7b
  *     clear-pass            3/3  100%        3/3  100%
  *     clear-fail            2/3   67%        3/3  100%
  *     ──────────────────────────────────────────────────

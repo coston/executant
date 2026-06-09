@@ -39,7 +39,7 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 
 **`src/tasks/claude.ts`** — Spawns the Claude CLI as a child process and streams its NDJSON output as `Event`s. Handles tool call parsing, cost events, and structured output (`output:structured`). `runClaude(task: ClaudeTask)` is the low-level generator. `runClaudeStructured<T>(task, schema)` is a typed wrapper that passes a Zod schema as `--json-schema` and validates the result. Exports `METHODOLOGY` (the development loop loaded from `src/prompts/development-methodology.txt`) and `buildClaudeArgs(task, interactive?)` (pure function constructing the CLI args array, exported for testing). `ClaudeTask` carries runtime fields not present in YAML: `provider` (optional — routes through `agent.ts` dispatch), `permissionMode`, `jsonSchema`, `appendSystemPrompt`, `model`, and `agent` (OpenCode `--agent` flag).
 
-**`src/tasks/opencode.ts`** — Spawns the OpenCode CLI (`opencode run --format json`) and streams its JSON events as `Event`s. `buildOpenCodeArgs(task)` constructs the args array (model from `task.model` then `EXECUTANT_MODEL` env; agent from `task.agent` then `EXECUTANT_AGENT` env; `--dangerously-skip-permissions` for `bypassPermissions` mode). `parseOpenCodeMessage(msg)` normalises OpenCode's event types (`text`, `tool_use`, `error`) to Executant's `output:text` and `output:tool` events. `runOpenCodeStructured` appends a JSON-only instruction to the prompt and parses the response via `extractJsonObject`.
+**`src/tasks/opencode.ts`** — Spawns the OpenCode CLI (`opencode run --format json`) and streams its JSON events as `Event`s. `buildOpenCodeArgs(task)` constructs the args array (model from `task.model` then `EXECUTANT_MODEL` env; agent from `task.agent` then `EXECUTANT_AGENT` env; `--dangerously-skip-permissions` for `bypassPermissions` mode). `buildOpenCodePermissionEnv(allowedTools)` translates the `allowed_tools` step field into the `OPENCODE_PERMISSION` env var: `undefined` → no env set (all tools allowed); `[]` → deny all tools (text-only mode); `["bash","read"]` → deny every tool not in the list. Tool names are matched case-insensitively so Claude-style names (`Bash`, `Read`) and opencode-style names (`bash`, `read`) both work. `parseOpenCodeMessage(msg)` normalises OpenCode's event types (`text`, `tool_use`, `error`) to Executant's `output:text` and `output:tool` events. `runOpenCodeStructured` appends a JSON-only instruction to the prompt and parses the response via `extractJsonObject`.
 
 **`src/tasks/command.ts`** — Spawns a bash subprocess and streams stdout/stderr as `output:text` events. Exports `CommandError`, a typed error class that carries `exitCode` and `command` fields. Supports per-step `timeoutSeconds` via the shared `startTimeout` helper from `stream.ts`.
 
@@ -133,11 +133,39 @@ The eval system tests and iteratively refines the prompt templates in `src/promp
 
 **`src/eval/report.ts`** — Terminal output: `printRun()` for single-model pass/fail table; `printComparison()` for multi-model side-by-side comparison table.
 
-**`src/eval/export.ts`** — `toJson(comparison)` and `toCsv(comparison)`: serialize `EvalComparison` for white-paper analysis. CSV is denormalized (one row per criterion judgment per model) with columns `eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason`.
+**`src/eval/export.ts`** — `toJson(comparison)` and `toCsv(comparison)`: serialize `EvalComparison` for benchmark analysis. CSV is denormalized (one row per criterion judgment per model) with columns `eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason, duration_ms`.
 
 **`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
 
 **`evals/`** — Eval YAML definitions and `fixtures/` subdirectory with reusable input documents. Covers `plan-decompose.txt`, `judge-evaluation.txt`, `self-healing-fix.txt`, and `plan-judge.txt`.
+
+**`evals/workflow/`** — End-to-end agentic eval tasks. Each YAML is a valid executant workflow (runs via `executant workflow.yaml`) with an extra `eval_criteria` top-level field (ignored by executant, read by the harness). Tasks cover real feature additions to the executant codebase at three difficulty levels. Run via `npm run eval:workflow`.
+
+## Workflow Eval System
+
+Tests end-to-end model capability on real coding tasks, not just prompt quality. Each task runs the full development lifecycle in an isolated git worktree.
+
+**Two-phase design:**
+
+```
+Phase 1 — Model execution (in git worktree):
+  explore → writes research.md to .eval/
+  plan    → reads research.md via context:, writes plan.md
+  implement → reads both via context:, edits src/
+  test    → npm test (self_healing: true)
+  commit  → git commit
+
+Phase 2 — Eval harness (always Claude as judge, never the model):
+  git diff HEAD -- src/ tests/
+  judgeAllCriteria(diff, eval_criteria)
+  → WorkflowComparison table
+```
+
+**`src/eval/workflow.ts`** — `runWorkflowEval(taskPath, models)`: creates an isolated git worktree per model (with a `node_modules` symlink), spawns executant `--ci` in the worktree with the model's env vars, then uses Claude to judge the resulting diff against `eval_criteria`.
+
+**`src/eval/workflow-report.ts`** — `printWorkflowComparison()`: per-model table showing tests pass/fail, judge score, diff stats, and duration. `toWorkflowCsv()` for export.
+
+**`src/eval/workflow-index.ts`** — CLI: `npm run eval:workflow -- --models claude/sonnet evals/workflow/add-workflow-description.yaml`
 
 ### Refinement loop
 
@@ -168,3 +196,13 @@ The interjection feature lets users send a correction to a running workflow by p
 
 - **LLM-as-judge** (`llm_as_judge: true`) — after a step completes, a separate Claude call evaluates output quality. On `FAIL`, the step retries with feedback appended, up to 5 times.
 - **Self-healing** (`self_healing: true`) — on script failure, error output is passed to Claude for diagnosis. Claude applies a fix and the command re-runs, up to 5 times.
+
+## Local Model Inference (Dev Tooling)
+
+These scripts are internal dev tooling for running multi-model eval comparisons. They are not part of the published package.
+
+**`src/lib/model-config.ts`** — Shared model registry: `MODELS_DIR` (`~/.executant/models/`), `PIDS_DIR` (`~/.executant/pids/`), and the `MODELS` array defining each model's name, key, file, port, download URL, and size. Imported by `native-models.ts`, `model-server.ts`, `setup.ts`, and the dependency tests.
+
+**`src/native-models.ts`** — Downloads GGUF model files to `~/.executant/models/` using native `curl`. Idempotent: present files are skipped. Run via `npm run models:download`.
+
+**`src/model-server.ts`** — Manages native `llama-server` processes (Apple Silicon Metal GPU). `start` spawns detached processes with `-ngl 999`, writes PIDs to `~/.executant/pids/`. `stop` kills by PID. `status` cross-references live PID with HTTP health check. Exports `isServerHealthy(port)`. The CLI entry point is guarded by an `isMain` check so the file is safe to import. Run via `npm run models:start|stop|status`.

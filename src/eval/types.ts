@@ -23,6 +23,7 @@ export interface TestResult {
   criteria: CriterionResult[];
   passCount: number;
   failCount: number;
+  durationMs: number;
 }
 
 export interface EvalRun {
@@ -77,5 +78,40 @@ export interface EvalArgs {
   /** File path to write comparison JSON to (optional). */
   outputJson?: string;
   /** File path to write comparison CSV to (optional). */
+  outputCsv?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow eval types (end-to-end agentic evaluation)
+// ---------------------------------------------------------------------------
+
+/** Per-criterion judgment result from a workflow eval run. */
+export interface WorkflowEvalResult {
+  model: ModelTarget;
+  /** Exit code from running the executant workflow (0 = success). */
+  workflowExitCode: number;
+  /** True when the workflow completed with exit code 0. */
+  testsPassed: boolean;
+  /** Claude's judgment of the git diff against each eval criterion. */
+  judgeResults: CriterionResult[];
+  /** Stats from `git diff --stat HEAD`. */
+  diffStats: { filesChanged: number; insertions: number; deletions: number };
+  /** Wall-clock time for the workflow run in milliseconds. */
+  durationMs: number;
+}
+
+/** Comparison of multiple models on a single workflow eval task. */
+export interface WorkflowComparison {
+  taskPath: string;
+  taskName: string;
+  taskGoal: string;
+  criteria: string[];
+  results: WorkflowEvalResult[];
+}
+
+/** Parsed CLI args for `npm run eval:workflow`. */
+export interface WorkflowEvalArgs {
+  taskFile: string;
+  models: ModelTarget[];
   outputCsv?: string;
 }

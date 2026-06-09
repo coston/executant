@@ -20,25 +20,31 @@ import {
 
 export const METHODOLOGY = loadPrompt("development-methodology");
 
-const DEFAULT_TOOLS = ["Read", "Edit", "Write", "Bash", "Glob", "Grep"];
-
 /** Constructs the CLI args array for a Claude invocation. Exported for testing. */
 export function buildClaudeArgs(
   task: ClaudeTask,
   interactive = false,
 ): string[] {
-  const allowedTools = task.allowedTools ?? DEFAULT_TOOLS;
   const permissionMode = task.permissionMode ?? "bypassPermissions";
   return [
     ...(interactive ? [] : ["--print", task.prompt]),
     "--output-format",
     "stream-json",
     "--verbose",
-    "--allowedTools",
-    allowedTools.join(","),
+    // allowedTools undefined → omit flag entirely (Claude defaults to all tools).
+    // allowedTools []       → "--allowedTools none" (no tools).
+    // allowedTools [...]    → restrict to the listed tools.
+    ...(task.allowedTools !== undefined
+      ? [
+          "--allowedTools",
+          task.allowedTools.length ? task.allowedTools.join(",") : "none",
+        ]
+      : []),
     "--permission-mode",
     permissionMode,
-    ...(task.model ? ["--model", task.model] : []),
+    ...((task.model ?? process.env["EXECUTANT_MODEL"])
+      ? ["--model", task.model ?? process.env["EXECUTANT_MODEL"]!]
+      : []),
     ...(task.appendSystemPrompt
       ? ["--append-system-prompt", task.appendSystemPrompt]
       : []),

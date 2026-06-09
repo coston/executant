@@ -31,8 +31,7 @@ import type {
   Workflow,
 } from "./types.js";
 import { CommandError, runCommand } from "./tasks/command.js";
-import { runClaude, runClaudeStructured } from "./tasks/claude.js";
-import { runAgent } from "./tasks/agent.js";
+import { runAgent, runAgentStructured } from "./tasks/agent.js";
 import {
   loadPrompt,
   getErrorMessage,
@@ -447,7 +446,7 @@ async function* runCommandWithHealing(
 
       const toolCalls: string[] = [];
       const claudeLines: string[] = [];
-      for await (const event of runClaude(healTask)) {
+      for await (const event of runAgent(healTask)) {
         if (event.type === "output:text") claudeLines.push(event.text);
         else if (event.type === "output:tool")
           toolCalls.push(formatToolCall(event.tool, event.input));
@@ -540,7 +539,7 @@ export async function evaluateWithJudge(
   stepInstructions: string,
   output: string,
 ): Promise<{ pass: boolean; feedback: string }> {
-  const result = await runClaudeStructured(
+  const result = await runAgentStructured(
     {
       type: "claude",
       name: `judge:${stepName}`,

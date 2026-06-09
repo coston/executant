@@ -207,6 +207,45 @@ steps:
 });
 
 // ----------------------------------------------------------------------------
+// runner: self-healing uses provider routing (not hardcoded runClaude)
+// ----------------------------------------------------------------------------
+
+describe("runWorkflow — self-healing provider routing", () => {
+  let originalProvider: string | undefined;
+
+  beforeEach(() => {
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+  });
+
+  afterEach(() => {
+    if (originalProvider === undefined)
+      delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
+  });
+
+  test("self-healing heal task goes through runAgent (respects EXECUTANT_PROVIDER)", async () => {
+    process.env["EXECUTANT_PROVIDER"] = "unsupported-provider-xyz";
+    const wf: Workflow = {
+      goal: "test",
+      tasks: [
+        {
+          type: "command",
+          name: "fail_once",
+          command: "exit 1",
+          selfHealing: true,
+          maxHealingAttempts: 2,
+        },
+      ],
+    };
+    const { error } = await collectEventsUntilError(wf);
+    assert.ok(
+      error?.message.includes("unsupported-provider-xyz"),
+      `Expected provider routing error, got: ${error?.message}`,
+    );
+  });
+});
+
+// ----------------------------------------------------------------------------
 // runner: self-healing retry loop with mock claude
 // ----------------------------------------------------------------------------
 

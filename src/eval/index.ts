@@ -6,13 +6,13 @@
 //   npm run eval -- evals/plan-decompose.eval.yaml
 //   npm run eval -- --refine evals/plan-decompose.eval.yaml
 //   npm run eval -- --refine --max-iter 3 evals/plan-decompose.eval.yaml
-//   npm run eval -- --models claude/sonnet,opencode/opencode-go/kimi-k2.6 evals/*.eval.yaml
-//   npm run eval -- --models claude/sonnet,opencode/opencode-go/kimi-k2.6 \
+//   npm run eval -- --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b evals/*.eval.yaml
+//   npm run eval -- --models claude/sonnet,opencode/llama-qwen7b/qwen2.5-coder-7b \
 //                   --output-json results/comparison.json \
 //                   --output-csv results/comparison.csv \
 //                   evals/plan-decompose.eval.yaml
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEvalFile } from "./load.js";
@@ -39,19 +39,103 @@ import type {
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// CSV resume helpers
+// ---------------------------------------------------------------------------
+
+/** Parses one CSV line produced by toCsv(), handling quoted fields and "" escapes. */
+function parseCSVLine(line: string): string[] {
+  const cells: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === '"') {
+      i++;
+      let cell = "";
+      while (i < line.length) {
+        if (line[i] === '"' && line[i + 1] === '"') {
+          cell += '"';
+          i += 2;
+        } else if (line[i] === '"') {
+          i++;
+          break;
+        } else cell += line[i++];
+      }
+      cells.push(cell);
+      if (line[i] === ",") i++;
+    } else {
+      const end = line.indexOf(",", i);
+      if (end === -1) {
+        cells.push(line.slice(i));
+        break;
+      }
+      cells.push(line.slice(i, end));
+      i = end + 1;
+    }
+  }
+  return cells;
+}
+
+/**
+ * Reads an existing output CSV and returns cached results keyed by
+ * modelLabel → caseId → TestResult. Used to skip already-complete cases.
+ */
+export function loadExistingResults(
+  csvPath: string,
+): Map<string, Map<string, TestResult>> {
+  const byModel = new Map<string, Map<string, TestResult>>();
+  if (!existsSync(csvPath)) return byModel;
+
+  const lines = readFileSync(csvPath, "utf8").trim().split("\n");
+  if (lines.length < 2) return byModel;
+
+  const header = parseCSVLine(lines[0]);
+  const col = Object.fromEntries(header.map((h, i) => [h, i]));
+
+  for (const line of lines.slice(1)) {
+    if (!line.trim()) continue;
+    const cells = parseCSVLine(line);
+    const label = cells[col["model_label"]] ?? "";
+    const caseId = cells[col["case_id"]] ?? "";
+    const criterion = cells[col["criterion"]] ?? "";
+    const pass = cells[col["pass"]] === "true";
+    const reason = cells[col["reason"]] ?? "";
+    const durationMs = parseInt(cells[col["duration_ms"]] ?? "0", 10);
+
+    if (!byModel.has(label)) byModel.set(label, new Map());
+    const byCase = byModel.get(label)!;
+
+    if (!byCase.has(caseId)) {
+      byCase.set(caseId, {
+        caseId,
+        output: "",
+        criteria: [],
+        passCount: 0,
+        failCount: 0,
+        durationMs,
+      });
+    }
+    const result = byCase.get(caseId)!;
+    result.criteria.push({ criterion, pass, reason });
+    if (pass) result.passCount++;
+    else result.failCount++;
+  }
+
+  return byModel;
+}
+
+// ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
 
 /**
  * Parses a "provider/model" string into a ModelTarget.
  * The first "/" segment is the provider; everything after is the model name
- * (model names like "opencode-go/kimi-k2.6" can contain slashes).
+ * (model names like "llama-qwen7b/qwen2.5-coder-7b" can contain slashes).
  */
 export function parseModelTarget(s: string): ModelTarget {
   const idx = s.indexOf("/");
   if (idx === -1) {
     throw new Error(
-      `Invalid model target "${s}": expected "provider/model" (e.g. "claude/sonnet" or "opencode/opencode-go/kimi-k2.6")`,
+      `Invalid model target "${s}": expected "provider/model" (e.g. "claude/sonnet" or "opencode/llama-qwen7b/qwen2.5-coder-7b")`,
     );
   }
   const provider = s.slice(0, idx);
@@ -124,17 +208,54 @@ async function runEval(
   evalFile: ReturnType<typeof loadEvalFile>,
   templatePath?: string,
   model?: ModelTarget,
+  cached?: Map<string, TestResult>,
 ): Promise<EvalRun> {
   const path = templatePath ?? evalFile.prompt;
   const results: TestResult[] = [];
 
   for (const tc of evalFile.testCases) {
+    const hit = cached?.get(tc.id);
+    if (hit) {
+      process.stdout.write(`  skipping ${tc.id} (cached)\n`);
+      results.push(hit);
+      continue;
+    }
     process.stdout.write(`  running ${tc.id}…`);
-    const output = await runPrompt(path, tc.vars, model);
+    const start = performance.now();
+    let output: string;
+    try {
+      output = await runPrompt(path, tc.vars, model);
+    } catch (err) {
+      const durationMs = Math.round(performance.now() - start);
+      const msg = `run error: ${err instanceof Error ? err.message : String(err)}`;
+      process.stdout.write(`eval error: ${msg}\n`);
+      const criteria = tc.criteria.map((c) => ({
+        criterion: c,
+        pass: false,
+        reason: msg,
+      }));
+      results.push({
+        caseId: tc.id,
+        output: "",
+        criteria,
+        passCount: 0,
+        failCount: criteria.length,
+        durationMs,
+      });
+      continue;
+    }
+    const durationMs = Math.round(performance.now() - start);
     const criteria = await judgeAllCriteria(output, tc.criteria);
     const passCount = criteria.filter((c) => c.pass).length;
     const failCount = criteria.length - passCount;
-    results.push({ caseId: tc.id, output, criteria, passCount, failCount });
+    results.push({
+      caseId: tc.id,
+      output,
+      criteria,
+      passCount,
+      failCount,
+      durationMs,
+    });
     process.stdout.write(` ${passCount}/${criteria.length}\n`);
   }
 
@@ -174,7 +295,17 @@ export function collectFailures(
 function buildComparisonTable(
   runs: ModelEvalRun[],
 ): EvalComparison["comparisonTable"] {
-  const caseIds = runs[0]?.results.map((r) => r.caseId) ?? [];
+  // Use the union of all case IDs so a partial run from one model doesn't drop rows.
+  const seen = new Set<string>();
+  const caseIds: string[] = [];
+  for (const run of runs) {
+    for (const r of run.results) {
+      if (!seen.has(r.caseId)) {
+        seen.add(r.caseId);
+        caseIds.push(r.caseId);
+      }
+    }
+  }
   return caseIds.map((caseId) => {
     const scores: EvalComparison["comparisonTable"][number]["scores"] = {};
     for (const run of runs) {
@@ -191,12 +322,14 @@ function buildComparisonTable(
 async function runMultiModelEval(
   evalFile: ReturnType<typeof loadEvalFile>,
   models: ModelTarget[],
+  existingCsv?: string,
 ): Promise<EvalComparison> {
+  const existing = existingCsv ? loadExistingResults(existingCsv) : new Map();
   const runs: ModelEvalRun[] = [];
   for (const model of models) {
     const label = modelLabel(model);
     console.log(`\n[${label}]`);
-    const run = await runEval(evalFile, undefined, model);
+    const run = await runEval(evalFile, undefined, model, existing.get(label));
     runs.push({ ...run, model });
     printRun(run);
   }
@@ -234,7 +367,16 @@ export async function main(): Promise<void> {
 
   // Multi-model comparison mode
   if (args.models.length > 1) {
-    const comparison = await runMultiModelEval(evalFile, args.models);
+    if (args.refine) {
+      console.warn(
+        "Warning: --refine is ignored when comparing multiple models. Run with a single model to refine.",
+      );
+    }
+    const comparison = await runMultiModelEval(
+      evalFile,
+      args.models,
+      args.outputCsv,
+    );
     printComparison(comparison);
 
     if (args.outputJson) writeOutputFile(args.outputJson, toJson(comparison));

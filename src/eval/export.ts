@@ -1,10 +1,10 @@
 // ============================================================================
 // EVAL EXPORT
 // ============================================================================
-// Serializes EvalComparison results to JSON and CSV for white-paper analysis.
+// Serializes EvalComparison results to JSON and CSV for benchmark analysis.
 //
 // CSV columns (one row per criterion judgment):
-//   eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason
+//   eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason, duration_ms
 
 import type { EvalComparison, ModelTarget } from "./types.js";
 
@@ -29,6 +29,7 @@ export function toCsv(comparison: EvalComparison): string {
     "model",
     "pass",
     "reason",
+    "duration_ms",
   ].join(",");
 
   const rows: string[] = [header];
@@ -48,6 +49,7 @@ export function toCsv(comparison: EvalComparison): string {
             csvCell(run.model.model),
             c.pass ? "true" : "false",
             csvCell(c.reason),
+            String(result.durationMs),
           ].join(","),
         );
       }

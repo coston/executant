@@ -1,0 +1,35 @@
+name: code-review-depth
+prompt: src/prompts/eval-code-review.txt
+placeholders:
+  - CONTEXT
+  - CODE
+test_cases:
+  - id: async-race-condition
+    vars:
+      CONTEXT: "Rate-limited API client that enforces a maximum of N concurrent requests"
+      CODE: fixtures/eval-review-race.ts
+    criteria:
+      - "Response identifies a concurrency or race condition bug — not just style issues"
+      - "Response specifically identifies the check-then-act gap: the while-loop check and the `activeRequests++` increment are not atomic, allowing multiple callers to pass the check simultaneously before any of them increments"
+      - "Response proposes a fix that closes the race — such as incrementing before the await, using a queue, or a mutex/semaphore pattern"
+      - "Response does not flag the `while` loop pattern itself as wrong without identifying the atomicity issue as the specific root cause"
+
+  - id: sql-injection-vector
+    vars:
+      CONTEXT: "Express route handler for searching users by name — used in an admin dashboard"
+      CODE: fixtures/eval-review-sqli.ts
+    criteria:
+      - "Response identifies the SQL injection vulnerability — user-supplied `name` from `req.query` is string-interpolated directly into the SQL query without parameterization"
+      - "Response notes that `req.query.name` is not validated to be a plain string before use (Express types it as `string | string[] | ParsedQs | ParsedQs[]`)"
+      - "Response proposes parameterized queries or prepared statements as the fix — e.g., using `$1` placeholder with the value passed as a parameter"
+      - "Response correctly identifies `safeLimit` (the `Math.min(Number(limit) || 10, 100)` pattern) as safe — it does not flag this as a vulnerability"
+
+  - id: memory-leak-closure
+    vars:
+      CONTEXT: "Event subscription manager used in a long-running server process"
+      CODE: fixtures/eval-review-leak.ts
+    criteria:
+      - "Response identifies the unbounded growth of `recentPayloads` — the array for each event grows without limit and has no eviction mechanism"
+      - "Response proposes a concrete fix for the memory leak — capping the array length (e.g., splice to keep only the last N entries) or using a circular buffer"
+      - "Response identifies that empty `Set` entries remain in `this.handlers` for events after all subscribers call `off()`, representing a minor memory leak"
+      - "Response does not flag the use of `Map` or `Set` data structures as problematic — these are idiomatic and correct"

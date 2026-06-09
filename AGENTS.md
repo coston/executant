@@ -18,6 +18,7 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
 8. Keep Readme.md, ARCHITECTURE.md, and BACKLOG.md, PRODUCT-SPEC.md up-to-date as things evolve.
 9. Always strive for extensive test coverage.
 10. Always consider how changes will affect the goals and data integrity of the application. Defend the users.
+11. This cli must work on MacOS and Linux
 
 ## Core Architecture
 
@@ -33,7 +34,7 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `continue_on_error: true` - Optional, allows script steps to fail without stopping
    - `self_healing: true` - Optional (defaults to `false`; opt-in per step), automatically passes script failures to Claude for fixing
    - `llm_as_judge: true` - Optional, evaluates step quality and retries up to 5 times if needed
-   - `allowed_tools` - Optional list restricting which Claude tools are available for a prompt step
+   - `allowed_tools` - Optional list restricting which tools are available for a prompt step. Applies to both Claude and OpenCode providers. Omit entirely for no restrictions (default — all tools available). `[]` = text-only mode (no tools). `[bash, read]` = only those tools. Tool names are case-insensitive (`Bash` and `bash` both work).
    - `context` - Optional list of var names whose values are file paths; file contents are prepended to the prompt at runtime
    - `forEach` - Optional inline array or shell command (newline-split stdout); runs the inner step once per item with `{{item}}` substituted
    - `repeat: N` - Runs the step N times sequentially (compiles to a ForEachTask at load time); mutually exclusive with `forEach`; `{{item}}` is the 1-based iteration number

@@ -1,0 +1,94 @@
+# Workflow eval task — complex scope (5 files, filtering logic, best model discriminator)
+# eval_criteria is read by the eval harness; ignored by executant when run standalone.
+eval_criteria:
+  - "src/types.ts BaseTask interface has an optional 'tags' field of type string[]"
+  - "src/types.ts RawStep type has an optional 'tags' field of type string[]"
+  - "src/types.ts RunOptions has an optional 'tagFilter' field of type string"
+  - "src/load-workflow.ts RawStepSchema validates an optional 'tags' array of strings"
+  - "src/load-workflow.ts passes 'tags' through to the returned Task object"
+  - "src/runner.ts skips steps whose tags array does not include the tagFilter value"
+  - "src/runner.ts runs all steps when tagFilter is not set (no regression)"
+  - "src/index.ts parses a --tag <name> flag and passes it as tagFilter in RunOptions"
+  - "At least two tests cover tag filtering (matching tag runs, non-matching tag skips)"
+
+goal: "Add optional tags field to steps and a --tag CLI flag to filter which steps run"
+
+vars:
+  research_doc: .eval/research.md
+  plan_doc: .eval/plan.md
+
+steps:
+  - name: explore
+    prompt: |
+      Research the executant codebase to understand how to add step tags and a --tag
+      filter flag. This requires changes to types, load, runner, and CLI.
+
+      Task: Add optional `tags: [string]` to steps in YAML. Add `--tag <name>` CLI flag
+      that only runs steps whose tags include the given name. Steps without tags are
+      skipped when a tag filter is active.
+
+      Explore these files thoroughly, noting exact line numbers:
+      1. src/types.ts — BaseTask interface, RawStep type, RunOptions interface
+      2. src/load-workflow.ts — RawStepSchema, convertInnerStep (where task fields are set)
+      3. src/runner.ts — shouldSkipStep function, runWorkflow step iteration logic,
+         RunOptions usage
+      4. src/index.ts — --step and --from-step parsing (for --tag pattern reference)
+      5. src/tests/runner.test.ts — test patterns for RunOptions and step skipping
+
+      Run these commands:
+        grep -n "shouldSkipStep\|stepFilter\|RunOptions\|fromStep" src/runner.ts
+        grep -n "stepFilter\|fromStep\|RunOptions" src/index.ts
+        grep -n "BaseTask\|continueOnError\|tags" src/types.ts
+
+      Write complete findings to {{research_doc}} including:
+      - Every field in BaseTask and how it flows through convertStep
+      - How shouldSkipStep works and where it is called in runWorkflow
+      - The exact RunOptions interface
+      - How --step flag is parsed as a reference for --tag
+      - Test patterns for checking skipped vs running steps
+
+  - name: plan
+    context: [research_doc]
+    prompt: |
+      Based on the research, write a precise plan for adding step tags + --tag filter.
+
+      Write to {{plan_doc}}:
+      1. src/types.ts changes: add `tags?: string[]` to BaseTask; add `tags?: string[]`
+         to RawStep; add `tagFilter?: string` to RunOptions
+      2. src/load-workflow.ts: add `tags: z.array(z.string()).optional()` to RawStepSchema;
+         include `tags: step.tags` in convertInnerStep return for each task type
+      3. src/runner.ts: update shouldSkipStep to return true when tagFilter is set and
+         the step has no matching tag
+      4. src/index.ts: parse `--tag <name>` and set `options.tagFilter`
+      5. Tests: at least two tests — one verifies a tagged step runs when tag matches,
+         one verifies a step is skipped when its tags don't include the filter
+
+      Include exact line numbers from the research doc.
+
+  - name: implement
+    context: [research_doc, plan_doc]
+    prompt: |
+      Implement step tags and --tag flag exactly as planned.
+
+      Key constraints:
+      - steps without any tags are SKIPPED when tagFilter is active (not run by default)
+      - When tagFilter is NOT set, all steps run as normal — no regression to existing behavior
+      - shouldSkipStep in runner.ts is the right place for tag filtering
+      - ForEachTask steps: if the forEach step itself matches the tag, run all its
+        iterations; check the forEach task's own tags field
+      - Keep all existing shouldSkipStep logic (stepFilter, fromStep) unchanged
+      - Pass tagFilter through RunOptions (already in types.ts plan)
+
+      After implementing, verify with: grep -n "tags\|tagFilter" src/types.ts src/load-workflow.ts src/runner.ts src/index.ts
+
+  - name: test
+    type: script
+    command: npm test
+    self_healing: true
+
+  - name: commit
+    type: script
+    command: |
+      git add -A
+      git commit -m "feat: add tags field to steps and --tag filter flag"
+    continue_on_error: true
