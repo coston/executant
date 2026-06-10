@@ -38,6 +38,7 @@ import {
   fillTemplate,
   formatToolCall,
   normalizeError,
+  DEFAULT_MODEL,
 } from "./lib/utils.js";
 
 const JUDGE_RETRY_CONTEXT = loadPrompt("judge-retry-context");
@@ -441,7 +442,7 @@ async function* runCommandWithHealing(
         name: `${task.name}:heal-${attempt + 1}`,
         prompt: healPrompt,
         allowedTools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"],
-        model: "sonnet",
+        model: DEFAULT_MODEL,
         provider: "claude",
       };
 
@@ -547,7 +548,7 @@ export async function evaluateWithJudge(
       prompt: buildJudgePrompt(stepName, stepInstructions, output),
       allowedTools: [],
       permissionMode: "default",
-      model: "sonnet",
+      model: DEFAULT_MODEL,
       provider: "claude",
     },
     JudgeOutputSchema,

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 
 import { loadWorkflow } from "../load-workflow.js";
 import type { ClaudeTask, CommandTask, LogTask } from "../types.js";
+import { DEFAULT_MODEL } from "../lib/utils.js";
 import { tmpYaml } from "./helpers.js";
 
 // ----------------------------------------------------------------------------
@@ -572,7 +573,7 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ClaudeTask;
-    assert.equal(task.model, "sonnet");
+    assert.equal(task.model, DEFAULT_MODEL);
     assert.equal(task.provider, undefined);
     assert.equal(task.agent, undefined);
   });
@@ -670,6 +671,6 @@ steps:
 `);
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ClaudeTask;
-    assert.equal(task.model, "sonnet");
+    assert.equal(task.model, DEFAULT_MODEL);
   });
 });

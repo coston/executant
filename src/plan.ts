@@ -24,6 +24,7 @@ import {
   fillTemplate,
   formatZodIssues,
   extractJsonObject,
+  DEFAULT_MODEL,
 } from "./lib/utils.js";
 import { RawStepSchema as StepSchema } from "./load-workflow.js";
 import type { PlanEvent } from "./ui/PlanApp.js";
@@ -202,7 +203,7 @@ async function runPass3Judge(
       }),
       allowedTools: [],
       permissionMode: "default",
-      model: "sonnet",
+      model: DEFAULT_MODEL,
       appendSystemPrompt: METHODOLOGY,
     };
     return await runAgentStructured(task, PlanJudgeOutputSchema);
@@ -629,7 +630,7 @@ export async function* streamPlan(args: PlanArgs): AsyncGenerator<PlanEvent> {
         prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
         allowedTools: [],
         permissionMode: "bypassPermissions",
-        model: skipResearch ? "sonnet" : "opus",
+        model: skipResearch ? DEFAULT_MODEL : "opus",
         appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
         jsonSchema: WORKFLOW_JSON_SCHEMA,
       };

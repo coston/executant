@@ -11,7 +11,12 @@
 
 import { readFileSync } from "node:fs";
 import { load as parseYaml } from "js-yaml";
-import { getErrorMessage, fillTemplate, formatZodIssues } from "./lib/utils.js";
+import {
+  getErrorMessage,
+  fillTemplate,
+  formatZodIssues,
+  DEFAULT_MODEL,
+} from "./lib/utils.js";
 import { z } from "zod";
 import type {
   ClaudeTask,
@@ -194,7 +199,7 @@ function convertInnerStep(
         continueOnError,
         llmAsJudge: step.llm_as_judge,
         allowedTools: step.allowed_tools,
-        model: step.model ?? "sonnet",
+        model: step.model ?? DEFAULT_MODEL,
         ...(step.provider && { provider: step.provider }),
         ...(step.agent && { agent: step.agent }),
         ...(contextFiles.length > 0 && { contextFiles }),

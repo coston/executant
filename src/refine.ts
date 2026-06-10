@@ -12,7 +12,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { load as loadYaml } from "js-yaml";
 import { METHODOLOGY } from "./tasks/claude.js";
-import { loadPrompt, fillTemplate } from "./lib/utils.js";
+import { loadPrompt, fillTemplate, DEFAULT_MODEL } from "./lib/utils.js";
 import { runRetryLoop, WORKFLOW_JSON_SCHEMA } from "./plan.js";
 import type { PlanEvent } from "./ui/PlanApp.js";
 import type { ClaudeTask } from "./types.js";
@@ -152,7 +152,7 @@ export async function* streamRefine(
         prompt: retryPrefix ? `${retryPrefix}\n\n${basePrompt}` : basePrompt,
         allowedTools: [],
         permissionMode: "bypassPermissions",
-        model: "sonnet",
+        model: DEFAULT_MODEL,
         appendSystemPrompt: `${METHODOLOGY}\n\n${PLAN_SYSTEM_RULES}`,
         jsonSchema: WORKFLOW_JSON_SCHEMA,
       } satisfies ClaudeTask;
