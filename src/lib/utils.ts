@@ -11,11 +11,10 @@ const PROMPTS_DIR =
     : join(__dir, "prompts");
 
 /**
- * Default Claude model for all steps. Pinned to a full model ID rather than
- * the "sonnet" alias because the alias lags behind actual releases.
- * Update this when a newer Sonnet ships.
+ * Default Claude model for all steps. Uses the "sonnet" alias so it
+ * automatically resolves to the latest Sonnet when the CLI is updated.
  */
-export const DEFAULT_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_MODEL = "sonnet";
 
 /** Strips the leading `# comment block` documentation header from a prompt file. */
 export function stripPromptHeader(raw: string): string {
