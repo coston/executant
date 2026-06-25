@@ -69,7 +69,18 @@ const INIT_STATE: LogState = {
 // ============================================================================
 
 function appendLog(logFile: string, text: string): void {
-  if (logFile) appendFileSync(logFile, text + "\n");
+  if (!logFile) return;
+  try {
+    appendFileSync(logFile, text + "\n");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // The log dir lives inside the workspace and can be removed mid-run by a
+    // workflow step (e.g. `git clean`). Recreate it and retry once so a transient
+    // deletion self-heals instead of turning every subsequent write into an
+    // ENOENT flood. Append mode recreates the file itself.
+    mkdirSync(dirname(logFile), { recursive: true });
+    appendFileSync(logFile, text + "\n");
+  }
 }
 
 function onWorkflowStart(ctx: LogContext, s: LogState): LogState {

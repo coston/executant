@@ -158,6 +158,23 @@ describe("Logger", () => {
     assert.equal(logFiles.length, 0);
   });
 
+  test("recovers when the log dir is deleted mid-run (e.g. by `git clean`)", () => {
+    const logger = createLogger(logDir, "resilient-task");
+    logger.observe({ type: "workflow:start", workflow: FAKE_WORKFLOW });
+    logger.observe({ type: "step:start", index: 0, name: "step-a" });
+
+    // Simulate a workflow step wiping the workspace dir executant logs into.
+    rmSync(logDir, { recursive: true, force: true });
+    assert.ok(!existsSync(logDir));
+
+    // Subsequent writes must self-heal rather than flood with ENOENT.
+    assert.doesNotThrow(() =>
+      logger.observe({ type: "output:text", index: 0, text: "after wipe" }),
+    );
+    assert.ok(existsSync(logDir), "log dir should be recreated");
+    assert.ok(readLogFile(logDir).includes("after wipe"));
+  });
+
   test("observe swallows errors and does not throw", () => {
     const logger = createLogger(logDir, "test-task");
     // Skip workflow:start so logFile is not set — appendLog silently returns
