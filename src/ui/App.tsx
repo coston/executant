@@ -39,6 +39,7 @@ interface Props {
 }
 
 const MAX_VISIBLE_ITERATIONS = 8;
+const MAX_VISIBLE_WRITTEN_FILES = 50;
 
 export function App({
   workflow,
@@ -212,11 +213,18 @@ export function App({
         />
       )}
 
-      {/* Files written — shown after workflow completes */}
+      {/* Files written — shown after workflow completes (last N to bound the
+          render tree; earlier entries are summarized). */}
       {state.endTime !== undefined && state.writtenFiles.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>files written:</Text>
-          {state.writtenFiles.map((f) => (
+          {state.writtenFiles.length > MAX_VISIBLE_WRITTEN_FILES && (
+            <Text dimColor>
+              {"  "}··· {state.writtenFiles.length - MAX_VISIBLE_WRITTEN_FILES}{" "}
+              earlier
+            </Text>
+          )}
+          {state.writtenFiles.slice(-MAX_VISIBLE_WRITTEN_FILES).map((f) => (
             <Text key={f} color={theme.primary}>
               {"  "}
               {f}

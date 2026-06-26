@@ -269,6 +269,61 @@ steps:
     assert.equal(state.tasks[0].iterationHistory, undefined);
   });
 
+  test("iterationHistory is capped so a huge forEach can't grow it forever", () => {
+    let state = forEachState();
+    for (let i = 0; i < 600; i++) {
+      state = reducer(state, {
+        type: "step:iteration",
+        index: 0,
+        item: `item-${i}.ts`,
+        iteration: i + 1,
+        total: 600,
+      });
+    }
+    const history = state.tasks[0].iterationHistory;
+    assert.ok(history);
+    // Cap is 500; the running (last) record is always retained.
+    assert.equal(history.length, 500);
+    assert.equal(history.at(-1)?.item, "item-599.ts");
+    assert.equal(history.at(-1)?.status, "running");
+  });
+
+  test("step:inner and step:complete still work after the cap trims old records", () => {
+    let state = forEachState();
+    for (let i = 0; i < 600; i++) {
+      state = reducer(state, {
+        type: "step:iteration",
+        index: 0,
+        item: `item-${i}.ts`,
+        iteration: i + 1,
+        total: 600,
+      });
+    }
+    // step:inner must still find and update the running (last) record.
+    state = reducer(state, {
+      type: "step:inner",
+      index: 0,
+      iteration: 600,
+      innerIndex: 0,
+      innerTotal: 2,
+      name: "lint",
+    });
+    const running = state.tasks[0].iterationHistory?.find(
+      (r) => r.status === "running",
+    );
+    assert.equal(running?.inner?.name, "lint");
+    // step:complete finalizes every retained record.
+    state = reducer(state, {
+      type: "step:complete",
+      index: 0,
+      name: "process files",
+      durationMs: 1000,
+    });
+    assert.ok(
+      state.tasks[0].iterationHistory?.every((r) => r.status === "complete"),
+    );
+  });
+
   test("all three iterations tracked in full workflow", () => {
     let state = forEachState();
     // Simulate all 3 iterations

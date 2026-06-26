@@ -196,6 +196,37 @@ describe("reducer — output:tool formatting", () => {
     });
     assert.ok(next.writtenFiles.includes("/tmp/new-file.ts"));
   });
+
+  test("repeated writes to the same file are deduped", () => {
+    let state = runningState();
+    for (let i = 0; i < 10; i++) {
+      state = reducer(state, {
+        type: "output:tool",
+        index: 0,
+        tool: "Write",
+        input: { file_path: "/tmp/same.ts" },
+      });
+    }
+    assert.equal(
+      state.writtenFiles.filter((f) => f === "/tmp/same.ts").length,
+      1,
+    );
+  });
+
+  test("writtenFiles is capped so a flood of distinct writes can't grow forever", () => {
+    let state = runningState();
+    for (let i = 0; i < 600; i++) {
+      state = reducer(state, {
+        type: "output:tool",
+        index: 0,
+        tool: "Write",
+        input: { file_path: `/tmp/file-${i}.ts` },
+      });
+    }
+    // Cap is 500; the most recent writes are retained.
+    assert.equal(state.writtenFiles.length, 500);
+    assert.equal(state.writtenFiles.at(-1), "/tmp/file-599.ts");
+  });
 });
 
 // ----------------------------------------------------------------------------

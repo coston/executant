@@ -90,17 +90,25 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
           state.tasks[event.index]?.iterationHistory,
           "complete",
         ) ?? [];
+      // Cap stored history: a forEach over thousands of items would otherwise
+      // grow this array without bound (the UI only ever shows the last few).
+      // The running record is always the last element, so trimming the front
+      // never drops the one that step:inner / finalizeIterations mutate.
+      const combined = [
+        ...prev,
+        {
+          item: event.item,
+          iteration: event.iteration,
+          total: event.total,
+          status: "running" as const,
+          startTime: Date.now(),
+        },
+      ];
       return updateTask(state, event.index, {
-        iterationHistory: [
-          ...prev,
-          {
-            item: event.item,
-            iteration: event.iteration,
-            total: event.total,
-            status: "running" as const,
-            startTime: Date.now(),
-          },
-        ],
+        iterationHistory:
+          combined.length > MAX_ITERATION_HISTORY
+            ? combined.slice(-MAX_ITERATION_HISTORY)
+            : combined,
       });
     }
 
@@ -137,9 +145,17 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
         event.tool === "Write" &&
         typeof event.input["file_path"] === "string"
       ) {
+        const path = event.input["file_path"];
+        // Dedupe (agents rewrite the same file many times) and cap so a run that
+        // writes a huge number of distinct files can't grow this array forever.
+        if (next.writtenFiles.includes(path)) return next;
+        const writtenFiles = [...next.writtenFiles, path];
         return {
           ...next,
-          writtenFiles: [...next.writtenFiles, event.input["file_path"]],
+          writtenFiles:
+            writtenFiles.length > MAX_WRITTEN_FILES
+              ? writtenFiles.slice(-MAX_WRITTEN_FILES)
+              : writtenFiles,
         };
       }
       return next;
@@ -180,6 +196,14 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
 // Hard cap on stored lines per task. Prevents unbounded growth for long-running
 // steps with verbose output (e.g. npm install).
 const MAX_LOG_LINES = 300;
+
+// Hard cap on iteration records kept per forEach task. The UI only renders the
+// last MAX_VISIBLE_ITERATIONS (8); the rest are history. A few hundred is plenty
+// to keep the "N earlier" count meaningful while bounding memory on long loops.
+const MAX_ITERATION_HISTORY = 500;
+
+// Hard cap on the deduped list of written file paths shown after completion.
+const MAX_WRITTEN_FILES = 500;
 
 /**
  * Strips ANSI escape codes and splits on newlines so every stored entry is
