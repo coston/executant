@@ -155,7 +155,6 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - **Sequential execution**: Steps run in order, fail-fast on errors
 - **Stateless**: Each step is independent, no state carried between steps
 - **Streaming**: Real-time output via Ink TUI
-- **Auto-move**: Completed tasks auto-move to done/ with timestamp
 - **Project detection**: Walks up directory tree to find `.claude/executant.local/tasks`
 - **Interjection**: User presses `i` during execution to queue a correction. The message is prepended to the next Claude step's prompt as `[User correction from a previous step]`. The Claude CLI cannot receive mid-execution stdin input (it buffers all stdin until EOF before processing), so true mid-step injection is not possible — the correction always targets the next step.
 
