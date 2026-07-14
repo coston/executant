@@ -17,7 +17,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateWithJudge } from "../runner.js";
 import type { ClaudeTask, Event, LogEvent, Workflow } from "../types.js";
-import { collectEvents, collectEventsUntilError } from "./helpers.js";
+import {
+  collectEvents,
+  collectEventsUntilError,
+  installSequencedMock,
+} from "./helpers.js";
 
 // Creates a mock claude binary that emits one stream-json text event with the
 // given response text, then exits 0. Uses a sidecar response file to avoid
@@ -127,54 +131,6 @@ const MAX_JUDGE_RETRIES = 5;
 
 function logEvents(events: Event[]): LogEvent[] {
   return events.filter((e): e is LogEvent => e.type === "log");
-}
-
-/**
- * Installs a sequenced mock claude binary into a temp dir prepended to PATH.
- * Each invocation reads/increments a shared counter and serves the
- * corresponding pre-written NDJSON response. The prompt arg ($2) is saved to
- * promptsDir/<call_index>.txt so tests can assert on injected content.
- */
-function installSequencedMock(responses: string[]): { promptsDir: string } {
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const mockDir = join(tmpdir(), `executant-judge-int-${id}`);
-  const responsesDir = join(mockDir, "responses");
-  const promptsDir = join(mockDir, "prompts");
-  const counterFile = join(mockDir, "counter");
-
-  mkdirSync(responsesDir, { recursive: true });
-  mkdirSync(promptsDir, { recursive: true });
-  writeFileSync(counterFile, "0", "utf8");
-
-  for (const [i, text] of responses.entries()) {
-    const ndjson =
-      JSON.stringify({
-        type: "assistant",
-        message: { content: [{ type: "text", text }] },
-      }) +
-      "\n" +
-      JSON.stringify({ type: "result", total_cost_usd: 0.001 }) +
-      "\n";
-    writeFileSync(join(responsesDir, `${i}.ndjson`), ndjson, "utf8");
-  }
-
-  const mockScript = join(mockDir, "claude");
-  writeFileSync(
-    mockScript,
-    `#!/usr/bin/env bash
-count=$(cat "${counterFile}")
-echo $((count + 1)) > "${counterFile}"
-printf '%s' "$2" > "${promptsDir}/$count.txt"
-cat "${responsesDir}/$count.ndjson"
-exit 0
-`,
-    "utf8",
-  );
-  chmodSync(mockScript, 0o755);
-
-  process.env["PATH"] = `${mockDir}:${process.env["PATH"] ?? ""}`;
-
-  return { promptsDir };
 }
 
 function judgeResponse(pass: boolean, feedback: string): string {

@@ -12,9 +12,8 @@
 
 import React from "react";
 import { render } from "ink";
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { loadWorkflow } from "./load-workflow.js";
 import { runWorkflow } from "./runner.js";
 import { checkForUpdate } from "./update.js";
@@ -31,15 +30,7 @@ import {
 import { InterjectChannel, TimeoutError } from "./types.js";
 import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
 import { getErrorMessage } from "./lib/utils.js";
-
-const CURRENT_VERSION = (
-  JSON.parse(
-    readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
-      "utf-8",
-    ),
-  ) as { version: string }
-).version;
+import { CURRENT_VERSION } from "./version.js";
 
 const rawArgs = process.argv.slice(2);
 
@@ -258,8 +249,26 @@ const options: RunOptions = {
 const channel = new InterjectChannel();
 const rawEvents = runWorkflow(workflow, options, channel);
 const logger = createLogger(resolveLogDir(filePath), workflow.goal);
-const events = withLogger(rawEvents, logger);
-const updateCheck = checkForUpdate(CURRENT_VERSION);
+// Telemetry is opt-in via OTEL_EXPORTER_OTLP_ENDPOINT. The dynamic import
+// keeps the OTel SDK entirely unloaded when it is off.
+const telemetry = process.env["OTEL_EXPORTER_OTLP_ENDPOINT"]
+  ? await (await import("./telemetry.js")).createTelemetry(basename(filePath))
+  : null;
+const events = telemetry
+  ? withLogger(withLogger(rawEvents, logger), telemetry)
+  : withLogger(rawEvents, logger);
+// Flush telemetry before dying on a real SIGINT (CI / non-raw-mode terminals).
+// Registered only when telemetry is on so default behavior is untouched.
+if (telemetry) {
+  process.once("SIGINT", () => {
+    void telemetry.shutdown().finally(() => process.exit(130));
+  });
+}
+// checkForUpdate can keep the event loop alive for up to 5s and its banner is
+// only rendered by the TUI — skip it entirely in CI mode.
+const updateCheck = ciMode
+  ? Promise.resolve<string | null>(null)
+  : checkForUpdate(CURRENT_VERSION);
 
 /**
  * JSON.stringify replacer that serialises Error objects properly.
@@ -279,6 +288,8 @@ if (ciMode) {
     for await (const event of events) {
       const line = JSON.stringify(event, errorReplacer) + "\n";
       if (event.type === "workflow:cancelled") {
+        // Flush telemetry first — the write callback below exits the process.
+        await telemetry?.shutdown();
         // Write then exit only after the data is flushed — process.exit() does
         // not drain buffered stdout on piped streams without this callback.
         process.stdout.write(line, () => process.exit(4));
@@ -286,14 +297,16 @@ if (ciMode) {
       }
       process.stdout.write(line);
     }
-  })().catch((err) => {
+    await telemetry?.shutdown();
+  })().catch(async (err) => {
     const code = err instanceof TimeoutError ? 3 : 1;
     console.error(err);
+    await telemetry?.shutdown();
     process.exit(code);
   });
 } else {
   // Interactive mode: render the Ink TUI.
-  render(
+  const inkApp = render(
     React.createElement(App, {
       workflow,
       events,
@@ -302,4 +315,16 @@ if (ciMode) {
       interjectChannel: channel,
     }),
   );
+  // waitUntilExit must be called synchronously after render — Ink installs the
+  // exit resolver lazily and a late call can hang forever.
+  const exitPromise = inkApp.waitUntilExit();
+  try {
+    await exitPromise;
+  } catch {
+    // Step failure: App already set process.exitCode (1 or 3). Catching here
+    // stops an unhandled rejection from clobbering that exit code.
+  }
+  await telemetry?.shutdown();
+  // No process.exit — TUI exit relies on natural event-loop drain and the
+  // process.exitCode set by App.
 }

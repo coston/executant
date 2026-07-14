@@ -10,8 +10,10 @@
 import { execSync, spawn } from "node:child_process";
 import type { ZodType } from "zod";
 import type { ClaudeTask, Event } from "../types.js";
+import { resolveAgentModel } from "./agent.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
 import { extractJsonObject, getErrorMessage, stripAnsi } from "../lib/utils.js";
+import { traceparentEnv } from "../lib/trace-context.js";
 
 /**
  * Resolves the absolute path to the opencode binary.
@@ -69,7 +71,7 @@ export function buildOpenCodePermissionEnv(
 
 /** Constructs the CLI args array for an OpenCode invocation. Exported for testing. */
 export function buildOpenCodeArgs(task: ClaudeTask): string[] {
-  const model = task.model ?? process.env["EXECUTANT_MODEL"];
+  const model = resolveAgentModel(task);
   const agent = task.agent ?? process.env["EXECUTANT_AGENT"];
   const permissionMode = task.permissionMode ?? "bypassPermissions";
 
@@ -108,6 +110,7 @@ export async function* runOpenCode(task: ClaudeTask): AsyncGenerator<Event> {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...traceparentEnv(),
         ...(permissionEnv ? { OPENCODE_PERMISSION: permissionEnv } : {}),
       },
     });

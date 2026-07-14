@@ -213,6 +213,11 @@ export interface OutputToolEvent {
 /** API cost reported at the end of a Claude invocation. */
 export interface OutputCostEvent {
   type: "output:cost";
+  /**
+   * 0-based step index. Inner generators emit -1 as a sentinel;
+   * runWorkflow patches this to the real step index before yielding downstream.
+   */
+  index: number;
   usd: number;
 }
 
@@ -236,6 +241,30 @@ export interface StepInterjectionEvent {
   message: string;
 }
 
+/** Fired by the self-healing loop as it progresses. index uses the -1 sentinel. */
+export interface StepHealingEvent {
+  type: "step:healing";
+  index: number;
+  phase: "attempt-failed" | "healed" | "exhausted";
+  /** 1-based attempt just concluded. */
+  attempt: number;
+  maxAttempts: number;
+  /** Present on attempt-failed / exhausted. */
+  exitCode?: number;
+}
+
+/** Fired after each LLM-as-judge evaluation completes. index uses the -1 sentinel. */
+export interface StepJudgeEvent {
+  type: "step:judge";
+  index: number;
+  verdict: "pass" | "fail";
+  /** 1-based. */
+  attempt: number;
+  maxAttempts: number;
+  /** Present on fail. */
+  feedback?: string;
+}
+
 export type Event =
   | WorkflowStartEvent
   | WorkflowCompleteEvent
@@ -251,7 +280,9 @@ export type Event =
   | OutputCostEvent
   | OutputStructuredEvent
   | LogEvent
-  | StepInterjectionEvent;
+  | StepInterjectionEvent
+  | StepHealingEvent
+  | StepJudgeEvent;
 
 // ----------------------------------------------------------------------------
 // Run options  (CLI flags, not YAML — passed to runWorkflow)

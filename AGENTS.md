@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows with Claude Code. The `executant` wrapper runs `tsx src/index.ts`. It supports two execution modes: **Claude steps** (AI-assisted) and **script steps** (direct bash execution).
 
-
 # Agent Rules
+
 1. Avoid leaving script (.sh) files in the repo. Prefer framework integration.
 2. Prefer DRY, immutable, functional programming
 3. Prefer expressive, declarative constructs (e.g., map/flatMap) over imperative loops. Optimize for performance only when there is clear evidence it matters.
@@ -45,8 +45,9 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`refine`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`
    - `src/load-workflow.ts` - YAML → typed `Workflow`
    - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
-   - `src/logger.ts` - Subscribes to event stream; writes `.log` files to `.claude/executant.local/logs/`
-   - `src/types.ts` - All shared types: `Task`, `Event`, `Workflow`, `RawWorkflow`/`RawStep` (YAML schema), `InterjectChannel` class
+   - `src/logger.ts` - Subscribes to event stream; writes `.log` files to `.claude/executant.local/logs/`; exports the `Observer` interface shared with telemetry
+   - `src/telemetry.ts` - Opt-in OpenTelemetry observer; exports traces + metrics via OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
+   - `src/types.ts` - All shared types: `Task`, `Event` (including the structured `step:healing`/`step:judge` events and the indexed `output:cost` — all emitted with an `index: -1` sentinel that `runWorkflow` patches to the real step index), `Workflow`, `RawWorkflow`/`RawStep` (YAML schema), `InterjectChannel` class
 
 ### Module Architecture
 
@@ -57,16 +58,21 @@ src/
 ├── index.ts              # Entry point (CLI, TUI, CI mode, plan/refine/update subcommands)
 ├── load-workflow.ts      # YAML → typed Workflow
 ├── runner.ts             # Workflow execution (self-healing, judge, forEach, context)
-├── logger.ts             # Execution logger (log files)
+├── logger.ts             # Execution logger (log files); exports the shared Observer interface
+├── telemetry.ts          # Opt-in OpenTelemetry observer (OTLP traces + metrics)
 ├── plan.ts               # `executant plan` subcommand
 ├── refine.ts             # `executant refine` subcommand
 ├── update.ts             # `executant update` upgrade logic
 ├── types.ts              # All shared types
+├── version.ts            # Single source for CURRENT_VERSION (read from package.json)
 ├── lib/
+│   ├── trace-context.ts  # TRACEPARENT registry shared by telemetry + all spawn sites
 │   └── utils.ts          # Shared pure utilities (slugify, formatTimestamp, etc.)
 ├── tasks/
+│   ├── agent.ts          # Provider dispatch (resolveAgentProvider, resolveAgentModel)
 │   ├── claude.ts         # Claude CLI child process runner
 │   ├── command.ts        # Bash command runner
+│   ├── opencode.ts       # OpenCode CLI child process runner
 │   └── stream.ts         # Shared stream utilities (AsyncQueue, mergeStreamsToLines)
 ├── ui/                   # Ink TUI components
 │   ├── App.tsx           # Root component; holds isInterjecting state; wires InterjectChannel
@@ -123,6 +129,7 @@ evals/                    # Eval test case definitions (run via npm run eval)
 Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSync` + `.replace()`. Support `{{VARIABLE}}` placeholder substitution.
 
 **Prompts directory** (`src/prompts/`):
+
 - Development methodology (`development-methodology.txt`) - Injected via `--append-system-prompt` into every Claude step
 - Plan pipeline (`plan-research.txt`, `plan-decompose.txt`, `plan-judge.txt`, `plan-retry-judge.txt`, `plan-system-rules.txt`, `plan-retry-parse-error.txt`, `plan-retry-schema-error.txt`) - Used by `executant plan` three-pass pipeline (`plan.ts`)
 - Plan refine (`plan-refine.txt`) - Used by `executant refine` subcommand (`refine.ts`)
@@ -137,6 +144,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 4. In TypeScript: `readFileSync(join(PROMPTS_DIR, 'your-prompt-name.txt'), 'utf8').replace('{{PLACEHOLDER}}', value)`
 
 **Example prompt header:**
+
 ```bash
 # ============================================================================
 # YOUR PROMPT NAME
@@ -165,6 +173,13 @@ The `Logger` class subscribes to the runner's event stream via `withLogger()`:
 - **Log files**: Written to `.claude/executant.local/logs/{timestamp}_{task-name}.log`
 - **Disable**: Set `EXECUTANT_LOG=0` to skip all logging with zero overhead
 
+### Telemetry (`src/telemetry.ts`)
+
+The telemetry observer subscribes to the same event stream (via the same `withLogger()` tee — both implement the `Observer` interface exported from `logger.ts`):
+
+- **Where data goes**: One OpenTelemetry trace per run — an `executant.run` root span, a child span per step (index/type/provider/model/cost attributes; `tool`/`healing`/`judge` span events), and iteration spans per forEach — plus five metrics (step duration/errors, cost by provider, healing attempts, judge verdicts), exported via OTLP/HTTP; every subprocess inherits a `TRACEPARENT` env var (via `src/lib/trace-context.ts`) so child tools join the same trace
+- **Enable**: Set `OTEL_EXPORTER_OTLP_ENDPOINT` (optionally `OTEL_SERVICE_NAME`); when unset, `createTelemetry` returns `null` before importing anything — the OTel SDK is never loaded and behavior is byte-identical to a run without telemetry
+
 ### `context:` Field
 
 The `context:` field on a prompt step lets you inject file contents into the prompt at runtime:
@@ -177,7 +192,7 @@ steps:
   - name: implement
     prompt: Implement the feature described in the spec above.
     context:
-      - spec_file   # var name whose value is the file path
+      - spec_file # var name whose value is the file path
 ```
 
 `context` is a list of var names (not file paths directly). Each named var's value must be a file path in the `vars` section. The file contents are prepended to the prompt as labelled code fences before Claude runs. Throws at load time if a var name is missing from `vars`.
@@ -190,15 +205,15 @@ The eval system tests and refines executant's own prompt templates (`src/prompts
 
 ```yaml
 name: plan-decompose
-prompt: src/prompts/plan-decompose.txt   # template to test (relative to CWD)
+prompt: src/prompts/plan-decompose.txt # template to test (relative to CWD)
 placeholders:
-  - DESCRIPTION                          # {{PLACEHOLDER}} names expected in template
+  - DESCRIPTION # {{PLACEHOLDER}} names expected in template
   - RESEARCH_DOC
 test_cases:
   - id: simple-feature
     vars:
       DESCRIPTION: "add rate limiting to all API endpoints"
-      RESEARCH_DOC: fixtures/research-doc-simple.md  # path → file content is read
+      RESEARCH_DOC: fixtures/research-doc-simple.md # path → file content is read
     criteria:
       - "Output is valid JSON with a 'goal' field and a 'steps' array"
       - "No hardcoded file paths in any prompt or command field"
@@ -289,11 +304,13 @@ npm test
 ## Task File Patterns
 
 ### Claude Step (AI-Assisted)
+
 - Use when task requires analysis, decision-making, or file operations
 - Full access to Read, Edit, Write, Bash, Task, and all other tools
 - API cost per step
 
 ### Script Step (Direct Execution)
+
 - Use for deterministic commands: builds, tests, git operations
 - No API cost, immediate execution
 - Predictable, reliable behavior
@@ -301,6 +318,7 @@ npm test
 ### Quality Control Options
 
 **Self-Healing (`self_healing: true`)**
+
 - Applies to script steps only; defaults to `false` (opt-in per step)
 - Automatically passes failures to Claude for analysis and fixing
 - Claude diagnoses the issue, applies fixes, and re-runs the command
@@ -308,6 +326,7 @@ npm test
 - Example: Missing files, wrong paths, missing dependencies
 
 **LLM as Judge (`llm_as_judge: true`)**
+
 - Applies to both prompt and script steps
 - After step completes, Claude evaluates the output quality
 - If evaluation fails, step is retried with judge's feedback
@@ -318,6 +337,7 @@ npm test
 ### Example Template Pattern
 
 See `examples/` for workflow examples:
+
 - Mixes script steps (npm commands) with Claude steps (code analysis)
 - Uses `continue_on_error` for non-critical script failures
 - Structures prompts with clear numbered instructions
@@ -331,12 +351,14 @@ The `executant plan` subcommand generates YAML task files from natural language 
 **Location**: `src/plan.ts`
 
 **Key components**:
+
 1. `parsePlanArgs()` - Parses CLI arguments (supports `-f file`, `-q`/`--fast`, stdin, and direct string)
 2. `streamPlan()` - Async generator running the pipeline, yielding `PlanEvent`s to the TUI
 3. `isSimpleRequest()` - Heuristic that detects self-contained requests (repetition patterns, forEach) to skip research
 4. `findProjectRoot()` - Walks up the directory tree to find `.claude/executant.local/tasks`
 
 **Flags:**
+
 - `-f, --file <path>` - Read prompt from specified file
 - `-q, --fast` - Skip codebase research (auto-detected for simple tasks)
 - `-h, --help` - Show help message with examples
@@ -344,6 +366,7 @@ The `executant plan` subcommand generates YAML task files from natural language 
 ### Generation Process
 
 **Full path (3 passes)** — when codebase exploration is needed:
+
 1. Parse arguments (string, `-f file`, or stdin)
 2. Find project root via `findProjectRoot()`
 3. Generate timestamped filename
@@ -353,6 +376,7 @@ The `executant plan` subcommand generates YAML task files from natural language 
 7. Validate JSON output via Zod schema, convert to YAML, write to `tasks/todo/`
 
 **Fast path (2 passes)** — when `--fast` is set or `isSimpleRequest()` returns true:
+
 - Skips Pass 1 entirely; passes a "no research" placeholder to Pass 2
 - `isSimpleRequest()` detects: repetition (`N times`, `N iterations`, `N passes`) and `for each` patterns
 - Reduces plan generation from ~20 min to ~30 sec for self-contained requests
@@ -367,10 +391,12 @@ The `executant plan` subcommand generates YAML task files from natural language 
 ## Important Implementation Details
 
 ### Permission Model
+
 - Executant uses `--permission-mode bypassPermissions`
 - Commands matching patterns in `.claude/settings.local.json` are auto-approved
 
 ### Error Handling
+
 - Script steps: Exit on error unless `continue_on_error: true`
 - Claude steps: Fail if claude CLI returns non-zero
 - Task files remain in todo/ on failure for retry
@@ -381,7 +407,7 @@ The `executant plan` subcommand generates YAML task files from natural language 
 npm test
 ```
 
-TypeScript test suite: `src/tests/` (25 files, ~521 test cases covering self-healing, forEach, output capture, context injection, plan generation, refine subcommand, update subcommand, UI reducer, and more).
+TypeScript test suite: `src/tests/` — covers self-healing, forEach, output capture, context injection, plan generation, refine subcommand, update subcommand, UI reducer, structured events, telemetry, trace-context propagation, and more.
 
 ### Test Requirements for Contributors
 
@@ -418,4 +444,3 @@ cat > .claude/settings.local.json << 'EOF'
 }
 EOF
 ```
-

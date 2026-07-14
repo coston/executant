@@ -27,9 +27,11 @@ import type {
   InterjectChannel,
   LogTask,
   RunOptions,
+  StepHealingEvent,
   Task,
   Workflow,
 } from "./types.js";
+import { traceparentEnv } from "./lib/trace-context.js";
 import { CommandError, runCommand } from "./tasks/command.js";
 import { runAgent, runAgentStructured } from "./tasks/agent.js";
 import {
@@ -47,7 +49,7 @@ const JUDGE_EVALUATION_PROMPT = loadPrompt("judge-evaluation");
 
 const execPromise = promisify(exec);
 
-const MAX_JUDGE_RETRIES = 5;
+export const MAX_JUDGE_RETRIES = 5;
 const MAX_HEALING_ATTEMPTS = 5;
 
 const JudgeOutputSchema = z.object({
@@ -140,7 +142,10 @@ export async function* runWorkflow(
           event.type === "step:iteration" ||
           event.type === "step:inner" ||
           event.type === "output:text" ||
-          event.type === "output:tool"
+          event.type === "output:tool" ||
+          event.type === "output:cost" ||
+          event.type === "step:healing" ||
+          event.type === "step:judge"
         ) {
           if (event.type === "output:text") {
             if (lines.length >= LAST_OUTPUT_MAX_LINES) lines.shift();
@@ -335,6 +340,9 @@ async function resolveItems(forEach: string[] | string): Promise<string[]> {
     const { stdout } = await execPromise(forEach, {
       shell: "/bin/sh",
       timeout: 30_000,
+      // The resolution command is a step subprocess like any other — it must
+      // inherit the current step's TRACEPARENT, not a stale outer one.
+      env: { ...process.env, ...traceparentEnv() },
     });
     return stdout.split("\n").filter((l: string) => l.trim().length > 0);
   } catch (err) {
@@ -387,6 +395,19 @@ async function* runCommandWithHealing(
   task: CommandTask,
 ): AsyncGenerator<Event> {
   const maxAttempts = task.maxHealingAttempts ?? MAX_HEALING_ATTEMPTS;
+  // index: -1 here — runWorkflow patches it to the real step index
+  const healingEvent = (
+    phase: StepHealingEvent["phase"],
+    attempt: number,
+    exitCode?: number,
+  ): StepHealingEvent => ({
+    type: "step:healing",
+    index: -1,
+    phase,
+    attempt,
+    maxAttempts,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+  });
   const attemptHistory: Array<{
     fixSummary: string;
     exitCode: number;
@@ -400,6 +421,7 @@ async function* runCommandWithHealing(
       yield* collectLines(runCommand(task), lines);
       // Command succeeded.
       if (attempt > 0) {
+        yield healingEvent("healed", attempt + 1);
         yield {
           type: "log",
           level: "info",
@@ -413,6 +435,7 @@ async function* runCommandWithHealing(
 
       const remaining = maxAttempts - attempt - 1;
       if (remaining === 0) {
+        yield healingEvent("exhausted", attempt + 1, exitCode);
         yield {
           type: "log",
           level: "warn",
@@ -423,6 +446,7 @@ async function* runCommandWithHealing(
         );
       }
 
+      yield healingEvent("attempt-failed", attempt + 1, exitCode);
       yield {
         type: "log",
         level: "warn",
@@ -505,6 +529,16 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
       task.prompt,
       lines.join("\n"),
     );
+
+    // index: -1 here — runWorkflow patches it to the real step index
+    yield {
+      type: "step:judge",
+      index: -1,
+      verdict: verdict.pass ? "pass" : "fail",
+      attempt: attempt + 1,
+      maxAttempts: MAX_JUDGE_RETRIES,
+      ...(verdict.pass ? {} : { feedback: verdict.feedback }),
+    };
 
     if (verdict.pass) {
       yield { type: "log", level: "info", text: "[judge] PASS" };

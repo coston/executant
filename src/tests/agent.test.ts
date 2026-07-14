@@ -1,11 +1,15 @@
 // ============================================================================
 // AGENT DISPATCH — unit tests
 // ============================================================================
-// Tests for resolveAgentProvider in src/tasks/agent.ts.
+// Tests for resolveAgentProvider and resolveAgentModel in src/tasks/agent.ts.
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { resolveAgentProvider, runAgentStructured } from "../tasks/agent.js";
+import {
+  resolveAgentModel,
+  resolveAgentProvider,
+  runAgentStructured,
+} from "../tasks/agent.js";
 
 // Verify runAgentStructured is a public export (not just an internal helper).
 test("runAgentStructured is exported from the agent module", () => {
@@ -77,5 +81,40 @@ describe("resolveAgentProvider", () => {
         return true;
       },
     );
+  });
+});
+
+// Snapshot the original env value so tests don't bleed.
+const ORIGINAL_MODEL = process.env["EXECUTANT_MODEL"];
+
+function setModel(value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env["EXECUTANT_MODEL"];
+  } else {
+    process.env["EXECUTANT_MODEL"] = value;
+  }
+}
+
+describe("resolveAgentModel", () => {
+  beforeEach(() => {
+    setModel(undefined);
+  });
+
+  afterEach(() => {
+    setModel(ORIGINAL_MODEL);
+  });
+
+  test("returns undefined when neither task.model nor EXECUTANT_MODEL is set", () => {
+    assert.equal(resolveAgentModel({}), undefined);
+  });
+
+  test("falls back to EXECUTANT_MODEL when task.model is unset", () => {
+    setModel("opus");
+    assert.equal(resolveAgentModel({}), "opus");
+  });
+
+  test("task.model takes priority over EXECUTANT_MODEL env var", () => {
+    setModel("opus");
+    assert.equal(resolveAgentModel({ model: "haiku" }), "haiku");
   });
 });

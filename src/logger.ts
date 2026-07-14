@@ -193,9 +193,16 @@ function reduce(ctx: LogContext, s: LogState, event: Event): LogState {
 // Public API
 // ============================================================================
 
-export interface Logger {
+/**
+ * Anything that synchronously observes the event stream — the file logger and
+ * the telemetry exporter share this shape so withLogger can tee to either.
+ */
+export interface Observer {
   observe(event: Event): void;
 }
+
+/** The file logger is just one Observer. */
+export type Logger = Observer;
 
 export function createLogger(logDir: string, taskName: string): Logger {
   const ctx: LogContext = {
@@ -224,10 +231,10 @@ export function createLogger(logDir: string, taskName: string): Logger {
 
 export async function* withLogger(
   gen: AsyncGenerator<Event>,
-  logger: Logger,
+  observer: Observer,
 ): AsyncGenerator<Event> {
   for await (const event of gen) {
-    logger.observe(event);
+    observer.observe(event);
     yield event;
   }
 }

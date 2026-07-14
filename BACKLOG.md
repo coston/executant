@@ -12,14 +12,26 @@ Known improvements deferred from code reviews and audits.
 
 ## Features
 
-- **True mid-step interjection (kill + resume)** — The current `i` key queues a correction for the *next* Claude step. To truly stop a running Claude step and redirect it mid-execution, the approach is: kill the subprocess, then re-invoke with `--resume <session_id>` (captured from the result event) and the user's correction prepended. This preserves conversation context while immediately stopping the bad action. The `session_id` is available in Claude CLI's `result` event. The TUI would show a "restarting with correction…" log line. Blocked on: deciding UX (separate keybinding like `I` vs. a mode toggle), and verifying `--resume` behavior with `--output-format stream-json`.
+- **True mid-step interjection (kill + resume)** — The current `i` key queues a correction for the _next_ Claude step. To truly stop a running Claude step and redirect it mid-execution, the approach is: kill the subprocess, then re-invoke with `--resume <session_id>` (captured from the result event) and the user's correction prepended. This preserves conversation context while immediately stopping the bad action. The `session_id` is available in Claude CLI's `result` event. The TUI would show a "restarting with correction…" log line. Blocked on: deciding UX (separate keybinding like `I` vs. a mode toggle), and verifying `--resume` behavior with `--output-format stream-json`.
 
 - **OpenCode server-mode integration** — The current OpenCode runner uses `opencode run --format json` (CLI subprocess). A more robust integration would use OpenCode's HTTP server API (sessions, SSE event stream, messages endpoint). This enables better session management, lower startup overhead, and potentially mid-session context carry-over. Blocked on: OpenCode server API stabilizing.
+
+- **Per-attempt heal/judge child spans** — Telemetry v1 models self-healing and judge activity as span _events_ on the step span. Modelling each heal/judge attempt as its own child span needs start-boundary events from the runner (`step:attempt` / `judge:start` — only completion is emitted today) and `TRACEPARENT` propagation into the judge subprocess so its work nests under the attempt span.
+
+- **Complete cost accounting** — Judge-evaluation cost is dropped inside `runClaudeStructured` (`src/tasks/claude.ts` consumes the event stream for `output:structured`/`output:text` only), and the OpenCode runner does not parse cost from its JSON output at all. Surfacing both would make the `executant.cost.usd` metric and per-step cost attributes complete.
+
+## Implemented (observability, 2026-07)
+
+- ✅ **Structured `step:healing` / `step:judge` events** — the self-healing loop and LLM-as-judge now emit typed events (phase/attempt/exit code; verdict/attempt/feedback) alongside the existing free-text logs, giving CI NDJSON consumers and telemetry machine-readable quality-control progress.
+- ✅ **Indexed `output:cost`** — cost events now carry the 0-based step index (`-1` sentinel patched by `runWorkflow`, like `output:tool`), enabling per-step cost attribution.
+- ✅ **OpenTelemetry telemetry module (`src/telemetry.ts`)** — opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`; one trace per run (root → step → iteration spans with tool/healing/judge span events and cost attributes) plus five metrics, exported via OTLP/HTTP and flushed on every exit path including SIGINT; all `@opentelemetry/*` imports are dynamic, so the SDK is never loaded when the env var is unset.
+- ✅ **`TRACEPARENT` propagation** — all three spawn sites (claude, opencode, bash) spread `traceparentEnv()` from the `src/lib/trace-context.ts` registry into the child env, so subprocesses join the current step's trace; a no-op when telemetry is off.
+- ✅ **CI mode skips the update check** — `checkForUpdate` now runs only in TUI mode; headless runs no longer keep the event loop alive up to 5 s for a banner only the TUI renders.
 
 ## Implemented (code review fixes, 2026-06)
 
 - ✅ **`workDir` in `RunOptions`** — `.executant-cancel` is now checked next to the workflow YAML (`dirname(resolve(filePath))`) rather than fixed to `process.cwd()` at module load time; predictable regardless of invocation directory.
-- ✅ **`lastStepOutput` on `continueOnError` failures** — `workflow:complete.lastOutput` now always reflects the last *executed* step (including failing `continueOnError` steps), not the last *successful* step.
+- ✅ **`lastStepOutput` on `continueOnError` failures** — `workflow:complete.lastOutput` now always reflects the last _executed_ step (including failing `continueOnError` steps), not the last _successful_ step.
 - ✅ **CI stdout flush before `process.exit(4)`** — `workflow:cancelled` in CI mode now exits only after the write callback confirms the data was flushed to the OS, preventing truncation on piped streams.
 - ✅ **`lines[]` ring buffer** — output lines are capped at `LAST_OUTPUT_MAX_LINES` (100) during collection via shift-on-overflow; memory cost is constant regardless of step verbosity.
 - ✅ **Shared `startTimeout` helper** — duplicated timeout pattern extracted to `stream.ts`; `command.ts` and `claude.ts` both use `startTimeout(proc, taskName, timeoutSeconds)`.

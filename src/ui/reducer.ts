@@ -179,6 +179,12 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       return appendLines(state, idx, `[interjection] ${event.message}`);
     }
 
+    case "step:healing":
+    case "step:judge":
+      // Structured telemetry events — the accompanying free-text log events
+      // already render this progress in the TUI, so don't double-render.
+      return state;
+
     default: {
       // Compile-time exhaustiveness check: TypeScript will error here if a new
       // Event variant is added to types.ts without a corresponding case above.

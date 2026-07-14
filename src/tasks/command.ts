@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process";
 import type { CommandTask, Event } from "../types.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
+import { traceparentEnv } from "../lib/trace-context.js";
 
 export class CommandError extends Error {
   constructor(
@@ -30,6 +31,7 @@ export async function* runCommand(task: CommandTask): AsyncGenerator<Event> {
 
   const proc = spawn("sh", ["-c", task.command], {
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...traceparentEnv() },
   });
 
   const timeout = startTimeout(proc, task.name, task.timeoutSeconds);

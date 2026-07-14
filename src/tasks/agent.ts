@@ -8,6 +8,11 @@
 //   1. task.provider field
 //   2. EXECUTANT_PROVIDER env var
 //   3. "claude" (built-in default)
+//
+// Resolution order for model:
+//   1. task.model field
+//   2. EXECUTANT_MODEL env var
+//   3. undefined (provider CLI picks its own default)
 
 import type { ZodType } from "zod";
 import type { AgentProvider, ClaudeTask, Event } from "../types.js";
@@ -28,6 +33,17 @@ export function resolveAgentProvider(
     `Unsupported provider "${p}". Expected "claude" or "opencode". ` +
       `Check the EXECUTANT_PROVIDER env var or the step's provider: field.`,
   );
+}
+
+/**
+ * Resolves which model a task should run with.
+ * Checks task.model first, then the EXECUTANT_MODEL env var.
+ * Returns undefined when neither is set — the provider CLI uses its default.
+ */
+export function resolveAgentModel(
+  task: Pick<ClaudeTask, "model">,
+): string | undefined {
+  return task.model ?? process.env["EXECUTANT_MODEL"];
 }
 
 /**

@@ -10,6 +10,7 @@ import { execSync, spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ZodType } from "zod";
 import type { ClaudeTask, Event } from "../types.js";
+import { resolveAgentModel } from "./agent.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
 import {
   extractJsonObject,
@@ -17,6 +18,7 @@ import {
   loadPrompt,
   stripAnsi,
 } from "../lib/utils.js";
+import { traceparentEnv } from "../lib/trace-context.js";
 
 export const METHODOLOGY = loadPrompt("development-methodology");
 
@@ -26,6 +28,7 @@ export function buildClaudeArgs(
   interactive = false,
 ): string[] {
   const permissionMode = task.permissionMode ?? "bypassPermissions";
+  const model = resolveAgentModel(task);
   return [
     ...(interactive ? [] : ["--print", task.prompt]),
     "--output-format",
@@ -42,9 +45,7 @@ export function buildClaudeArgs(
       : []),
     "--permission-mode",
     permissionMode,
-    ...((task.model ?? process.env["EXECUTANT_MODEL"])
-      ? ["--model", task.model ?? process.env["EXECUTANT_MODEL"]!]
-      : []),
+    ...(model ? ["--model", model] : []),
     ...(task.appendSystemPrompt
       ? ["--append-system-prompt", task.appendSystemPrompt]
       : []),
@@ -88,7 +89,7 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
   try {
     proc = spawn(claudeBin, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env },
+      env: { ...process.env, ...traceparentEnv() },
     });
   } catch (err) {
     throw new Error(
@@ -165,7 +166,8 @@ function* parseClaudeMessage(msg: unknown): Generator<Event> {
   } else if (msg["type"] === "result") {
     const cost = msg["total_cost_usd"];
     if (typeof cost === "number") {
-      yield { type: "output:cost", usd: cost };
+      // index: -1 here — runWorkflow patches it to the real step index
+      yield { type: "output:cost", index: -1, usd: cost };
     }
     if (msg["structured_output"] != null) {
       yield { type: "output:structured", data: msg["structured_output"] };

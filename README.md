@@ -5,7 +5,8 @@
 Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands.
 
 ## Advisory
-Built for personal use by Coston. Public for sharing the approach. Use at your own risk. 
+
+Built for personal use by Coston. Public for sharing the approach. Use at your own risk.
 
 ## Install
 
@@ -14,6 +15,7 @@ npm install -g executant
 ```
 
 **Requirements:**
+
 - [Node.js](https://nodejs.org) 18+
 - At least one coding-agent CLI on `PATH`:
   - [Claude Code](https://claude.ai/code) — `npm install -g @anthropic-ai/claude-code` (default)
@@ -75,13 +77,13 @@ vars:
 
 steps:
   - name: implement
-    context: [spec]           # prepends docs/spec.md contents to the prompt
+    context: [spec] # prepends docs/spec.md contents to the prompt
     prompt: Implement the feature described in the spec above.
 
   - name: audit
     type: script
     command: npm run audit
-    output: report            # captures stdout to /tmp/report.txt
+    output: report # captures stdout to /tmp/report.txt
 
   - name: summarise
     prompt: Summarise the audit findings in {{report}}.
@@ -92,7 +94,7 @@ Use `forEach` to repeat a step over a list or shell command output — `{{item}}
 ```yaml
 steps:
   - name: lint {{item}}
-    forEach: "git diff --name-only HEAD~1"   # or an inline list: [a.ts, b.ts]
+    forEach: "git diff --name-only HEAD~1" # or an inline list: [a.ts, b.ts]
     type: script
     command: npx eslint src/{{item}}
 ```
@@ -172,11 +174,14 @@ steps:
 
 ### Env vars reference
 
-| Variable | Description | Default |
-|---|---|---|
-| `EXECUTANT_PROVIDER` | Agent backend: `claude` or `opencode` | `claude` |
-| `EXECUTANT_MODEL` | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc. | per-provider default |
-| `EXECUTANT_AGENT` | OpenCode `--agent` name (ignored by Claude) | — |
+| Variable                      | Description                                                                                         | Default               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- | --------------------- |
+| `EXECUTANT_PROVIDER`          | Agent backend: `claude` or `opencode`                                                               | `claude`              |
+| `EXECUTANT_MODEL`             | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc.                 | per-provider default  |
+| `EXECUTANT_AGENT`             | OpenCode `--agent` name (ignored by Claude)                                                         | —                     |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables [observability](#observability): exports traces + metrics to this OTLP/HTTP collector       | unset (telemetry off) |
+| `OTEL_SERVICE_NAME`           | `service.name` on exported telemetry                                                                | `executant`           |
+| `TRACEPARENT`                 | Set _by_ executant on every subprocess when telemetry is on — W3C trace context of the current step | —                     |
 
 Step-level `provider`, `model`, and `agent` fields take priority over env vars.
 
@@ -194,22 +199,22 @@ Step-level `provider`, `model`, and `agent` fields take priority over env vars.
 steps:
   - name: analyse
     prompt: Review the architecture and list concerns.
-    allowed_tools: [Read, Glob, Grep]   # read-only: no edits or bash
+    allowed_tools: [Read, Glob, Grep] # read-only: no edits or bash
 
   - name: summarise
     prompt: Write a one-paragraph summary.
-    allowed_tools: []                   # no tools — pure text generation
+    allowed_tools: [] # no tools — pure text generation
 ```
 
 ```yaml
 steps:
   - name: install
     command: npm ci
-    timeout_seconds: 120   # fail if install takes longer than 2 min
+    timeout_seconds: 120 # fail if install takes longer than 2 min
 
   - name: implement
     prompt: Implement the feature described above.
-    timeout_seconds: 1800  # 30 min ceiling for the Claude step
+    timeout_seconds: 1800 # 30 min ceiling for the Claude step
 ```
 
 ## Cancellation
@@ -237,21 +242,68 @@ press i  →  ▷ don't delete that file, use git revert▌  esc to cancel
 
 **What it can't do:** interrupt a Claude step mid-execution. The Claude CLI processes each invocation as a complete unit; there's no mechanism to inject a message partway through. To abort a runaway step immediately, press `q`.
 
+## Observability
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` and every run exports OpenTelemetry traces and metrics to an OTLP/HTTP collector (Jaeger, Grafana, Honeycomb, …):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 executant workflow.yaml
+```
+
+### Local quick start
+
+To view traces locally, run a collector — for example Jaeger:
+
+```bash
+docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 executant workflow.yaml
+```
+
+Then open http://localhost:16686 and select the `executant` service. Note that
+Jaeger accepts traces only — the metrics below are silently dropped. To see both,
+use Grafana's all-in-one image instead (UI at http://localhost:3000, admin/admin;
+traces land in Tempo, metrics in Prometheus):
+
+```bash
+docker run --rm -d --name lgtm -p 3000:3000 -p 4318:4318 grafana/otel-lgtm
+```
+
+Export `OTEL_EXPORTER_OTLP_ENDPOINT` in your shell profile to report every run
+automatically; unset it and telemetry is completely off.
+
+Each run produces one trace:
+
+```
+executant.run                  goal, task file, step count, total API cost
+└─ <step name>                 per step — index, type, provider, model, cost
+   │                           span events: tool, healing, judge
+   └─ iteration N/M            per forEach / repeat iteration
+```
+
+- **Span events** — every tool invocation, self-healing attempt (phase, attempt count, exit code), and judge verdict (pass/fail, feedback) is recorded on its step's span. Tool inputs and step output text are never recorded as span events, keeping spans lean. One caveat: a failed step's error message — which for prompt steps can quote the step's final output lines — is recorded on the span, truncated to 1,000 characters.
+- **Metrics** — `executant.step.duration` (histogram, ms), `executant.step.errors`, `executant.cost.usd` (by provider), `executant.healing.attempts`, and `executant.judge.verdicts`.
+- **Cost caveats** — cost comes from Claude's reported `total_cost_usd`, attributed per step. Judge-evaluation calls run through a structured side channel that drops cost events, and OpenCode reports no cost at all — so totals undercount when either is in play.
+- **`TRACEPARENT` propagation** — every subprocess (claude, opencode, script-step bash, and `forEach` shell commands) inherits a `TRACEPARENT` env var pointing at the current step's span, so OTel-instrumented tools inside your scripts join the same trace.
+- **Flush on exit** — telemetry is flushed on every exit path: success, failure, cancellation, `q`, and SIGINT (exit 130). The shutdown flush and every in-flight OTLP request are capped at ~3 s, so an unreachable or unresponsive collector delays exit by a few seconds at most.
+- **Zero overhead when off** — when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, the OTel SDK is never even loaded.
+
+`OTEL_SERVICE_NAME` overrides the exported service name (default `executant`).
+
 ## Examples
 
-| File | Demonstrates |
-|------|-------------|
-| `hello-world.yaml` | Simple prompt steps |
-| `mixed-workflow.yaml` | Script + prompt steps together |
-| `foreach-demo.yaml` | Inline lists and shell command iteration |
-| `nested-steps-demo.yaml` | Multiple child steps per forEach / repeat iteration |
-| `vars-demo.yaml` | Variable substitution |
-| `judge-demo.yaml` | LLM-as-judge retry loop |
-| `logging-demo.yaml` | Log steps, self-healing, judge |
-| `git-status-summary.yaml` | Real-world git workflow |
-| `repeat-demo.yaml` | Running a step N times with `repeat` |
-| `file-demo.yaml` | File operations |
-| `from-step-test.yaml` | Using `--from-step` to resume mid-workflow |
+| File                      | Demonstrates                                        |
+| ------------------------- | --------------------------------------------------- |
+| `hello-world.yaml`        | Simple prompt steps                                 |
+| `mixed-workflow.yaml`     | Script + prompt steps together                      |
+| `foreach-demo.yaml`       | Inline lists and shell command iteration            |
+| `nested-steps-demo.yaml`  | Multiple child steps per forEach / repeat iteration |
+| `vars-demo.yaml`          | Variable substitution                               |
+| `judge-demo.yaml`         | LLM-as-judge retry loop                             |
+| `logging-demo.yaml`       | Log steps, self-healing, judge                      |
+| `git-status-summary.yaml` | Real-world git workflow                             |
+| `repeat-demo.yaml`        | Running a step N times with `repeat`                |
+| `file-demo.yaml`          | File operations                                     |
+| `from-step-test.yaml`     | Using `--from-step` to resume mid-workflow          |
 
 See the [`examples/`](examples/) directory.
 
@@ -269,15 +321,17 @@ executant --var KEY=VALUE wf.yaml              # override a workflow var at runt
 executant update                                # upgrade to latest version
 ```
 
+CI mode streams every runner event as one JSON object per line. The stream is additive: new event types (most recently `step:healing` and `step:judge`) and fields (a step `index` on `output:cost`) appear over time, so consumers should ignore event types and fields they don't recognise.
+
 ### Exit codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | All steps completed successfully |
-| `1` | A step failed at runtime |
-| `2` | YAML or variable validation error |
-| `3` | A step timed out (`timeout_seconds` exceeded) |
-| `4` | Cancelled via `.executant-cancel` file |
+| Code | Meaning                                       |
+| ---- | --------------------------------------------- |
+| `0`  | All steps completed successfully              |
+| `1`  | A step failed at runtime                      |
+| `2`  | YAML or variable validation error             |
+| `3`  | A step timed out (`timeout_seconds` exceeded) |
+| `4`  | Cancelled via `.executant-cancel` file        |
 
 ## Development
 

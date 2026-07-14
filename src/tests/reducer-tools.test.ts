@@ -329,7 +329,7 @@ steps:
 
   test("output:cost leaves state unchanged", () => {
     const state = buildState();
-    const next = reducer(state, { type: "output:cost", usd: 0.05 });
+    const next = reducer(state, { type: "output:cost", index: 0, usd: 0.05 });
     assert.deepEqual(next, state);
   });
 
