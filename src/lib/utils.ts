@@ -128,3 +128,19 @@ export function formatToolCall(
 export function normalizeError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
+
+/**
+ * Silences EPIPE errors on a writable stream. Node treats a write to a
+ * closed pipe as an unhandled 'error' event — a fatal, uncaught exception —
+ * unless something is listening. Ink's TUI writes to stdout on every render
+ * tick for the life of a run, so a long session that outlives its terminal's
+ * pipe (a VS Code integrated terminal recycling its pty on reconnect/reload,
+ * or output piped into a command that exits early) crashes the whole
+ * process on the next tick. Swallowing EPIPE lets the run continue instead;
+ * any other error is rethrown so real stream failures still surface.
+ */
+export function ignoreBrokenPipe(stream: NodeJS.WritableStream): void {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") throw err;
+  });
+}

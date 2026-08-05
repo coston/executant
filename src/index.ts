@@ -29,8 +29,15 @@ import {
 } from "./logger.js";
 import { InterjectChannel, TimeoutError } from "./types.js";
 import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
-import { getErrorMessage } from "./lib/utils.js";
+import { getErrorMessage, ignoreBrokenPipe } from "./lib/utils.js";
 import { CURRENT_VERSION } from "./version.js";
+
+// Must run before any output is written: a closed downstream pipe (VS Code
+// recycling its terminal pty mid-session, or output piped into a command
+// that exits early) otherwise crashes the process on the next write. See
+// ignoreBrokenPipe for details.
+ignoreBrokenPipe(process.stdout);
+ignoreBrokenPipe(process.stderr);
 
 const rawArgs = process.argv.slice(2);
 
