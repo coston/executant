@@ -66,6 +66,7 @@ src/
 ├── types.ts              # All shared types
 ├── version.ts            # Single source for CURRENT_VERSION (read from package.json)
 ├── lib/
+│   ├── remote-workflow.ts # `executant <url>`: GitHub/gist raw rewrite, gh-token fetch
 │   ├── trace-context.ts  # TRACEPARENT registry shared by telemetry + all spawn sites
 │   └── utils.ts          # Shared pure utilities (slugify, formatTimestamp, etc.)
 ├── tasks/
@@ -164,6 +165,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - **Stateless**: Each step is independent, no state carried between steps
 - **Streaming**: Real-time output via Ink TUI
 - **Project detection**: Walks up directory tree to find `.claude/executant.local/tasks`
+- **Remote workflows**: The workflow argument may be an `http(s)` URL (`src/lib/remote-workflow.ts`). GitHub blob/gist page URLs are rewritten to raw; private ones authenticate with `gh auth token` (sent only to GitHub raw hosts). A remote workflow runs with `process.cwd()` as its `workDir` and log root.
 - **Interjection**: User presses `i` during execution to queue a correction. The message is prepended to the next Claude step's prompt as `[User correction from a previous step]`. The Claude CLI cannot receive mid-execution stdin input (it buffers all stdin until EOF before processing), so true mid-step injection is not possible — the correction always targets the next step.
 
 ### TypeScript Logging (`src/logger.ts`)

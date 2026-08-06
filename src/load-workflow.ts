@@ -70,14 +70,25 @@ export function loadWorkflow(
       `Cannot read workflow file "${filePath}": ${getErrorMessage(err)}`,
     );
   }
+  return parseWorkflow(raw, filePath, cliVars);
+}
 
+/**
+ * Parse workflow YAML that has already been read into memory. `label` names
+ * the source (file path or URL) in error messages.
+ */
+export function parseWorkflow(
+  raw: string,
+  label: string,
+  cliVars: Record<string, string> = {},
+): Workflow {
   let doc: z.infer<typeof RawWorkflowSchema>;
   try {
     doc = RawWorkflowSchema.parse(parseYaml(raw));
   } catch (err) {
     const detail =
       err instanceof z.ZodError ? formatZodIssues(err.errors) : String(err);
-    throw new Error(`Invalid workflow file "${filePath}":\n${detail}`);
+    throw new Error(`Invalid workflow file "${label}":\n${detail}`);
   }
 
   const vars = { ...(doc.vars ?? {}), ...cliVars };

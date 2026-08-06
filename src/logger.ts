@@ -33,9 +33,14 @@ export function findExecutantLocalDir(startDir: string): string | null {
 }
 
 export function resolveLogDir(workflowFilePath: string): string {
-  const startDir = dirname(resolve(workflowFilePath));
-  const executantLocal = findExecutantLocalDir(startDir);
-  return executantLocal ? join(executantLocal, "logs") : join(startDir, "logs");
+  return resolveLogDirFrom(dirname(resolve(workflowFilePath)));
+}
+
+/** Same resolution, but starting from a directory (used for remote workflows). */
+export function resolveLogDirFrom(startDir: string): string {
+  const dir = resolve(startDir);
+  const executantLocal = findExecutantLocalDir(dir);
+  return executantLocal ? join(executantLocal, "logs") : join(dir, "logs");
 }
 
 // ============================================================================
