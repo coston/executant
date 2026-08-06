@@ -13,8 +13,14 @@
 import React from "react";
 import { render } from "ink";
 import { mkdirSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { loadWorkflow } from "./load-workflow.js";
+import { dirname, join, resolve } from "node:path";
+import { loadWorkflow, parseWorkflow } from "./load-workflow.js";
+import {
+  fetchWorkflowSource,
+  isRemoteWorkflow,
+  toRawUrl,
+  workflowTaskName,
+} from "./lib/remote-workflow.js";
 import { runWorkflow } from "./runner.js";
 import { checkForUpdate } from "./update.js";
 import { App } from "./ui/App.js";
@@ -24,7 +30,7 @@ import { PlanApp } from "./ui/PlanApp.js";
 import {
   createLogger,
   findExecutantLocalDir,
-  resolveLogDir,
+  resolveLogDirFrom,
   withLogger,
 } from "./logger.js";
 import { InterjectChannel, TimeoutError } from "./types.js";
@@ -94,7 +100,7 @@ if (rawArgs[0] === "update") {
 }
 
 if (rawArgs.length === 0 || rawArgs[0] === "--help" || rawArgs[0] === "-h") {
-  console.log(`Usage: executant [options] <workflow.yaml>
+  console.log(`Usage: executant [options] <workflow.yaml | url>
        executant update
 
 Version: ${CURRENT_VERSION}
@@ -146,6 +152,14 @@ YAML — script step fields (type: script | command, or inferred when command is
                             up to 5 attempts with accumulated context (default: false)
   max_healing_attempts  int   Override max self-healing retries (default: 5)
   timeout_seconds   number  Kill the step and fail with exit code 3 after N seconds
+
+Remote workflows:
+  The workflow argument may be an http(s) URL instead of a local path:
+    executant https://github.com/owner/repo/blob/main/tasks/deploy.yaml
+    executant https://gist.github.com/user/abc123
+  GitHub blob and gist page URLs are rewritten to their raw equivalents.
+  Private repos and gists use the token from your \`gh auth login\`.
+  Remote workflows run in the current directory, and logs are written there.
 
 Cancellation:
   Write a .executant-cancel file in the working directory to stop execution
@@ -227,23 +241,35 @@ for (let i = 0; i < rawArgs.length; i++) {
   }
 }
 
-const filePath = positional[0];
+const source = positional[0];
 
-if (!filePath) {
+if (!source) {
   console.error("Error: no workflow file specified");
   process.exit(1);
 }
 
+const remote = isRemoteWorkflow(source);
+
 let workflow: Workflow;
 try {
-  workflow = loadWorkflow(filePath, cliVars);
+  workflow = remote
+    ? parseWorkflow(
+        await fetchWorkflowSource(toRawUrl(source)),
+        source,
+        cliVars,
+      )
+    : loadWorkflow(source, cliVars);
 } catch (err) {
   console.error(getErrorMessage(err));
   process.exit(2);
 }
 
+// A remote workflow has no local directory of its own — it runs against
+// wherever the user is standing.
+const baseDir = remote ? process.cwd() : dirname(resolve(source));
+
 // Auto-create task directories if this project uses executant's local dir layout.
-const localDir = findExecutantLocalDir(dirname(resolve(filePath)));
+const localDir = findExecutantLocalDir(baseDir);
 if (localDir) {
   mkdirSync(join(localDir, "tasks", "todo"), { recursive: true });
   mkdirSync(join(localDir, "tasks", "done"), { recursive: true });
@@ -251,15 +277,17 @@ if (localDir) {
 const options: RunOptions = {
   stepFilter,
   fromStep,
-  workDir: dirname(resolve(filePath)),
+  workDir: baseDir,
 };
 const channel = new InterjectChannel();
 const rawEvents = runWorkflow(workflow, options, channel);
-const logger = createLogger(resolveLogDir(filePath), workflow.goal);
+const logger = createLogger(resolveLogDirFrom(baseDir), workflow.goal);
 // Telemetry is opt-in via OTEL_EXPORTER_OTLP_ENDPOINT. The dynamic import
 // keeps the OTel SDK entirely unloaded when it is off.
 const telemetry = process.env["OTEL_EXPORTER_OTLP_ENDPOINT"]
-  ? await (await import("./telemetry.js")).createTelemetry(basename(filePath))
+  ? await (
+      await import("./telemetry.js")
+    ).createTelemetry(workflowTaskName(source))
   : null;
 const events = telemetry
   ? withLogger(withLogger(rawEvents, logger), telemetry)

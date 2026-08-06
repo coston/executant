@@ -7,10 +7,43 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { loadWorkflow } from "../load-workflow.js";
+import { loadWorkflow, parseWorkflow } from "../load-workflow.js";
 import type { ClaudeTask, CommandTask, LogTask } from "../types.js";
 import { DEFAULT_MODEL } from "../lib/utils.js";
 import { tmpYaml } from "./helpers.js";
+
+// ----------------------------------------------------------------------------
+// parseWorkflow — in-memory source (used for remote workflows)
+// ----------------------------------------------------------------------------
+
+describe("parseWorkflow", () => {
+  const yaml = `
+goal: test
+vars:
+  env: production
+steps:
+  - name: deploy
+    command: deploy --env {{env}}
+`;
+
+  test("parses a YAML string identically to the same file on disk", () => {
+    const fromDisk = loadWorkflow(tmpYaml(yaml));
+    const fromString = parseWorkflow(yaml, "https://example.com/a.yaml");
+    assert.deepEqual(fromString, fromDisk);
+  });
+
+  test("applies CLI vars to a string source", () => {
+    const wf = parseWorkflow(yaml, "remote", { env: "staging" });
+    assert.equal((wf.tasks[0] as CommandTask).command, "deploy --env staging");
+  });
+
+  test("reports the supplied label on invalid YAML", () => {
+    assert.throws(
+      () => parseWorkflow("steps: []\n", "https://example.com/bad.yaml"),
+      /Invalid workflow file "https:\/\/example.com\/bad.yaml"/,
+    );
+  });
+});
 
 // ----------------------------------------------------------------------------
 // Variable substitution

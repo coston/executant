@@ -47,6 +47,20 @@ steps:
 executant workflow.yaml
 ```
 
+## Running a Remote Workflow
+
+The workflow argument can be an `http(s)` URL instead of a local path, so a workflow can be shared from a repo or a gist without cloning it:
+
+```bash
+executant https://github.com/owner/repo/blob/main/tasks/deploy.yaml
+executant https://gist.github.com/user/abc123
+```
+
+- GitHub blob and gist **page** URLs are rewritten to their raw equivalents, so you can paste the URL straight from the browser. Raw URLs and non-GitHub URLs are fetched as-is.
+- **Private** repos and gists authenticate with the token from your existing `gh auth login`. The token is only ever sent to `raw.githubusercontent.com` and `gist.githubusercontent.com`.
+- A remote workflow runs in **your current directory** — script steps use it as their working directory, and logs are written to its `.claude/executant.local/logs/`.
+- Because there is no local workflow directory, any file paths a remote workflow needs should come from `vars` or `--var KEY=VALUE`.
+
 ## How It Works
 
 A workflow is a YAML file with a `goal` and a list of `steps`. Each step is either a **prompt** (Claude runs it with full tool access), a **script** (bash runs it directly), a **log** (progress marker), or a **forEach** (iterates over a list). Steps run in order; the TUI shows live output and elapsed time for each.
@@ -314,6 +328,7 @@ executant plan "description"                    # generate a workflow YAML (auto
 executant plan -q "description"                 # skip research pass (fast path)
 executant refine workflow.yaml "instructions"   # refine an existing workflow YAML
 executant workflow.yaml                         # run a workflow
+executant https://github.com/o/r/blob/main/w.yaml  # run a workflow from a URL
 executant --ci workflow.yaml                    # headless, NDJSON to stdout
 executant --step <name|n> wf.yaml              # run one step by name or index
 executant --from-step <n> wf.yaml              # resume from step n
