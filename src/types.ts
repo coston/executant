@@ -265,6 +265,51 @@ export interface StepJudgeEvent {
   feedback?: string;
 }
 
+/**
+ * A single actionable change the retrospective suggests for the workflow file.
+ * `step` names the step it applies to, or is omitted for workflow-wide advice.
+ */
+export interface RetrospectiveSuggestion {
+  step?: string;
+  issue: string;
+  change: string;
+  severity: "high" | "medium" | "low";
+}
+
+/** Post-mortem produced after a step fails fatally. */
+export interface Retrospective {
+  /** Name of the step that failed. */
+  step: string;
+  /** One-sentence plain-language account of what happened. */
+  summary: string;
+  /** The underlying reason, not the surface symptom. */
+  rootCause: string;
+  /** Concrete lines from the failing output that support the diagnosis. */
+  evidence: string[];
+  /** Changes to the workflow file that would prevent or survive this failure. */
+  suggestions: RetrospectiveSuggestion[];
+  /**
+   * True when the suggestions can be applied to the workflow YAML by `refine`.
+   * False when the fault is in the codebase or environment, not the workflow.
+   */
+  workflowFixable: boolean;
+  /**
+   * Natural-language instruction to feed `executant refine` when the user
+   * accepts the suggestions. Empty when workflowFixable is false.
+   */
+  refineInstruction: string;
+}
+
+/**
+ * Fired after a fatal step failure, once the post-mortem has been generated.
+ * Emitted immediately before the runner rethrows, so the TUI can render it.
+ */
+export interface StepRetrospectiveEvent {
+  type: "step:retrospective";
+  index: number;
+  retrospective: Retrospective;
+}
+
 export type Event =
   | WorkflowStartEvent
   | WorkflowCompleteEvent
@@ -282,7 +327,8 @@ export type Event =
   | LogEvent
   | StepInterjectionEvent
   | StepHealingEvent
-  | StepJudgeEvent;
+  | StepJudgeEvent
+  | StepRetrospectiveEvent;
 
 // ----------------------------------------------------------------------------
 // Run options  (CLI flags, not YAML — passed to runWorkflow)
@@ -302,6 +348,11 @@ export interface RunOptions {
   fromStep?: FromStepTarget;
   /** Directory where the .executant-cancel file is checked. Defaults to process.cwd(). */
   workDir?: string;
+  /**
+   * Generate a post-mortem when a step ends the run. Defaults to the
+   * EXECUTANT_RETROSPECTIVE env var (on unless set to "0").
+   */
+  retrospective?: boolean;
 }
 
 // ----------------------------------------------------------------------------
@@ -315,6 +366,14 @@ export interface Workflow {
   tasks: Task[];
   /** Shared key/value pairs substituted into prompts and commands. */
   vars?: Record<string, string>;
+  /**
+   * Absolute path to the YAML file this workflow was loaded from. Absent for
+   * remote workflows and for workflows constructed in memory (e.g. tests) —
+   * the retrospective can then report but not offer to update the file.
+   */
+  sourcePath?: string;
+  /** Raw YAML text this workflow was parsed from, used by the retrospective. */
+  source?: string;
 }
 
 // ----------------------------------------------------------------------------
@@ -362,6 +421,8 @@ export interface ExecutionState {
   endTime?: number;
   /** Accumulated list of file paths written via the Write tool across all steps. */
   writtenFiles: string[];
+  /** Post-mortem for the step that failed the run, once it has been generated. */
+  retrospective?: Retrospective;
 }
 
 // ----------------------------------------------------------------------------

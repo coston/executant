@@ -27,7 +27,7 @@ useReducer(reducer, event)               ◄── ui/reducer.ts
 Ink TUI render                           ◄── ui/App.tsx
 ```
 
-In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead of being rendered by Ink. The stream is additive over time — new event types (most recently `step:healing` and `step:judge`) and fields (a step `index` on `output:cost`) may appear — so NDJSON consumers should tolerate unknown event types and fields.
+In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead of being rendered by Ink. The stream is additive over time — new event types (most recently `step:retrospective`) and fields (a step `index` on `output:cost`) may appear — so NDJSON consumers should tolerate unknown event types and fields.
 
 ## Module Responsibilities
 
@@ -52,6 +52,8 @@ In CI mode (`--ci`), the event stream is serialized as NDJSON to stdout instead 
 **`src/telemetry.ts`** — Opt-in OpenTelemetry observer (an `Observer`, teed into the event stream with the same `withLogger()` as the file logger). `createTelemetry()` returns `null` when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset — before importing anything; all `@opentelemetry/*` imports are dynamic and live inside it, so the SDK is never loaded when telemetry is off (esbuild preserves external dynamic imports verbatim in the bundle). A reducer-style state machine (mirroring `logger.ts`) folds the event stream into one trace per run — an `executant.run` root span with a child span per step (index/type/provider/model/cost attributes; `tool`/`healing`/`judge` span events; tool inputs and `output:text` lines are never recorded as span events, though a failed step's error message — which can quote its final output lines — is recorded via the exception event, truncated to 1,000 chars) and grandchild spans per top-level forEach iteration — plus five metrics (step duration/errors, cost by provider, healing attempts, judge verdicts). On `step:start` it publishes the step span's context to the trace-context registry; `shutdown()` is idempotent, ends any still-open spans with `executant.aborted=true` (stamping the accumulated cost attributes first), flushes both providers, and is hard-capped at ~3 s — the OTLP exporters' own request timeout is set to the same ~3 s, so a dead or unresponsive collector can neither hang exit nor keep the event loop alive past the cap.
 
 **`src/plan.ts`** — The `executant plan` subcommand. Generates a workflow YAML from a natural language description by calling `runClaude()` (the same path as all other steps — no direct `spawn`). `streamPlan()` is an async generator that streams `PlanEvent`s to the TUI, validates the structured output via Zod, and writes the YAML file. Retries up to 3 times with corrective feedback on parse or schema errors. All three plan pipeline passes (research, decompose, judge) inject `METHODOLOGY` via `appendSystemPrompt` so the development loop shapes how plans are structured.
+
+**`src/retrospective.ts`** — Post-mortem for a fatal step failure. `generateRetrospective()` builds a prompt from the failing task, the error, the step's output tail, and the workflow source, then runs a no-tool structured Claude call. Returns `null` on any failure so the original step error is never masked. See [Failure Retrospective](#failure-retrospective).
 
 **`src/ui/reducer.ts`** — Pure reducer function. Transforms `Event`s into `ExecutionState` for the TUI. No side effects. `step:iteration` events append an `IterationRecord` to `TaskState.iterationHistory`; `step:inner` updates the running record's child-step metadata; `step:complete`/`step:error` finalise the last running record. `step:interjection` appends `[interjection] <message>` to the current task's log lines.
 
@@ -119,6 +121,7 @@ Key event types in the union:
 - `step:start` / `step:complete` / `step:error` / `step:skip` / `step:iteration` / `step:inner` — step lifecycle (`step:iteration` fires at the start of each forEach/repeat iteration; `step:inner` fires before each child step when there are multiple child steps per iteration). The reducer accumulates these into `TaskState.iterationHistory` (`IterationRecord[]`) so the TUI can show per-iteration progress.
 - `step:interjection` — dispatched directly by `App.tsx` (not the runner) when the user submits an interjection via the `i` key. Carries `index` (current step) and `message`. Handled by the reducer to append a log line; not emitted on the async generator.
 - `step:healing` — structured progress from the self-healing loop: `phase` (`attempt-failed` / `healed` / `exhausted`), 1-based `attempt`, `maxAttempts`, and `exitCode` on failure phases. Emitted alongside (not replacing) the free-text `log` events, which remain the TUI/logfile rendering.
+- `step:retrospective` — emitted once after a fatal step failure, immediately before the runner rethrows. Carries the step `index` and the `Retrospective` object (summary, root cause, evidence, workflow suggestions, `workflowFixable`, `refineInstruction`).
 - `step:judge` — emitted after each LLM-as-judge evaluation: `verdict` (`pass` / `fail`), 1-based `attempt`, `maxAttempts`, and `feedback` on fail.
 - `output:text` — plain text line from a command or Claude's text blocks
 - `output:tool` — structured tool invocation emitted by Claude
@@ -203,6 +206,27 @@ The interjection feature lets users send a correction to a running workflow by p
 **Why stdin injection doesn't work:** The Claude CLI (without `--print`) reads stdin until EOF before processing the input. Keeping stdin open while waiting for potential interjections causes Claude to hang — it never processes the prompt. Tested and confirmed: `{ printf "prompt\n"; sleep 5; } | claude` produces no response. True mid-step injection would require killing and resuming the subprocess with accumulated context, which is a future capability.
 
 **`buildClaudeArgs(task, interactive?)`** accepts an `interactive` flag that omits `--print` from the returned args. This is retained for testability (the test suite validates the interactive-mode args contract) but is not used in the production code path — `runClaude` always passes `interactive=false` (the default).
+
+## Failure Retrospective
+
+When a step throws and `continueOnError` is not set, `runWorkflow` yields `step:error`, then — before rethrowing — calls `generateRetrospective` (`src/retrospective.ts`) and yields `step:retrospective` with the result.
+
+**Inputs** (`RetrospectiveInput`): the failing task definition, the error, the step's last captured output (tail-truncated), a **quality-control history**, the **loop position**, and the workflow itself.
+
+The history and position are accumulated by `runWorkflow` as the step runs, from the `step:judge` / `step:healing` / `step:iteration` / `step:inner` events it already relays (`describeQualityEvent` formats each one). Both carry information that dies with the error message: judge exhaustion throws `failed judge evaluation after N attempts` and nothing else, so the per-attempt feedback — the actual reason — exists only here; likewise a forEach failure names the container, not the item. `step-retrospective.txt` instructs the model to treat this history as primary evidence for judge/healing failures and to distinguish incomplete work, an over-large or subjective step, an unsatisfiable criterion, and a wrong judge — since the fix differs in each case, and "add more retries" is right only when attempts were converging.
+ `Workflow.source` (raw YAML, set by `parseWorkflow`) is preferred over a YAML dump of the parsed tasks, because that is the text the user edits and the text `refine` rewrites.
+
+**The analysis call** goes through `runAgentStructured` with `allowedTools: []` and `permissionMode: "default"` — no tools, so a run that is already failing cannot be mutated further by its own post-mortem. Unlike the judge and self-healing calls it pins no `provider`/`model`, so it follows `EXECUTANT_PROVIDER`/`EXECUTANT_MODEL`: pinning Claude would spawn a binary an OpenCode-only machine does not have, and every failure would announce an analysis that never arrives. Failures inside the analysis return `null` (a `log` line says so) and emit no event: the original step error is what must reach the user. The call carries `timeoutSeconds: 120` — it sits between the step failing and the error being rethrown, so an agent CLI that stalls would otherwise hold the whole run open on its way to reporting a failure the user already knows about.
+
+**Fields** (`Retrospective` in `types.ts`): `summary`, `rootCause`, `evidence[]`, `suggestions[]` (per-step issue/change/severity), `workflowFixable`, and `refineInstruction`. `normalizeRetrospective` fills omitted fields and demotes `workflowFixable` to `false` when the instruction is empty — otherwise the TUI would offer a button that does nothing.
+
+**UI path:** the reducer stores the retrospective on `ExecutionState`. `App.tsx` notes that an interactive retrospective arrived and skips its usual exit-on-error timer, handing keyboard control to `RetrospectivePane` (`KeyboardHandler` is disabled meanwhile). Choosing "update" calls `onUpdateTaskFile`, which `index.ts` uses to run `streamRefine` on `workflow.sourcePath` **after** Ink exits — two Ink apps cannot own the terminal at once. `index.ts` re-reads the YAML from disk at that point rather than reusing `workflow.source`: refine overwrites the file wholesale, and a long run can edit its own task file. The run's exit code is unaffected by the refine.
+
+While the pane is showing, the task list and log pane are hidden and the pane gets the remaining rows (`terminalRows - 8`); `fitLists` trims the evidence and suggestion lists to that budget, since overflowing makes Ink miscount its height and spray text above the UI. Suggestions win the space over evidence — they are the actionable half, and the full report is in the log file either way. `o` swaps the analysis for the failing step's captured lines (`TaskState.lines`) and back, so the model's reading can be checked against the output it read.
+
+`src/tests/retrospective-ui.test.ts` renders these components through `ink-testing-library` (whose stdin reports `isTTY` and implements `setRawMode`, so `useInput` is live) and drives them with real keystrokes — covering the selection, the shortcuts, the output toggle, and App's hold-open-instead-of-exit branch including the non-retrospective control case.
+
+**Off switch:** `RunOptions.retrospective` (set by `--no-retrospective`) or `EXECUTANT_RETROSPECTIVE=0` skips the call entirely. The test suite sets it so unrelated failure tests never spend an API call; `src/tests/retrospective.test.ts` re-enables it against a mock claude binary.
 
 ## Quality Control Features
 

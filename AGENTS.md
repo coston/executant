@@ -45,6 +45,7 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`refine`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`
    - `src/load-workflow.ts` - YAML → typed `Workflow`
    - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
+   - `src/retrospective.ts` - Post-mortem generated when a step fails fatally; analyses the error, the step output, and the workflow file itself, and produces a `refine` instruction when the workflow is at fault. Disable with `EXECUTANT_RETROSPECTIVE=0`
    - `src/logger.ts` - Subscribes to event stream; writes `.log` files to `.claude/executant.local/logs/`; exports the `Observer` interface shared with telemetry
    - `src/telemetry.ts` - Opt-in OpenTelemetry observer; exports traces + metrics via OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
    - `src/types.ts` - All shared types: `Task`, `Event` (including the structured `step:healing`/`step:judge` events and the indexed `output:cost` — all emitted with an `index: -1` sentinel that `runWorkflow` patches to the real step index), `Workflow`, `RawWorkflow`/`RawStep` (YAML schema), `InterjectChannel` class
@@ -58,6 +59,7 @@ src/
 ├── index.ts              # Entry point (CLI, TUI, CI mode, plan/refine/update subcommands)
 ├── load-workflow.ts      # YAML → typed Workflow
 ├── runner.ts             # Workflow execution (self-healing, judge, forEach, context)
+├── retrospective.ts      # Failure post-mortem (root cause + task-file advice)
 ├── logger.ts             # Execution logger (log files); exports the shared Observer interface
 ├── telemetry.ts          # Opt-in OpenTelemetry observer (OTLP traces + metrics)
 ├── plan.ts               # `executant plan` subcommand
@@ -78,6 +80,7 @@ src/
 ├── ui/                   # Ink TUI components
 │   ├── App.tsx           # Root component; holds isInterjecting state; wires InterjectChannel
 │   ├── InterjectInput.tsx # Text input overlay shown when user presses i
+│   ├── RetrospectivePane.tsx # Failure post-mortem, output toggle, "update the task file"
 │   ├── KeyboardHandler.tsx # Handles q/Ctrl+C/i; disabled while isInterjecting
 │   ├── PlanApp.tsx        # TUI for plan/refine subcommands
 │   ├── TaskRow.tsx        # Renders a single step row
@@ -96,6 +99,7 @@ src/
     ├── plan-retry-schema-error.txt  # Retry after schema validation failure
     ├── plan-refine.txt              # Refine pass: apply instructions to existing YAML
     ├── plan-system-rules.txt        # Structural enforcement rules for plan generation
+    ├── step-retrospective.txt       # Failure post-mortem + task-file evaluation
     ├── judge-evaluation.txt         # LLM-as-judge evaluation prompt
     ├── judge-retry-context.txt      # Retry context injected after judge FAIL
     └── self-healing-fix.txt         # Self-healing error analysis prompt
@@ -135,6 +139,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - Plan pipeline (`plan-research.txt`, `plan-decompose.txt`, `plan-judge.txt`, `plan-retry-judge.txt`, `plan-system-rules.txt`, `plan-retry-parse-error.txt`, `plan-retry-schema-error.txt`) - Used by `executant plan` three-pass pipeline (`plan.ts`)
 - Plan refine (`plan-refine.txt`) - Used by `executant refine` subcommand (`refine.ts`)
 - Judge evaluation (`judge-evaluation.txt`, `judge-retry-context.txt`) - Used by `llm_as_judge: true` steps (`runner.ts`)
+- Failure retrospective (`step-retrospective.txt`) - Used by `generateRetrospective` (`retrospective.ts`) when a step fails fatally
 - Self-healing analysis (`self-healing-fix.txt`) - Used by `self_healing: true` failures (`runner.ts`)
 
 #### Adding New Prompts
@@ -166,6 +171,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - **Streaming**: Real-time output via Ink TUI
 - **Project detection**: Walks up directory tree to find `.claude/executant.local/tasks`
 - **Remote workflows**: The workflow argument may be an `http(s)` URL (`src/lib/remote-workflow.ts`). GitHub blob/gist page URLs are rewritten to raw; private ones authenticate with `gh auth token` (sent only to GitHub raw hosts). A remote workflow runs with `process.cwd()` as its `workDir` and log root.
+- **Failure retrospective**: When a step fails and ends the run, the runner emits `step:retrospective` before rethrowing. The TUI shows the root cause, the evidence, and any task-file changes worth making, and offers to apply them via `refine` on `workflow.sourcePath` (run by `index.ts` after Ink exits). The analysis agent gets no tools and its own failures are swallowed — the original step error must always reach the user. The prompt receives the judge/self-healing history and forEach position accumulated by `runWorkflow`, so a step killed by `llm_as_judge` is analysed against every verdict rather than the bare "failed after 5 attempts". One API call per fatal failure, capped at 120s; `--no-retrospective` / `EXECUTANT_RETROSPECTIVE=0` disables it (the test suite sets the env var).
 - **Interjection**: User presses `i` during execution to queue a correction. The message is prepended to the next Claude step's prompt as `[User correction from a previous step]`. The Claude CLI cannot receive mid-execution stdin input (it buffers all stdin until EOF before processing), so true mid-step injection is not possible — the correction always targets the next step.
 
 ### TypeScript Logging (`src/logger.ts`)

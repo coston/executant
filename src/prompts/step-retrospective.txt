@@ -1,0 +1,123 @@
+# ============================================================================
+# STEP RETROSPECTIVE
+# ============================================================================
+# Purpose: After a step fails fatally, diagnose why and evaluate whether the
+#          workflow file itself is at fault (bad var composition, missing
+#          verification, too few iterations, wrong tool set, missing timeout).
+# Used by: src/retrospective.ts (generateRetrospective), invoked from
+#          src/runner.ts when a non-continueOnError step throws.
+# Triggered when: a step fails and EXECUTANT_RETROSPECTIVE is not "0".
+#
+# Placeholders:
+#   {{STEP_NAME}}    - Name of the failing step
+#   {{STEP_DETAIL}}  - The failing step's resolved definition (command/prompt)
+#   {{ERROR}}        - The error message thrown by the step
+#   {{OUTPUT}}       - Last lines of the step's combined stdout/stderr
+#   {{QUALITY_HISTORY}} - Judge verdicts and self-healing attempts, oldest first
+#   {{WORKFLOW}}     - The full workflow definition (YAML source or JSON)
+# ============================================================================
+
+A step in an executant workflow has failed and the run has stopped. Write a
+retrospective for the user: explain why it failed, and judge whether the
+workflow file itself should change.
+
+FAILING STEP: {{STEP_NAME}}
+
+STEP DEFINITION:
+{{STEP_DETAIL}}
+
+ERROR:
+{{ERROR}}
+
+LAST OUTPUT FROM THE STEP:
+{{OUTPUT}}
+
+QUALITY-CONTROL HISTORY (judge verdicts and self-healing attempts):
+{{QUALITY_HISTORY}}
+
+FULL WORKFLOW DEFINITION:
+{{WORKFLOW}}
+
+Analyse in this order:
+
+1. Read the error and output and identify the root cause — the underlying
+   reason, not the surface symptom. "npm test exited 1" is a symptom; "the
+   test asserts a field the new schema renamed" is a root cause. If the output
+   is truncated or uninformative, say so plainly rather than guessing.
+
+   When the quality-control history is present, it is your primary evidence and
+   the error message is nearly worthless — treat it accordingly:
+
+   - Judge exhaustion ("failed judge evaluation after N attempts"): the error
+     says only that the step ran out of attempts. The reason lives in the judge
+     feedback for each attempt. Read all of it and say what the judge actually
+     kept rejecting, quoting the specific feedback. Then determine which case
+     this is, because the fix differs completely:
+       (a) The work was genuinely incomplete or wrong — report what was missing
+           and what the step must do differently.
+       (b) The feedback changed on every attempt, or the attempts each fixed
+           the previous complaint — the step is too large, or the success
+           condition is subjective. It should be split, or given an explicit,
+           checkable definition of done.
+       (c) The same feedback repeated verbatim and the step never moved — the
+           prompt cannot satisfy the criterion as written (it asks for
+           something unattainable, contradictory, or outside the step's
+           allowed_tools). Say which, and name the blocker.
+       (d) The judge was wrong — the output did meet the stated instructions
+           and the criterion is misconceived. Say so plainly; do not invent a
+           workflow fix to agree with a bad verdict.
+     Only recommend "more retries" when the attempts were visibly converging.
+     Repeating a step that never moved just spends five times the money.
+
+   - Self-healing exhaustion: report what each fix attempt tried and why the
+     command still failed, and whether the attempts were converging or the
+     healer kept circling the same wrong hypothesis.
+
+2. Evaluate the workflow definition against the failure. Look specifically for:
+   - Variable composition: a {{var}} that resolved to an empty, wrong, or
+     non-existent path; a var that should have been passed with --var.
+   - Missing prerequisites: a step that assumes state an earlier step never
+     established (install, build, migration, checkout).
+   - Iteration count: a repeat/forEach that ran too few times to converge, or
+     a step that would have succeeded on retry.
+   - Missing quality control: a fragile step that should carry
+     self_healing: true, llm_as_judge: true, or continue_on_error: true.
+   - Tool restrictions: an allowed_tools list too narrow for what the prompt
+     actually asks the agent to do.
+   - Timeouts: a long step with no timeout_seconds, or one set too low.
+   - Prompt clarity: a prompt step whose instructions are ambiguous or lack a
+     verifiable success condition — especially one carrying llm_as_judge,
+     where an unstated definition of done guarantees repeated rejection.
+
+3. Decide whether changing the workflow file would actually help. Set
+   workflowFixable to false when the fault lies entirely in the codebase or
+   environment (a genuine failing test, a real compile error, a missing
+   credential) and no workflow change would have prevented or survived it.
+   Do not invent workflow changes to look useful — a false suggestion sends
+   the user editing the wrong file.
+
+4. If workflowFixable is true, write refineInstruction as a direct,
+   self-contained instruction that `executant refine` can apply to the YAML,
+   naming the steps and fields to change. Example: "Add a step before
+   'run-tests' that runs npm ci, and set self_healing: true on 'run-tests'."
+   Leave it empty when workflowFixable is false.
+
+Write for someone who did not watch the run. Be concrete, cite the evidence,
+and keep every field free of speculation you cannot support from the output.
+
+Respond with JSON only:
+{
+  "summary": "one sentence: what failed and why",
+  "rootCause": "the underlying cause, 1-3 sentences",
+  "evidence": ["exact lines or facts from the output supporting the diagnosis"],
+  "suggestions": [
+    {
+      "step": "step name the change applies to (omit for workflow-wide advice)",
+      "issue": "what is wrong with the workflow as written",
+      "change": "the specific edit to make",
+      "severity": "high | medium | low"
+    }
+  ],
+  "workflowFixable": true,
+  "refineInstruction": "instruction for `executant refine`, or empty string"
+}

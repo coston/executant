@@ -10,6 +10,7 @@
 //   (no type)     → inferred from presence of prompt/command/message
 
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { load as parseYaml } from "js-yaml";
 import {
   getErrorMessage,
@@ -70,7 +71,12 @@ export function loadWorkflow(
       `Cannot read workflow file "${filePath}": ${getErrorMessage(err)}`,
     );
   }
-  return parseWorkflow(raw, filePath, cliVars);
+  // sourcePath is what the retrospective offers to refine — only a local file
+  // can be rewritten, so remote workflows (parseWorkflow directly) never get it.
+  return {
+    ...parseWorkflow(raw, filePath, cliVars),
+    sourcePath: resolve(filePath),
+  };
 }
 
 /**
@@ -106,6 +112,7 @@ export function parseWorkflow(
   return {
     goal: doc.goal,
     vars,
+    source: raw,
     tasks: doc.steps.map((step) => convertStep(step, vars)),
   };
 }

@@ -27,8 +27,12 @@ steps:
 `;
 
   test("parses a YAML string identically to the same file on disk", () => {
-    const fromDisk = loadWorkflow(tmpYaml(yaml));
+    // sourcePath is intentionally file-only — a remote workflow has no local
+    // file for the retrospective to offer to refine.
+    const { sourcePath, ...fromDisk } = loadWorkflow(tmpYaml(yaml));
     const fromString = parseWorkflow(yaml, "https://example.com/a.yaml");
+    assert.ok(sourcePath);
+    assert.equal(fromString.sourcePath, undefined);
     assert.deepEqual(fromString, fromDisk);
   });
 

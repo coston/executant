@@ -12,7 +12,7 @@
 
 import React from "react";
 import { render } from "ink";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { loadWorkflow, parseWorkflow } from "./load-workflow.js";
 import {
@@ -34,7 +34,12 @@ import {
   withLogger,
 } from "./logger.js";
 import { InterjectChannel, TimeoutError } from "./types.js";
-import type { FromStepTarget, RunOptions, Workflow } from "./types.js";
+import type {
+  FromStepTarget,
+  Retrospective,
+  RunOptions,
+  Workflow,
+} from "./types.js";
 import { getErrorMessage, ignoreBrokenPipe } from "./lib/utils.js";
 import { CURRENT_VERSION } from "./version.js";
 
@@ -110,6 +115,7 @@ Options:
   --step <name|index>   Run only the named step or step at 1-based index
   --from-step <n>       Resume from step n (e.g. 3, 3.2, 2.5.4.3 — 1-based path)
   --var KEY=VALUE       Override or supply a workflow var at runtime (repeatable)
+  --no-retrospective    Skip the post-mortem analysis when a step fails
   --help, -h            Show this help
 
 Commands:
@@ -161,6 +167,14 @@ Remote workflows:
   Private repos and gists use the token from your \`gh auth login\`.
   Remote workflows run in the current directory, and logs are written there.
 
+Failure retrospectives:
+  When a step fails and stops the run, executant explains why: root cause,
+  evidence, and any task-file changes worth making. If the workflow itself is
+  at fault it offers to apply the changes with \`refine\` (press u).
+  Judge and self-healing history is included, so a step that dies to
+  llm_as_judge is analysed against every verdict the judge gave.
+  Skip it with --no-retrospective or EXECUTANT_RETROSPECTIVE=0.
+
 Cancellation:
   Write a .executant-cancel file in the working directory to stop execution
   cleanly between steps (exit code 4). The file is deleted automatically.
@@ -195,6 +209,7 @@ Example:
 }
 
 let ciMode = false;
+let retrospective: boolean | undefined;
 let stepFilter: string | undefined;
 let fromStep: FromStepTarget | undefined;
 const cliVars: Record<string, string> = {};
@@ -204,6 +219,8 @@ for (let i = 0; i < rawArgs.length; i++) {
   const a = rawArgs[i];
   if (a === "--ci") {
     ciMode = true;
+  } else if (a === "--no-retrospective") {
+    retrospective = false;
   } else if (a === "--step") {
     if (!rawArgs[i + 1]) {
       console.error("--step requires a value");
@@ -278,6 +295,7 @@ const options: RunOptions = {
   stepFilter,
   fromStep,
   workDir: baseDir,
+  ...(retrospective !== undefined && { retrospective }),
 };
 const channel = new InterjectChannel();
 const rawEvents = runWorkflow(workflow, options, channel);
@@ -341,6 +359,10 @@ if (ciMode) {
   });
 } else {
   // Interactive mode: render the Ink TUI.
+  // Set when the user accepts the retrospective's suggested task-file changes.
+  // Applied after Ink exits — refine renders its own TUI and the two cannot
+  // own the terminal at the same time.
+  let pendingRefine: Retrospective | undefined;
   const inkApp = render(
     React.createElement(App, {
       workflow,
@@ -348,6 +370,9 @@ if (ciMode) {
       options,
       updateCheck,
       interjectChannel: channel,
+      onUpdateTaskFile: (retrospective) => {
+        pendingRefine = retrospective;
+      },
     }),
   );
   // waitUntilExit must be called synchronously after render — Ink installs the
@@ -360,6 +385,44 @@ if (ciMode) {
     // stops an unhandled rejection from clobbering that exit code.
   }
   await telemetry?.shutdown();
+
+  if (pendingRefine && workflow.sourcePath) {
+    const taskFile = workflow.sourcePath;
+    // Re-read from disk rather than reusing the copy loaded before the run.
+    // refine overwrites the file wholesale, and a long run can edit its own
+    // task file (or the user can) — regenerating from a stale snapshot would
+    // silently discard those changes.
+    let existingYaml: string;
+    try {
+      existingYaml = readFileSync(taskFile, "utf8");
+    } catch (err) {
+      console.error(
+        `Cannot update "${taskFile}": ${getErrorMessage(err)}\n` +
+          `Suggested change: ${pendingRefine.refineInstruction}`,
+      );
+      existingYaml = "";
+    }
+    const refineApp = existingYaml
+      ? render(
+          React.createElement(PlanApp, {
+            description: workflow.goal,
+            events: streamRefine({
+              taskFile,
+              existingYaml,
+              instructions: pendingRefine.refineInstruction,
+              description: workflow.goal,
+            }),
+          }),
+        )
+      : undefined;
+    try {
+      await refineApp?.waitUntilExit();
+    } catch {
+      /* refine failed — PlanApp already displayed it */
+    }
+    // The exit code still reflects the run: the workflow failed, and updating
+    // the task file does not make that run a success.
+  }
   // No process.exit — TUI exit relies on natural event-loop drain and the
   // process.exitCode set by App.
 }

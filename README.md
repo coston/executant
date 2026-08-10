@@ -256,6 +256,61 @@ press i  →  ▷ don't delete that file, use git revert▌  esc to cancel
 
 **What it can't do:** interrupt a Claude step mid-execution. The Claude CLI processes each invocation as a complete unit; there's no mechanism to inject a message partway through. To abort a runaway step immediately, press `q`.
 
+## Failure retrospectives
+
+When a step fails and stops the run, executant writes a post-mortem before it exits and shows it in the TUI:
+
+```
+╭──────────────────────────────────────────────────────────╮
+│ retrospective — check-dist                               │
+│                                                          │
+│ The step failed because dist/ was never created.         │
+│                                                          │
+│ root cause                                               │
+│ No build step runs before the check.                     │
+│                                                          │
+│ evidence                                                 │
+│   · ls: dist: No such file or directory                  │
+│                                                          │
+│ task file                                                │
+│   · check-dist: assumes a build that never runs          │
+│     → add a build step before it                         │
+│                                                          │
+│ ❯ [u] Update the task file with these changes            │
+│   [d] Dismiss                                            │
+│   [o] show the step output                               │
+╰──────────────────────────────────────────────────────────╯
+```
+
+Press **`o`** to swap the analysis for the failing step's raw output and back — the post-mortem is a reading of that output, and this is how you check it.
+
+### Judge and self-healing failures
+
+When a step dies to `llm_as_judge`, the error says only "failed judge evaluation after 5 attempts" — the reasons live in the per-attempt feedback. Every verdict is handed to the analysis, which is asked to distinguish the cases that need different fixes:
+
+- the work was genuinely incomplete — what was missing
+- the feedback changed every attempt — the step is too large or the success condition is subjective; split it or define done
+- the same feedback repeated and nothing moved — the prompt can't satisfy the criterion as written (unattainable, contradictory, or outside its `allowed_tools`)
+- the judge was wrong — the criterion is misconceived, and the workflow needs no change
+
+It recommends more retries only when the attempts were visibly converging; repeating a step that never moved just spends five times the money. Self-healing exhaustion gets the same treatment across its fix attempts. Failures inside a `forEach` name the iteration and item that broke, not just the container.
+
+### What it looks at
+
+The analysis reads the error, the failing step's output, its judge/self-healing history, **and the workflow file itself** — so it can flag problems only visible at the file level: a `{{var}}` that resolved to nothing, a `repeat` count too low to converge, a fragile step that should carry `self_healing: true`, an `allowed_tools` list too narrow for the prompt, a long step with no `timeout_seconds`.
+
+Choose **`u`** and executant runs `refine` on the task file with the suggested changes, showing the diff before it writes. Choose **`d`** to dismiss. The update action is offered only when changing the workflow would actually have helped — when the fault is a genuine failing test or a real compile error, the retrospective says so and offers no button.
+
+Notes:
+
+- The analysis agent runs with **no tools** — it reasons only from the error, the captured output, and the workflow file, so it can never touch your project while a run is already failing. It uses whichever provider `EXECUTANT_PROVIDER` selects, so an OpenCode-only setup gets a retrospective too.
+- If the analysis itself fails it is silently dropped; the original step error always propagates and the exit code is unchanged. Updating the task file does **not** turn a failed run into a successful one.
+- It costs one API call per fatal failure, time-boxed to 120s so a stalled agent CLI can never hold the exit open. Disable with `--no-retrospective` or `EXECUTANT_RETROSPECTIVE=0`.
+- `u` re-reads the task file from disk before refining, so edits made during the run (by you or by a step) aren't overwritten by a stale copy.
+- Steps with `continue_on_error: true` don't end the run, so they don't produce a retrospective.
+- In `--ci` mode the post-mortem is emitted as a `step:retrospective` NDJSON event instead of a pane; the update action is interactive-only.
+- Remote (URL) workflows get the report but no update action — there is no local file to rewrite.
+
 ## Observability
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` and every run exports OpenTelemetry traces and metrics to an OTLP/HTTP collector (Jaeger, Grafana, Honeycomb, …):

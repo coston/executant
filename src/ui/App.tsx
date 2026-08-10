@@ -12,9 +12,11 @@ import { InterjectInput } from "./InterjectInput.js";
 import type {
   Event,
   InterjectChannel,
+  Retrospective,
   RunOptions,
   Workflow,
 } from "../types.js";
+import { RetrospectivePane } from "./RetrospectivePane.js";
 import { TimeoutError } from "../types.js";
 import { getErrorMessage } from "../lib/utils.js";
 import { reducer, buildInitialState } from "./reducer.js";
@@ -36,9 +38,18 @@ interface Props {
   options?: RunOptions;
   updateCheck: Promise<string | null>;
   interjectChannel?: InterjectChannel;
+  /**
+   * Called when the user accepts the retrospective's suggested task-file
+   * changes. The TUI cannot run `refine` itself while Ink owns the terminal —
+   * the caller applies it after the app exits.
+   */
+  onUpdateTaskFile?: (retrospective: Retrospective) => void;
 }
 
 const MAX_VISIBLE_ITERATIONS = 8;
+// Floor for the retrospective pane's row budget on a very short terminal —
+// below this it renders its chrome only and trims both lists to nothing.
+const RETROSPECTIVE_MIN_ROWS = 10;
 const MAX_VISIBLE_WRITTEN_FILES = 50;
 
 export function App({
@@ -47,20 +58,34 @@ export function App({
   options,
   updateCheck,
   interjectChannel,
+  onUpdateTaskFile,
 }: Props) {
   const { exit } = useApp();
   const [state, dispatch] = useReducer(reducer, buildInitialState(workflow));
   const [isInterjecting, setIsInterjecting] = useState(false);
+  // True once a retrospective is on screen and waiting for the user to choose
+  // an action. While set, the app deliberately does not exit on the failure.
+  const [awaitingRetrospective, setAwaitingRetrospective] = useState(false);
+
+  const { isRawModeSupported } = useStdin();
 
   // Consume the event stream. Each event updates state via the reducer.
   useEffect(() => {
     let active = true;
+    // The retrospective arrives just before the runner rethrows. Remember it
+    // here so the catch below knows to hand control to the pane instead of
+    // tearing the TUI down a moment later.
+    let interactiveRetrospective = false;
 
     (async () => {
       try {
         for await (const event of events) {
           if (!active) break;
           dispatch(event);
+          if (event.type === "step:retrospective" && isRawModeSupported) {
+            interactiveRetrospective = true;
+            setAwaitingRetrospective(true);
+          }
           if (event.type === "workflow:complete") {
             // Leave the final state visible briefly, then exit.
             setTimeout(() => exit(), EXIT_DELAY_MS);
@@ -74,6 +99,9 @@ export function App({
         if (!active) return;
         dispatch({ type: "log", level: "error", text: getErrorMessage(err) });
         process.exitCode = err instanceof TimeoutError ? 3 : 1;
+        // Exit code is already set; the pane exits once the user has read the
+        // post-mortem and picked an action.
+        if (interactiveRetrospective) return;
         setTimeout(
           () =>
             exit(err instanceof Error ? err : new Error(getErrorMessage(err))),
@@ -89,9 +117,8 @@ export function App({
         /* already finished */
       });
     };
-  }, [events, exit]);
+  }, [events, exit, isRawModeSupported]);
 
-  const { isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
 
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
@@ -143,8 +170,20 @@ export function App({
     terminalRows - FIXED_OVERHEAD - taskRowsUsed - iterationRowCount,
   );
 
+  // With the task list and log pane hidden, the pane gets every row the fixed
+  // chrome does not need: padding(2) + brand+margin(2) + header+margin(2)
+  // + footer+margin(2), plus the update banner when it is showing.
+  const showRetrospective = Boolean(state.retrospective);
+  const retrospectiveMaxRows = Math.max(
+    RETROSPECTIVE_MIN_ROWS,
+    terminalRows - 8 - (updateVersion ? 1 : 0),
+  );
+
   const elapsed = formatHeaderElapsed(state.startTime, state.endTime);
   const activeTask = state.tasks[state.currentIndex];
+  // The step the retrospective is about — its captured output is what `o`
+  // shows, so the user can check the analysis against what actually happened.
+  const failedTask = state.tasks.find((t) => t.status === "error");
   const completedCount = state.tasks.filter(
     (t) => t.status === "complete",
   ).length;
@@ -174,43 +213,67 @@ export function App({
         </Text>
       </Box>
 
-      {/* Task list */}
-      <Box flexDirection="column" marginBottom={1}>
-        {hiddenTaskCount > 0 && (
-          <Text dimColor>
-            {"  "}··· {hiddenTaskCount} earlier
-          </Text>
-        )}
-        {taskSlice.map((taskState, i) => {
-          const globalIndex = hiddenTaskCount + i;
-          return (
-            <Box key={globalIndex} flexDirection="column">
-              <TaskRow
-                index={globalIndex}
-                tick={tick}
-                taskState={taskState}
-                isActive={globalIndex === state.currentIndex}
-              />
-              {taskState.status === "running" &&
-              taskState.iterationHistory?.length ? (
-                <IterationList
-                  iterationHistory={taskState.iterationHistory}
+      {/* Task list — hidden once the retrospective takes over the screen. The
+          run is finished and the pane names the step that ended it, so the
+          rows are better spent on the post-mortem than on a frozen list. */}
+      {!showRetrospective && (
+        <Box flexDirection="column" marginBottom={1}>
+          {hiddenTaskCount > 0 && (
+            <Text dimColor>
+              {"  "}··· {hiddenTaskCount} earlier
+            </Text>
+          )}
+          {taskSlice.map((taskState, i) => {
+            const globalIndex = hiddenTaskCount + i;
+            return (
+              <Box key={globalIndex} flexDirection="column">
+                <TaskRow
+                  index={globalIndex}
                   tick={tick}
-                  maxVisible={MAX_VISIBLE_ITERATIONS}
+                  taskState={taskState}
+                  isActive={globalIndex === state.currentIndex}
                 />
-              ) : null}
-            </Box>
-          );
-        })}
-      </Box>
+                {taskState.status === "running" &&
+                taskState.iterationHistory?.length ? (
+                  <IterationList
+                    iterationHistory={taskState.iterationHistory}
+                    tick={tick}
+                    maxVisible={MAX_VISIBLE_ITERATIONS}
+                  />
+                ) : null}
+              </Box>
+            );
+          })}
+        </Box>
+      )}
 
-      {/* Live output pane for the active task */}
-      {activeTask && (
-        <LogPane
-          lines={activeTask.lines}
-          isActive={activeTask.status === "running"}
-          maxLines={logPaneMaxLines}
+      {/* Live output pane for the active task. Replaced by the retrospective
+          once one arrives — both at once would overflow the terminal. */}
+      {state.retrospective ? (
+        <RetrospectivePane
+          retrospective={state.retrospective}
+          sourcePath={workflow.sourcePath}
+          maxRows={retrospectiveMaxRows}
+          outputLines={failedTask?.lines}
+          onAction={
+            awaitingRetrospective
+              ? (action) => {
+                  if (action === "update" && state.retrospective)
+                    onUpdateTaskFile?.(state.retrospective);
+                  setAwaitingRetrospective(false);
+                  exit();
+                }
+              : undefined
+          }
         />
+      ) : (
+        activeTask && (
+          <LogPane
+            lines={activeTask.lines}
+            isActive={activeTask.status === "running"}
+            maxLines={logPaneMaxLines}
+          />
+        )
       )}
 
       {/* Files written — shown after workflow completes (last N to bound the
@@ -259,7 +322,9 @@ export function App({
         <Text dimColor>
           {isInterjecting
             ? "typing interjection…"
-            : "press q to quit  ·  i to interject"}
+            : awaitingRetrospective
+              ? "↑↓ to choose  ·  enter to confirm  ·  o for the step output"
+              : "press q to quit  ·  i to interject"}
         </Text>
       </Box>
 
@@ -270,7 +335,7 @@ export function App({
           onInterject={
             interjectChannel ? () => setIsInterjecting(true) : undefined
           }
-          isInterjecting={isInterjecting}
+          disabled={isInterjecting || awaitingRetrospective}
         />
       )}
     </Box>

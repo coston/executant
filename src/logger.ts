@@ -184,6 +184,29 @@ function reduce(ctx: LogContext, s: LogState, event: Event): LogState {
       return s;
     case "output:tool":
       return onTool(s, event.tool, event.input);
+    case "step:retrospective": {
+      // The post-mortem is the most useful thing in the file for whoever reads
+      // it after the fact — write it out in full, not just as a log line.
+      const r = event.retrospective;
+      const suggestions = r.suggestions.map(
+        (x) =>
+          `  · [${x.severity}] ${x.step ? `${x.step}: ` : ""}${x.issue}\n    → ${x.change}`,
+      );
+      appendLog(
+        s.logFile,
+        [
+          `\n── retrospective: ${r.step}`,
+          r.summary,
+          `root cause: ${r.rootCause}`,
+          ...r.evidence.map((e) => `  · ${e}`),
+          ...suggestions,
+          r.workflowFixable
+            ? `suggested refine: ${r.refineInstruction}`
+            : "no workflow change would have prevented this",
+        ].join("\n"),
+      );
+      return s;
+    }
     case "log":
       return onLogMessage(s, event.level, event.text);
     case "workflow:complete":

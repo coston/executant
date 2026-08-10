@@ -179,6 +179,9 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       return appendLines(state, idx, `[interjection] ${event.message}`);
     }
 
+    case "step:retrospective":
+      return { ...state, retrospective: event.retrospective };
+
     case "step:healing":
     case "step:judge":
       // Structured telemetry events — the accompanying free-text log events

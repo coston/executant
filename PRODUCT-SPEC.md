@@ -46,6 +46,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 
 - **`llm_as_judge`** — evaluates step output and retries on FAIL (up to 5x)
 - **`self_healing`** — auto-repairs failed script steps via Claude (up to 5x)
+- **Failure retrospective** — when a step ends the run, a post-mortem explains the root cause, cites the evidence, and evaluates the task file itself (var composition, iteration counts, missing verification, tool restrictions, timeouts). Judge and self-healing history is included, so a step killed by `llm_as_judge` is analysed against every verdict the judge gave rather than the bare attempt count. When the workflow is at fault, the TUI offers to apply the fix via `refine`. Disable with `--no-retrospective` or `EXECUTANT_RETROSPECTIVE=0`
 
 ### Context Injection
 
@@ -57,6 +58,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 
 - **`i` — interjection** — opens a text input at the bottom of the screen. The typed message is queued and prepended as `[User correction from a previous step]` to the next Claude step's prompt. If a Claude step is currently running, the message waits for the next Claude step (the Claude CLI processes each invocation as a complete unit; mid-execution injection is not possible). If a script step is running, the message is similarly deferred. Press Esc to cancel without sending.
 - **`q` / Ctrl+C** — abort the workflow immediately
+- **Retrospective actions** — after a failure, `u` updates the task file with the suggested changes, `d` dismisses, and `o` toggles between the analysis and the failing step's raw output; ↑↓ + Enter select. The update action is offered only when a local task file exists and changing it would have helped
 
 ### Tooling
 

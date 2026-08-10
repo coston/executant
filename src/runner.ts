@@ -28,12 +28,17 @@ import type {
   LogTask,
   RunOptions,
   StepHealingEvent,
+  StepJudgeEvent,
   Task,
   Workflow,
 } from "./types.js";
 import { traceparentEnv } from "./lib/trace-context.js";
 import { CommandError, runCommand } from "./tasks/command.js";
 import { runAgent, runAgentStructured } from "./tasks/agent.js";
+import {
+  generateRetrospective,
+  isRetrospectiveEnabled,
+} from "./retrospective.js";
 import {
   loadPrompt,
   getErrorMessage,
@@ -136,6 +141,12 @@ export async function* runWorkflow(
         : undefined;
 
     const lines: string[] = [];
+    // Quality-control activity and loop position, accumulated as the step runs.
+    // Both are the story a post-mortem needs and neither survives in the error
+    // message: a judge exhaustion says only "failed after 5 attempts", and a
+    // forEach failure names the container rather than the item that broke.
+    const qualityHistory: string[] = [];
+    let position: string | undefined;
     try {
       for await (const event of runStep(task, from, channel)) {
         if (
@@ -151,6 +162,12 @@ export async function* runWorkflow(
             if (lines.length >= LAST_OUTPUT_MAX_LINES) lines.shift();
             lines.push(event.text);
           }
+          if (event.type === "step:iteration")
+            position = `iteration ${event.iteration}/${event.total} (item: ${event.item})`;
+          if (event.type === "step:inner")
+            position = `${position ?? "iteration ?"} → child step ${event.innerIndex + 1}/${event.innerTotal} "${event.name}"`;
+          if (event.type === "step:judge" || event.type === "step:healing")
+            qualityHistory.push(describeQualityEvent(event));
           yield { ...event, index: i };
         } else {
           yield event;
@@ -174,7 +191,38 @@ export async function* runWorkflow(
         error,
         lastOutput,
       };
-      if (!task.continueOnError) throw error;
+      if (!task.continueOnError) {
+        // The run is over — spend one analysis call explaining why before the
+        // error propagates, so the user gets a post-mortem instead of a stack
+        // trace. Failures inside the analysis are swallowed by
+        // generateRetrospective; the original error always wins.
+        if (options.retrospective ?? isRetrospectiveEnabled()) {
+          yield {
+            type: "log",
+            level: "info",
+            text: `[retrospective] Analysing why "${task.name}" failed…`,
+          };
+          const retrospective = await generateRetrospective({
+            workflow,
+            task,
+            error,
+            lastOutput,
+            qualityHistory,
+            position,
+          });
+          if (retrospective) {
+            yield { type: "step:retrospective", index: i, retrospective };
+          } else {
+            // Say so rather than leaving the "Analysing…" line hanging.
+            yield {
+              type: "log",
+              level: "warn",
+              text: "[retrospective] Analysis unavailable — see the error above",
+            };
+          }
+        }
+        throw error;
+      }
     }
   }
 
@@ -663,6 +711,24 @@ function buildJudgePrompt(
     STEP_INSTRUCTIONS: instructions,
     OUTPUT: output,
   });
+}
+
+/**
+ * One line describing a quality-control event, for the retrospective's history
+ * block. Judge feedback is the important part: when a step dies to judge
+ * exhaustion the error says only "failed after N attempts", and the reasons the
+ * judge rejected each attempt exist nowhere else.
+ */
+export function describeQualityEvent(
+  event: StepJudgeEvent | StepHealingEvent,
+): string {
+  if (event.type === "step:judge") {
+    const verdict = event.verdict.toUpperCase();
+    const feedback = event.feedback ? ` — ${event.feedback}` : "";
+    return `judge attempt ${event.attempt}/${event.maxAttempts}: ${verdict}${feedback}`;
+  }
+  const exit = event.exitCode !== undefined ? ` (exit ${event.exitCode})` : "";
+  return `self-healing attempt ${event.attempt}/${event.maxAttempts}: ${event.phase}${exit}`;
 }
 
 function buildFixSummary(toolCalls: string[], claudeLines: string[]): string {
