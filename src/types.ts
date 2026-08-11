@@ -346,6 +346,8 @@ export interface RunOptions {
   stepFilter?: string;
   /** Resume from this 1-based path (e.g. [3] or [3,2] or [2,5,4,3]). */
   fromStep?: FromStepTarget;
+  /** Stop after this 1-based top-level step (inclusive). Combine with fromStep for a range. */
+  toStep?: number;
   /** Directory where the .executant-cancel file is checked. Defaults to process.cwd(). */
   workDir?: string;
   /**

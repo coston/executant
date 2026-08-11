@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import type {
   Event,
+  FromStepTarget,
   StepErrorEvent,
   StepSkipEvent,
   StepStartEvent,
@@ -108,6 +109,23 @@ describe("shouldSkipStep", () => {
     assert.equal(shouldSkipStep(2, "step", { fromStep: [3, 2] }), true);
     assert.equal(shouldSkipStep(3, "step", { fromStep: [3, 2] }), false);
     assert.equal(shouldSkipStep(4, "step", { fromStep: [3, 2] }), false);
+  });
+
+  test("toStep: does not skip steps at or before the threshold", () => {
+    assert.equal(shouldSkipStep(2, "step", { toStep: 3 }), false);
+    assert.equal(shouldSkipStep(3, "step", { toStep: 3 }), false);
+  });
+
+  test("toStep: skips steps after the threshold", () => {
+    assert.equal(shouldSkipStep(4, "step", { toStep: 3 }), true);
+  });
+
+  test("fromStep + toStep: skips outside the inclusive range", () => {
+    const options = { fromStep: [11] as FromStepTarget, toStep: 14 };
+    assert.equal(shouldSkipStep(10, "step", options), true);
+    assert.equal(shouldSkipStep(11, "step", options), false);
+    assert.equal(shouldSkipStep(14, "step", options), false);
+    assert.equal(shouldSkipStep(15, "step", options), true);
   });
 });
 
@@ -213,6 +231,49 @@ describe("runWorkflow — fromStep", () => {
     const events = await collectWithOptions(wf, { fromStep: [99] });
     assert.deepEqual(stepNames(events), []);
     assert.deepEqual(skippedNames(events), ["only"]);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// toStep
+// ----------------------------------------------------------------------------
+
+describe("runWorkflow — toStep", () => {
+  test("skips steps after toStep", async () => {
+    const wf = makeWorkflow([
+      { name: "first", command: "echo first" },
+      { name: "second", command: "echo second" },
+      { name: "third", command: "echo third" },
+    ]);
+    const events = await collectWithOptions(wf, { toStep: 2 });
+    assert.deepEqual(stepNames(events), ["first", "second"]);
+    assert.deepEqual(skippedNames(events), ["third"]);
+  });
+
+  test("toStep matching the last step runs all steps", async () => {
+    const wf = makeWorkflow([
+      { name: "a", command: "echo a" },
+      { name: "b", command: "echo b" },
+    ]);
+    const events = await collectWithOptions(wf, { toStep: 2 });
+    assert.deepEqual(stepNames(events), ["a", "b"]);
+    assert.deepEqual(skippedNames(events), []);
+  });
+
+  test("fromStep + toStep together run only the inclusive range", async () => {
+    const wf = makeWorkflow([
+      { name: "a", command: "echo a" },
+      { name: "b", command: "echo b" },
+      { name: "c", command: "echo c" },
+      { name: "d", command: "echo d" },
+      { name: "e", command: "echo e" },
+    ]);
+    const events = await collectWithOptions(wf, {
+      fromStep: [2],
+      toStep: 4,
+    });
+    assert.deepEqual(stepNames(events), ["b", "c", "d"]);
+    assert.deepEqual(skippedNames(events), ["a", "e"]);
   });
 });
 

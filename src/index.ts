@@ -114,6 +114,9 @@ Options:
   --ci                  Headless mode — print events as NDJSON, no TUI
   --step <name|index>   Run only the named step or step at 1-based index
   --from-step <n>       Resume from step n (e.g. 3, 3.2, 2.5.4.3 — 1-based path)
+  --to-step <n>         Stop after step n (1-based top-level index, inclusive)
+                        Combine with --from-step for a range, e.g.
+                        --from-step 11 --to-step 14
   --var KEY=VALUE       Override or supply a workflow var at runtime (repeatable)
   --no-retrospective    Skip the post-mortem analysis when a step fails
   --help, -h            Show this help
@@ -212,6 +215,7 @@ let ciMode = false;
 let retrospective: boolean | undefined;
 let stepFilter: string | undefined;
 let fromStep: FromStepTarget | undefined;
+let toStep: number | undefined;
 const cliVars: Record<string, string> = {};
 const positional: string[] = [];
 
@@ -241,6 +245,18 @@ for (let i = 0; i < rawArgs.length; i++) {
       process.exit(1);
     }
     fromStep = parts;
+  } else if (a === "--to-step") {
+    if (!rawArgs[i + 1]) {
+      console.error("--to-step requires a value");
+      process.exit(1);
+    }
+    const raw = rawArgs[++i];
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1) {
+      console.error("--to-step must be a 1-based integer, e.g. 14");
+      process.exit(1);
+    }
+    toStep = value;
   } else if (a === "--var") {
     if (!rawArgs[i + 1]) {
       console.error("--var requires a KEY=VALUE argument");
@@ -256,6 +272,13 @@ for (let i = 0; i < rawArgs.length; i++) {
   } else {
     positional.push(a);
   }
+}
+
+if (toStep !== undefined && fromStep !== undefined && toStep < fromStep[0]) {
+  console.error(
+    `--to-step (${toStep}) cannot be before --from-step (${fromStep[0]})`,
+  );
+  process.exit(1);
 }
 
 const source = positional[0];
@@ -294,6 +317,7 @@ if (localDir) {
 const options: RunOptions = {
   stepFilter,
   fromStep,
+  toStep,
   workDir: baseDir,
   ...(retrospective !== undefined && { retrospective }),
 };

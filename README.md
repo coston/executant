@@ -387,6 +387,8 @@ executant https://github.com/o/r/blob/main/w.yaml  # run a workflow from a URL
 executant --ci workflow.yaml                    # headless, NDJSON to stdout
 executant --step <name|n> wf.yaml              # run one step by name or index
 executant --from-step <n> wf.yaml              # resume from step n
+executant --to-step <n> wf.yaml                # stop after step n (inclusive)
+executant --from-step 11 --to-step 14 wf.yaml  # run only steps 11-14
 executant --var KEY=VALUE wf.yaml              # override a workflow var at runtime
 executant update                                # upgrade to latest version
 ```

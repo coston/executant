@@ -28,7 +28,7 @@ const MAX_STEP_DETAIL_CHARS = 4_000;
  * Hard ceiling on the analysis call. The run has already failed; a post-mortem
  * that cannot be produced quickly is not worth blocking the exit for.
  */
-export const RETROSPECTIVE_TIMEOUT_SECONDS = 120;
+const RETROSPECTIVE_TIMEOUT_SECONDS = 120;
 
 const RetrospectiveSchema = z.object({
   summary: z.string(),
@@ -104,7 +104,7 @@ export function describeWorkflow(workflow: Workflow): string {
 }
 
 /** Everything the runner knows about a failure, gathered as the step ran. */
-export interface RetrospectiveInput {
+interface RetrospectiveInput {
   workflow: Workflow;
   /** The step that failed. For forEach steps this is the container. */
   task: Task;

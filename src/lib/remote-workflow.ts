@@ -61,7 +61,7 @@ export function toRawUrl(source: string): string {
  * The token from the user's `gh` login, or undefined when gh is missing,
  * not logged in, or otherwise unhappy. Never throws — auth is best-effort.
  */
-export function githubToken(): string | undefined {
+function githubToken(): string | undefined {
   try {
     const out = execFileSync("gh", ["auth", "token"], {
       encoding: "utf8",

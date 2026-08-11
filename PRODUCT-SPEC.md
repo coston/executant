@@ -34,6 +34,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 - `continue_on_error: true` for non-critical steps
 - `--step <name|index>` to run a single step
 - `--from-step <n>` to resume from a step
+- `--to-step <n>` to stop after a step (combine with `--from-step` for a range)
 
 ### Step Types
 

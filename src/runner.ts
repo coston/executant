@@ -74,7 +74,10 @@ export function shouldSkipStep(
       parseInt(options.stepFilter, 10) === stepNumber;
     return !matchByIndex && name !== options.stepFilter;
   }
-  return options.fromStep !== undefined && stepNumber < options.fromStep[0];
+  if (options.fromStep !== undefined && stepNumber < options.fromStep[0]) {
+    return true;
+  }
+  return options.toStep !== undefined && stepNumber > options.toStep;
 }
 
 // ============================================================================

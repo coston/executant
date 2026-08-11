@@ -12,7 +12,7 @@ import { Box, Text, useInput } from "ink";
 import type { Retrospective } from "../types.js";
 import { theme } from "./theme.js";
 
-export type RetrospectiveAction = "update" | "dismiss";
+type RetrospectiveAction = "update" | "dismiss";
 
 interface Props {
   retrospective: Retrospective;

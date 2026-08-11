@@ -32,7 +32,7 @@ export function findExecutantLocalDir(startDir: string): string | null {
   }
 }
 
-export function resolveLogDir(workflowFilePath: string): string {
+function resolveLogDir(workflowFilePath: string): string {
   return resolveLogDirFrom(dirname(resolve(workflowFilePath)));
 }
 
