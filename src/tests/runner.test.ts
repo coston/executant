@@ -6,13 +6,15 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import type {
   Event,
   FromStepTarget,
+  OutputTextEvent,
   StepErrorEvent,
+  StepRetrospectiveEvent,
   StepSkipEvent,
   StepStartEvent,
   Workflow,
@@ -22,10 +24,12 @@ import type {
 import {
   collectEvents,
   collectEventsUntilError,
+  installSequencedMock,
   tmpDir,
   tmpYaml,
 } from "./helpers.js";
 import { loadWorkflow } from "../load-workflow.js";
+import { resolveWorkflow } from "../resolve-workflow.js";
 import { runWorkflow, shouldSkipStep } from "../runner.js";
 
 // ----------------------------------------------------------------------------
@@ -556,5 +560,200 @@ steps:
     for await (const e of runWorkflow(wf, { workDir })) events.push(e);
     const cancelled = events.find((e) => e.type === "workflow:cancelled");
     assert.equal(cancelled, undefined, "should not cancel when file absent");
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Nested workflow steps
+// ----------------------------------------------------------------------------
+
+function writeYaml(dir: string, name: string, content: string): string {
+  const file = join(dir, name);
+  writeFileSync(file, content, "utf8");
+  return file;
+}
+
+async function loadNested(parentPath: string): Promise<Workflow> {
+  return resolveWorkflow(loadWorkflow(parentPath));
+}
+
+describe("runWorkflow — nested workflow steps", () => {
+  test("one step:start/step:complete for the parent, not per child step", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: build\n    command: echo build\n  - name: push\n    command: echo push\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectEvents(wf);
+    assert.deepEqual(stepNames(events), ["deploy"]);
+    assert.equal(events.filter((e) => e.type === "step:complete").length, 1);
+  });
+
+  test("child step boundaries surface as output:text under the parent's index", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: build\n    command: echo build\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectEvents(wf);
+    const text = events
+      .filter((e): e is OutputTextEvent => e.type === "output:text")
+      .filter((e) => e.index === 0)
+      .map((e) => e.text);
+    assert.ok(text.some((t) => t.includes("build")));
+  });
+
+  test("child failure propagates as the parent step's error", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: fail-here\n    command: exit 1\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const { events, error } = await collectEventsUntilError(wf);
+    assert.ok(error);
+    const errorEvent = events.find(
+      (e): e is StepErrorEvent => e.type === "step:error",
+    );
+    assert.equal(errorEvent?.name, "deploy");
+    assert.ok(errorEvent?.lastOutput?.includes("fail-here"));
+  });
+
+  test("continue_on_error on the workflow step lets the outer run continue", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: fail-here\n    command: exit 1\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n    continue_on_error: true\n  - name: after\n    command: echo after\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectEvents(wf);
+    assert.deepEqual(stepNames(events), ["deploy", "after"]);
+    assert.ok(events.some((e) => e.type === "workflow:complete"));
+  });
+
+  test("exactly one retrospective fires when a nested step fails", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: fail-here\n    command: exit 1\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+    const wf = await loadNested(parentPath);
+
+    const { promptsDir } = installSequencedMock([
+      JSON.stringify({
+        summary: "The child step failed.",
+        rootCause: "exit 1",
+        workflowFixable: false,
+      }),
+    ]);
+
+    const events: Event[] = [];
+    try {
+      for await (const e of runWorkflow(wf, { retrospective: true }))
+        events.push(e);
+    } catch {
+      /* expected */
+    }
+
+    const retros = events.filter(
+      (e): e is StepRetrospectiveEvent => e.type === "step:retrospective",
+    );
+    assert.equal(retros.length, 1);
+    assert.equal(retros[0].retrospective.step, "deploy");
+    // Only one Claude invocation total — if the child's own runWorkflow()
+    // also generated a retrospective, this would be 2.
+    assert.equal(readdirSync(promptsDir).length, 1);
+  });
+
+  test("--from-step targeting into a workflow step throws a clear error", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: build\n    command: echo build\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    await assert.rejects(
+      () => collectWithOptions(wf, { fromStep: [1, 1] }),
+      /resuming into a nested workflow step is not supported/,
+    );
+  });
+
+  test("cancelling while inside a nested workflow step stops the whole run, using the parent's workDir", async () => {
+    const dir = tmpDir();
+    const workDir = tmpDir(); // deliberately distinct from process.cwd()
+    const cancelFile = join(workDir, ".executant-cancel");
+    // No cancel file exists yet when the run starts — the parent enters the
+    // nested workflow normally. The child's own first step drops the cancel
+    // file as a side effect (simulating an operator cancelling mid-run); the
+    // child's own loop must notice it before its second step, and that must
+    // propagate all the way up to stop the parent's remaining steps too.
+    writeYaml(
+      dir,
+      "child.yaml",
+      `goal: child\nsteps:\n  - name: arm-cancel\n    command: printf '' > "${cancelFile}"\n  - name: push\n    command: echo push\n`,
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n  - name: after\n    command: echo after\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectWithOptions(wf, { workDir });
+
+    // If workDir weren't threaded into the nested runWorkflow() call, the
+    // child's own cancel check would fall back to process.cwd() instead of
+    // this workDir, never see the file arm-cancel just wrote, and both
+    // "push" and the parent's "after" step would run normally.
+    const cancelled = events.filter((e) => e.type === "workflow:cancelled");
+    assert.equal(cancelled.length, 1);
+    assert.deepEqual(stepNames(events), ["deploy"]);
+    assert.ok(
+      events.every((e) => e.type !== "output:text" || !e.text.includes("push")),
+      "the child's second step should never have started",
+    );
   });
 });

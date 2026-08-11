@@ -20,6 +20,14 @@ Known improvements deferred from code reviews and audits.
 
 - **Complete cost accounting** — Judge-evaluation cost is dropped inside `runClaudeStructured` (`src/tasks/claude.ts` consumes the event stream for `output:structured`/`output:text` only), and the OpenCode runner does not parse cost from its JSON output at all. Surfacing both would make the `executant.cost.usd` metric and per-step cost attributes complete.
 
+- **Richer nested-workflow progress UI** — `workflow:` steps (`src/resolve-workflow.ts`, `runNestedWorkflow` in `src/runner.ts`) currently surface their child steps as flat `output:text` log lines under the parent step, not a structured nested view. A `StepNestedEvent` (mirroring `step:inner`) plus a dedicated row component (mirroring `IterationRow.tsx`) would let the TUI render real nested progress. Deferred for v1: the flat-log approach reuses 100% existing plumbing and needed zero UI changes; revisit if users want to see per-child-step status at a glance rather than in the log pane.
+
+- **`--from-step`/`--step`/`--to-step` targeting into a nested workflow step** — currently rejected outright with a clear error (`runNestedWorkflow` in `src/runner.ts`) rather than resuming into the child's own step list. Supporting it would mean extending the dot-notation `FromStepTarget` path semantics (currently step → forEach-iteration → child-step) to also cross a `workflow:` boundary.
+
+- **`workflow:` steps inside `forEach`/`repeat`** — rejected at load time (`src/load-workflow.ts`). A nested workflow is resolved once, eagerly, before any iteration runs; threading a per-iteration `{{item}}` into it would mean re-resolving (and re-fetching, for a remote reference) once per item, which breaks the "fail fast before any step runs" guarantee eager resolution is meant to provide.
+
+- **Vars-aware caching in `resolveWorkflow`** — two `workflow:` steps referencing the same file are currently fetched and parsed independently. A cache would need to key on the resolved path/URL *and* the step's `vars:` override (serialized), since two steps referencing the same file with different overrides must not share a resolved `Workflow` — added complexity that isn't justified without evidence repeated-reference workflows are common.
+
 ## Implemented (observability, 2026-07)
 
 - ✅ **Structured `step:healing` / `step:judge` events** — the self-healing loop and LLM-as-judge now emit typed events (phase/attempt/exit code; verdict/attempt/feedback) alongside the existing free-text logs, giving CI NDJSON consumers and telemetry machine-readable quality-control progress.

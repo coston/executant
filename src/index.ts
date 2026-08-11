@@ -21,6 +21,7 @@ import {
   toRawUrl,
   workflowTaskName,
 } from "./lib/remote-workflow.js";
+import { resolveWorkflow } from "./resolve-workflow.js";
 import { runWorkflow } from "./runner.js";
 import { checkForUpdate } from "./update.js";
 import { App } from "./ui/App.js";
@@ -36,6 +37,7 @@ import {
 import { InterjectChannel, TimeoutError } from "./types.js";
 import type {
   FromStepTarget,
+  Origin,
   Retrospective,
   RunOptions,
   Workflow,
@@ -133,7 +135,7 @@ YAML — top-level fields:
 
 YAML — step fields (all step types):
   name              string  (required) Unique identifier for the step
-  type              string  prompt | script | command | log  (inferred if omitted)
+  type              string  prompt | script | command | log | workflow  (inferred if omitted)
   continue_on_error bool    Keep going if step fails (default: false)
   forEach           string or list
                     Inline YAML array OR a shell command whose newline-split
@@ -162,6 +164,17 @@ YAML — script step fields (type: script | command, or inferred when command is
   max_healing_attempts  int   Override max self-healing retries (default: 5)
   timeout_seconds   number  Kill the step and fail with exit code 3 after N seconds
 
+YAML — workflow step fields (type: workflow, or inferred when workflow is present):
+  workflow          string  (required) Local path or URL to another workflow,
+                            run as a self-contained nested sub-run. Relative
+                            paths resolve against the referencing workflow's
+                            own location (its directory, or its URL for a
+                            remote workflow) — not the current directory.
+  vars              map     Var overrides passed to the nested workflow.
+  Not supported inside forEach/repeat. All nested workflows (however deep,
+  local or remote) are fetched and validated before any step runs, so a bad
+  reference anywhere in the chain fails fast at load time.
+
 Remote workflows:
   The workflow argument may be an http(s) URL instead of a local path:
     executant https://github.com/owner/repo/blob/main/tasks/deploy.yaml
@@ -169,6 +182,9 @@ Remote workflows:
   GitHub blob and gist page URLs are rewritten to their raw equivalents.
   Private repos and gists use the token from your \`gh auth login\`.
   Remote workflows run in the current directory, and logs are written there.
+  A remote workflow's own \`workflow:\` steps with a relative path resolve
+  against its URL, never the local filesystem — even a reference that looks
+  like an absolute local path.
 
 Failure retrospectives:
   When a step fails and stops the run, executant explains why: root cause,
@@ -193,6 +209,7 @@ YAML — log step fields (type: log, or inferred when message is present and pro
   message           string  Text to emit as a progress marker
 
 Type inference (when type is omitted):
+  has workflow field         → workflow
   has command field          → script
   has message, no prompt     → log
   otherwise                  → prompt
@@ -292,13 +309,18 @@ const remote = isRemoteWorkflow(source);
 
 let workflow: Workflow;
 try {
+  const origin: Origin = remote
+    ? { kind: "remote", url: toRawUrl(source) }
+    : { kind: "local", dir: dirname(resolve(source)) };
   workflow = remote
     ? parseWorkflow(
         await fetchWorkflowSource(toRawUrl(source)),
         source,
         cliVars,
+        origin,
       )
     : loadWorkflow(source, cliVars);
+  workflow = await resolveWorkflow(workflow);
 } catch (err) {
   console.error(getErrorMessage(err));
   process.exit(2);

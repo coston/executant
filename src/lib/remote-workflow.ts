@@ -10,8 +10,9 @@
 // authenticate with the token from the user's existing `gh` login.
 
 import { execFileSync } from "node:child_process";
-import { basename } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import { getErrorMessage } from "./utils.js";
+import type { Origin } from "../types.js";
 
 /** Raw hosts we are willing to attach a GitHub token to. */
 const GITHUB_RAW_HOSTS = new Set([
@@ -104,6 +105,54 @@ export async function fetchWorkflowSource(
   }
 
   return await res.text();
+}
+
+/**
+ * Rejects anything but http(s). `new URL(ref, base)` lets `ref` carry its own
+ * absolute scheme and override `base` entirely (e.g. `new URL("file:///etc/passwd",
+ * "https://...")` resolves to the file: URL, ignoring the base) — without this
+ * check that would let a remote-origin workflow's reference reach the local
+ * filesystem (or another non-http scheme) despite resolving to a "remote" kind.
+ */
+function assertHttpUrl(url: string): string {
+  const { protocol } = new URL(url);
+  if (protocol !== "http:" && protocol !== "https:") {
+    throw new Error(
+      `Workflow reference resolved to a non-http(s) URL "${url}" — only http(s) references are supported`,
+    );
+  }
+  return url;
+}
+
+/**
+ * Resolves a `workflow:` step's reference (as written in YAML) to an
+ * absolute local path or URL, relative to the workflow that referenced it.
+ */
+export function resolveWorkflowRef(
+  origin: Origin | undefined,
+  ref: string,
+): { key: string; kind: "local" | "remote" } {
+  if (isRemoteWorkflow(ref)) {
+    return { key: assertHttpUrl(toRawUrl(ref)), kind: "remote" };
+  }
+  // Must come before the isAbsolute check below: a remote-origin workflow's
+  // reference must ALWAYS resolve to a URL, even one that looks like an
+  // absolute local path (e.g. "/etc/passwd") — otherwise a malicious or
+  // compromised remote workflow could read arbitrary files off the machine
+  // running it.
+  if (origin?.kind === "remote") {
+    return {
+      key: assertHttpUrl(new URL(ref, origin.url).toString()),
+      kind: "remote",
+    };
+  }
+  if (isAbsolute(ref)) return { key: resolve(ref), kind: "local" };
+  if (!origin) {
+    throw new Error(
+      `Cannot resolve relative workflow reference "${ref}" — the parent workflow has no known file or URL origin`,
+    );
+  }
+  return { key: resolve(origin.dir, ref), kind: "local" };
 }
 
 /** Short display/telemetry name for a workflow source (path or URL). */

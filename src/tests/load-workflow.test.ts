@@ -8,7 +8,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { loadWorkflow, parseWorkflow } from "../load-workflow.js";
-import type { ClaudeTask, CommandTask, LogTask } from "../types.js";
+import type {
+  ClaudeTask,
+  CommandTask,
+  LogTask,
+  WorkflowTask,
+} from "../types.js";
 import { DEFAULT_MODEL } from "../lib/utils.js";
 import { tmpYaml } from "./helpers.js";
 
@@ -27,12 +32,15 @@ steps:
 `;
 
   test("parses a YAML string identically to the same file on disk", () => {
-    // sourcePath is intentionally file-only — a remote workflow has no local
-    // file for the retrospective to offer to refine.
-    const { sourcePath, ...fromDisk } = loadWorkflow(tmpYaml(yaml));
+    // sourcePath and origin are intentionally file-only — a remote workflow
+    // parsed from a bare string (no origin passed) has no local file for the
+    // retrospective to offer to refine, and no known location of its own.
+    const { sourcePath, origin, ...fromDisk } = loadWorkflow(tmpYaml(yaml));
     const fromString = parseWorkflow(yaml, "https://example.com/a.yaml");
     assert.ok(sourcePath);
+    assert.equal(origin?.kind, "local");
     assert.equal(fromString.sourcePath, undefined);
+    assert.equal(fromString.origin, undefined);
     assert.deepEqual(fromString, fromDisk);
   });
 
@@ -709,5 +717,136 @@ steps:
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ClaudeTask;
     assert.equal(task.model, DEFAULT_MODEL);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// workflow: steps
+// ----------------------------------------------------------------------------
+
+describe("loadWorkflow — workflow steps", () => {
+  test("workflow field is inferred as type workflow, unresolved (workflow: null)", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    workflow: ./deploy.yaml
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as WorkflowTask;
+    assert.equal(task.type, "workflow");
+    assert.equal(task.ref, "./deploy.yaml");
+    assert.equal(task.workflow, null);
+  });
+
+  test("explicit type: workflow is accepted", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    type: workflow
+    workflow: ./deploy.yaml
+`);
+    const wf = loadWorkflow(file);
+    assert.equal(wf.tasks[0].type, "workflow");
+  });
+
+  test("vars on a workflow step are templated against the parent's vars", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region: us-east-1
+steps:
+  - name: deploy
+    workflow: ./deploy.yaml
+    vars:
+      target_region: "{{region}}"
+      literal: staging
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as WorkflowTask;
+    assert.deepEqual(task.refVars, {
+      target_region: "us-east-1",
+      literal: "staging",
+    });
+  });
+
+  test("unknown placeholder in a workflow step's vars throws at load time", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    workflow: ./deploy.yaml
+    vars:
+      target_region: "{{undefined_var}}"
+`);
+    assert.throws(() => loadWorkflow(file), /undefined_var/);
+  });
+
+  test("workflow step with no vars has refVars undefined", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    workflow: ./deploy.yaml
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as WorkflowTask;
+    assert.equal(task.refVars, undefined);
+  });
+
+  test("loadWorkflow sets a local origin for relative-reference resolution", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    workflow: ./deploy.yaml
+`);
+    const wf = loadWorkflow(file);
+    assert.equal(wf.origin?.kind, "local");
+  });
+
+  test("workflow step inside forEach's steps: list is rejected", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: per-env
+    forEach: [staging, prod]
+    steps:
+      - name: deploy
+        workflow: ./deploy.yaml
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /workflow steps cannot be used inside forEach or repeat/,
+    );
+  });
+
+  test("workflow step as the single-task forEach body is rejected", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    forEach: [staging, prod]
+    workflow: ./deploy.yaml
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /workflow steps cannot be used inside forEach or repeat/,
+    );
+  });
+
+  test("workflow step inside repeat is rejected", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: deploy
+    repeat: 3
+    workflow: ./deploy.yaml
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /workflow steps cannot be used inside forEach or repeat/,
+    );
   });
 });

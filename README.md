@@ -61,6 +61,27 @@ executant https://gist.github.com/user/abc123
 - A remote workflow runs in **your current directory** — script steps use it as their working directory, and logs are written to its `.claude/executant.local/logs/`.
 - Because there is no local workflow directory, any file paths a remote workflow needs should come from `vars` or `--var KEY=VALUE`.
 
+## Nested Workflows
+
+A step can run another workflow — local file or URL — as a self-contained sub-run:
+
+```yaml
+steps:
+  - name: release
+    workflow: ./deploy.yaml
+    vars:
+      region: us-east-1 # passed to the child; overrides its own vars
+```
+
+The child's steps run in order and nest under this one step in the parent's view — `release` shows as a single row, not one per child step, and a failure inside the child fails `release` the same way any other step failure would (`continue_on_error` on the workflow step works as usual).
+
+Every referenced workflow, however deep the chain and however many local files or URLs it crosses, is fetched and validated **before execution starts** — a bad reference anywhere fails fast at load time, before any step runs or any API cost is spent. Relative references resolve against wherever the *referencing* workflow itself lives:
+
+- A local workflow's relative reference resolves against its own directory.
+- A remote workflow's relative reference resolves against its own URL — never the local filesystem, even for a reference that looks like an absolute local path. This means a workflow fetched from GitHub can reference sibling files in the same repo by relative path and it works the same way whether you run it locally or straight from a URL.
+
+Not supported: `workflow:` steps inside `forEach`/`repeat` (a nested workflow is resolved once, at load time, before any iteration runs — there's no way to thread a per-iteration value into it), and `--from-step`/`--step`/`--to-step` targeting a nested workflow's own steps (resume from an earlier step instead).
+
 ## How It Works
 
 A workflow is a YAML file with a `goal` and a list of `steps`. Each step is either a **prompt** (Claude runs it with full tool access), a **script** (bash runs it directly), a **log** (progress marker), or a **forEach** (iterates over a list). Steps run in order; the TUI shows live output and elapsed time for each.
@@ -373,6 +394,7 @@ executant.run                  goal, task file, step count, total API cost
 | `repeat-demo.yaml`        | Running a step N times with `repeat`                |
 | `file-demo.yaml`          | File operations                                     |
 | `from-step-test.yaml`     | Using `--from-step` to resume mid-workflow          |
+| `workflow-step-parent.yaml` + `workflow-step-child.yaml` | Nested `workflow:` steps — stitching two taskfiles together |
 
 See the [`examples/`](examples/) directory.
 

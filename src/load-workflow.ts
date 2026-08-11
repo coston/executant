@@ -10,7 +10,7 @@
 //   (no type)     → inferred from presence of prompt/command/message
 
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { load as parseYaml } from "js-yaml";
 import {
   getErrorMessage,
@@ -24,15 +24,17 @@ import type {
   CommandTask,
   ForEachTask,
   LogTask,
+  Origin,
   RawStep,
   Task,
   Workflow,
+  WorkflowTask,
 } from "./types.js";
 
 export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
   z.object({
     name: z.string(),
-    type: z.enum(["prompt", "script", "log", "command"]).optional(),
+    type: z.enum(["prompt", "script", "log", "command", "workflow"]).optional(),
     prompt: z.string().optional(),
     command: z.string().optional(),
     message: z.string().optional(),
@@ -50,6 +52,8 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
     provider: z.enum(["claude", "opencode"]).optional(),
     model: z.string().optional(),
     agent: z.string().optional(),
+    workflow: z.string().optional(),
+    vars: z.record(z.string(), z.string()).optional(),
   }),
 );
 
@@ -71,22 +75,29 @@ export function loadWorkflow(
       `Cannot read workflow file "${filePath}": ${getErrorMessage(err)}`,
     );
   }
+  const absPath = resolve(filePath);
   // sourcePath is what the retrospective offers to refine — only a local file
   // can be rewritten, so remote workflows (parseWorkflow directly) never get it.
   return {
-    ...parseWorkflow(raw, filePath, cliVars),
-    sourcePath: resolve(filePath),
+    ...parseWorkflow(raw, filePath, cliVars, {
+      kind: "local",
+      dir: dirname(absPath),
+    }),
+    sourcePath: absPath,
   };
 }
 
 /**
  * Parse workflow YAML that has already been read into memory. `label` names
- * the source (file path or URL) in error messages.
+ * the source (file path or URL) in error messages. `origin` is where this
+ * workflow lives, used to resolve any nested `workflow:` steps' relative
+ * references — omitted for in-memory workflows (e.g. tests) that don't use them.
  */
 export function parseWorkflow(
   raw: string,
   label: string,
   cliVars: Record<string, string> = {},
+  origin?: Origin,
 ): Workflow {
   let doc: z.infer<typeof RawWorkflowSchema>;
   try {
@@ -114,6 +125,7 @@ export function parseWorkflow(
     vars,
     source: raw,
     tasks: doc.steps.map((step) => convertStep(step, vars)),
+    ...(origin && { origin }),
   };
 }
 
@@ -150,6 +162,16 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
     const inner: Task[] = step.steps
       ? step.steps.map((s) => convertStep(s, vars))
       : [convertInnerStep(stepWithoutLoop, vars, name, continueOnError)];
+    // A WorkflowTask is fully resolved once, at load time, before any
+    // iteration runs — there's no way to thread a per-iteration {{item}}
+    // into an already-resolved nested workflow without re-fetching it once
+    // per item, which would break the "fail fast before any step runs"
+    // guarantee eager resolution is meant to provide.
+    if (inner.some((t) => t.type === "workflow")) {
+      throw new Error(
+        `Step "${name}": workflow steps cannot be used inside forEach or repeat`,
+      );
+    }
     return {
       type: "forEach",
       name,
@@ -227,12 +249,36 @@ function convertInnerStep(
       } satisfies ClaudeTask;
     }
 
+    case "workflow": {
+      if (!step.workflow)
+        throw new Error(
+          `Step "${name}" has type workflow but no workflow field`,
+        );
+      const refVars = step.vars
+        ? Object.fromEntries(
+            Object.entries(step.vars).map(([key, value]) => [
+              key,
+              substituteVars(value, vars, name, `vars.${key}`),
+            ]),
+          )
+        : undefined;
+      return {
+        type: "workflow",
+        name,
+        continueOnError,
+        ref: step.workflow,
+        workflow: null,
+        ...(refVars && { refVars }),
+      } satisfies WorkflowTask;
+    }
+
     default:
       throw new Error(`Step "${name}" has unknown type: "${effectiveType}"`);
   }
 }
 
 function inferType(step: RawStep): string {
+  if (step.workflow) return "workflow";
   if (step.command) return "script";
   if (step.message && !step.prompt) return "log";
   return "prompt";

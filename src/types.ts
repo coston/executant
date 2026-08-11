@@ -103,7 +103,32 @@ export interface ForEachTask extends BaseTask {
   inner: Task[];
 }
 
-export type Task = LogTask | CommandTask | ClaudeTask | ForEachTask;
+/**
+ * Runs another workflow (local file or URL) as a self-contained sub-run.
+ * Resolution happens eagerly, before execution starts: `loadWorkflow`/
+ * `parseWorkflow` produce this with `workflow: null`, and `resolveWorkflow`
+ * (src/resolve-workflow.ts) fetches, parses, and recursively resolves the
+ * referenced file before the top-level Workflow is handed to `runWorkflow`.
+ * `workflow` is therefore never null by the time the runner sees it — treated
+ * as an invariant (asserted, not modeled away) the same way the codebase's
+ * `const _: never = task` exhaustiveness checks treat other "can't happen"
+ * states.
+ */
+export interface WorkflowTask extends BaseTask {
+  type: "workflow";
+  /** Reference as written in YAML (local path or URL) — kept for display/debugging. */
+  ref: string;
+  /** From the step's `vars:` map, already templated against the parent's vars. */
+  refVars?: Record<string, string>;
+  workflow: Workflow | null;
+}
+
+export type Task =
+  | LogTask
+  | CommandTask
+  | ClaudeTask
+  | ForEachTask
+  | WorkflowTask;
 
 // ----------------------------------------------------------------------------
 // Events  (discriminated union — the primary communication contract)
@@ -361,6 +386,17 @@ export interface RunOptions {
 // Workflow
 // ----------------------------------------------------------------------------
 
+/**
+ * Where a workflow "lives" — used to resolve a `workflow:` step's relative
+ * reference to another taskfile. A remote origin's relative references always
+ * resolve to a URL (via `new URL(ref, origin.url)`), never the local
+ * filesystem, even for a reference that looks like an absolute local path —
+ * see `resolveWorkflowRef` in src/lib/remote-workflow.ts.
+ */
+export type Origin =
+  | { kind: "local"; dir: string }
+  | { kind: "remote"; url: string };
+
 export interface Workflow {
   /** Human-readable description shown in the UI header. */
   goal: string;
@@ -376,6 +412,8 @@ export interface Workflow {
   sourcePath?: string;
   /** Raw YAML text this workflow was parsed from, used by the retrospective. */
   source?: string;
+  /** Where this workflow was loaded from, for resolving nested `workflow:` references. */
+  origin?: Origin;
 }
 
 // ----------------------------------------------------------------------------
@@ -456,7 +494,7 @@ export class InterjectChannel {
 /** Raw step shape as parsed from YAML before normalisation. */
 export type RawStep = {
   name: string;
-  type?: "prompt" | "script" | "log" | "command";
+  type?: "prompt" | "script" | "log" | "command" | "workflow";
   prompt?: string;
   command?: string;
   message?: string;
@@ -477,6 +515,10 @@ export type RawStep = {
   model?: string;
   /** OpenCode agent name. */
   agent?: string;
+  /** Local path or URL to another workflow, run as a nested sub-run. */
+  workflow?: string;
+  /** Var overrides passed to the nested workflow referenced by `workflow`. */
+  vars?: Record<string, string>;
 };
 
 /** Thrown when a step exceeds its timeout_seconds limit. Exit code: 3. */

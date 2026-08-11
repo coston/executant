@@ -1,0 +1,25 @@
+goal: "Demonstrate nested workflow: steps — stitch two taskfiles together"
+
+vars:
+  target_region: us-east-1
+
+steps:
+  - name: preflight
+    type: log
+    message: "Starting release"
+
+  # Runs workflow-step-child.yaml as a self-contained sub-run. Its steps
+  # (build, deploy) execute in order and nest under this step — one
+  # step:start/step:complete for "release" in the parent's view, not one per
+  # child step. A failure inside the child fails this step, same as any
+  # other step type; continue_on_error here works exactly as usual.
+  - name: release
+    workflow: ./workflow-step-child.yaml
+    vars:
+      # {{target_region}} is this workflow's own var — substituted here
+      # before being passed down, so the child never sees the template.
+      region: "{{target_region}}"
+
+  - name: postflight
+    type: log
+    message: "Release complete"

@@ -103,6 +103,23 @@ export function describeWorkflow(workflow: Workflow): string {
   return truncateHead(text, MAX_WORKFLOW_CHARS);
 }
 
+/**
+ * A failed WorkflowTask carries a fully resolved nested Workflow — dumping it
+ * whole into STEP_DETAIL would spend the entire char budget on the child's
+ * boilerplate instead of reaching anything useful (the actual failure detail
+ * already reaches the prompt via OUTPUT). Summarize instead of embedding it.
+ */
+function describeTaskDetail(task: Task): unknown {
+  if (task.type !== "workflow" || !task.workflow) return task;
+  return {
+    ...task,
+    workflow: {
+      goal: task.workflow.goal,
+      stepNames: task.workflow.tasks.map((t) => t.name),
+    },
+  };
+}
+
 /** Everything the runner knows about a failure, gathered as the step ran. */
 interface RetrospectiveInput {
   workflow: Workflow;
@@ -126,7 +143,7 @@ export function buildRetrospectivePrompt(input: RetrospectiveInput): string {
   return fillTemplate(RETROSPECTIVE_PROMPT, {
     STEP_NAME: position ? `${task.name} — ${position}` : task.name,
     STEP_DETAIL: truncateHead(
-      JSON.stringify(task, null, 2),
+      JSON.stringify(describeTaskDetail(task), null, 2),
       MAX_STEP_DETAIL_CHARS,
     ),
     ERROR: error.message,

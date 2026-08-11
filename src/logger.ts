@@ -32,10 +32,6 @@ export function findExecutantLocalDir(startDir: string): string | null {
   }
 }
 
-function resolveLogDir(workflowFilePath: string): string {
-  return resolveLogDirFrom(dirname(resolve(workflowFilePath)));
-}
-
 /** Same resolution, but starting from a directory (used for remote workflows). */
 export function resolveLogDirFrom(startDir: string): string {
   const dir = resolve(startDir);

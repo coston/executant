@@ -31,6 +31,7 @@ import type {
   StepJudgeEvent,
   Task,
   Workflow,
+  WorkflowTask,
 } from "./types.js";
 import { traceparentEnv } from "./lib/trace-context.js";
 import { CommandError, runCommand } from "./tasks/command.js";
@@ -56,6 +57,17 @@ const execPromise = promisify(exec);
 
 export const MAX_JUDGE_RETRIES = 5;
 const MAX_HEALING_ATTEMPTS = 5;
+
+/**
+ * Internal signal only — never escapes runWorkflow(). Thrown by
+ * runNestedWorkflow() when a nested workflow step notices .executant-cancel
+ * and stops itself, so every enclosing runWorkflow() call also stops instead
+ * of treating the nested cancellation as if that one step had merely
+ * succeeded (whatever remained of the child's own steps would otherwise run
+ * to completion invisibly, and the outer run would carry on to its own next
+ * step as if nothing had happened).
+ */
+class NestedCancellation extends Error {}
 
 const JudgeOutputSchema = z.object({
   pass: z.boolean(),
@@ -104,10 +116,8 @@ export async function* runWorkflow(
   channel?: InterjectChannel,
 ): AsyncGenerator<Event> {
   const workflowStart = Date.now();
-  const cancelFile = join(
-    options.workDir ?? process.cwd(),
-    ".executant-cancel",
-  );
+  const workDir = options.workDir ?? process.cwd();
+  const cancelFile = join(workDir, ".executant-cancel");
   yield { type: "workflow:start", workflow };
 
   let lastStepOutput: string | undefined;
@@ -151,7 +161,7 @@ export async function* runWorkflow(
     const qualityHistory: string[] = [];
     let position: string | undefined;
     try {
-      for await (const event of runStep(task, from, channel)) {
+      for await (const event of runStep(task, from, channel, workDir)) {
         if (
           event.type === "step:iteration" ||
           event.type === "step:inner" ||
@@ -184,6 +194,18 @@ export async function* runWorkflow(
         durationMs: Date.now() - stepStart,
       };
     } catch (err) {
+      // A nested workflow step noticed .executant-cancel and stopped itself —
+      // that must stop THIS run too, not read as this step merely finishing.
+      // Checked before continueOnError: cancellation is an operator request,
+      // not a failure to tolerate.
+      if (err instanceof NestedCancellation) {
+        yield {
+          type: "workflow:cancelled",
+          workflow,
+          durationMs: Date.now() - workflowStart,
+        };
+        return;
+      }
       const error = normalizeError(err);
       const lastOutput = lines.join("\n") || undefined;
       lastStepOutput = lastOutput;
@@ -243,8 +265,9 @@ export async function* runWorkflow(
 
 async function* runStep(
   task: Task,
-  from?: number[],
-  channel?: InterjectChannel,
+  from: number[] | undefined,
+  channel: InterjectChannel | undefined,
+  workDir: string,
 ): AsyncGenerator<Event> {
   switch (task.type) {
     case "log":
@@ -282,7 +305,10 @@ async function* runStep(
       break;
     }
     case "forEach":
-      yield* runForEach(task, from, channel);
+      yield* runForEach(task, from, channel, workDir);
+      break;
+    case "workflow":
+      yield* runNestedWorkflow(task, from, channel, workDir);
       break;
     default: {
       // Exhaustiveness: TypeScript errors here if a new Task variant is added
@@ -304,8 +330,9 @@ async function* runLog(task: LogTask): AsyncGenerator<Event> {
 
 async function* runForEach(
   task: ForEachTask,
-  from?: number[],
-  channel?: InterjectChannel,
+  from: number[] | undefined,
+  channel: InterjectChannel | undefined,
+  workDir: string,
 ): AsyncGenerator<Event> {
   const items = await resolveItems(task.forEach);
   const total = items.length;
@@ -351,7 +378,12 @@ async function* runForEach(
       const childFrom =
         childIdx === startChild ? iterFrom?.slice(1) : undefined;
       try {
-        for await (const event of runStep(substituted, childFrom, channel)) {
+        for await (const event of runStep(
+          substituted,
+          childFrom,
+          channel,
+          workDir,
+        )) {
           // step:iteration and step:inner from nested forEach tasks would
           // land in the parent task's iterationHistory (via runWorkflow's
           // index-patching), creating duplicate iteration numbers and
@@ -425,6 +457,12 @@ function substituteItem(task: Task, item: string): Task {
         forEach: Array.isArray(task.forEach) ? task.forEach : sub(task.forEach),
         inner: task.inner.map((t) => substituteItem(t, item)),
       };
+    case "workflow":
+      // load-workflow.ts rejects workflow steps inside forEach/repeat at
+      // parse time — a WorkflowTask should never reach here.
+      throw new Error(
+        `Step "${task.name}": workflow steps cannot appear inside forEach (this should have been rejected at load time)`,
+      );
     default: {
       const _: never = task;
       throw new Error(`Unknown task type: ${JSON.stringify(_)}`);
@@ -433,6 +471,90 @@ function substituteItem(task: Task, item: string): Task {
 }
 
 // ============================================================================
+// workflow: runs another workflow as a self-contained nested sub-run
+// ============================================================================
+
+async function* runNestedWorkflow(
+  task: WorkflowTask,
+  from: number[] | undefined,
+  channel: InterjectChannel | undefined,
+  workDir: string,
+): AsyncGenerator<Event> {
+  if (from && from.length > 0) {
+    throw new Error(
+      `Step "${task.name}": resuming into a nested workflow step is not supported — resume from an earlier step or omit the extra --from-step path components`,
+    );
+  }
+  if (!task.workflow) {
+    throw new Error(
+      `Step "${task.name}" references an unresolved workflow — this is an executant bug (resolveWorkflow() must run before runWorkflow())`,
+    );
+  }
+
+  // retrospective:false — only the outermost runWorkflow() call should ever
+  // generate a post-mortem. Without this, a failing grandchild step would
+  // trigger a retrospective here AND again when the error bubbles to the
+  // parent's own catch block: duplicate LLM calls, and the parent's version
+  // (task = this WorkflowTask wrapper) is far less useful than the child's.
+  // workDir is inherited unchanged (not derived from the child workflow's own
+  // location) so a single .executant-cancel file stops the whole run at the
+  // next step boundary, wherever it is — not just steps at the top level.
+  for await (const event of runWorkflow(
+    task.workflow,
+    { retrospective: false, workDir },
+    channel,
+  )) {
+    switch (event.type) {
+      // Load-bearing, not cosmetic: forwarding these unfiltered corrupts the
+      // OUTER run. workflow:complete trips the TUI's exit() and CI mode's
+      // process.exit(4) the moment the FIRST nested step finishes;
+      // workflow:start resets the TUI's startTime and truncates the log file
+      // (the logger recreates it on every workflow:start) mid-run.
+      case "workflow:start":
+      case "workflow:complete":
+        continue;
+      // The child noticed .executant-cancel and stopped itself — that must
+      // stop the WHOLE run, not read as this step having simply finished (see
+      // NestedCancellation). Not swallowed like the two cases above.
+      case "workflow:cancelled":
+        throw new NestedCancellation();
+      case "step:skip":
+        continue;
+      case "step:retrospective":
+        continue; // disabled above via retrospective:false — should never fire
+      case "step:start":
+        yield { type: "output:text", index: -1, text: `→ ${event.name}` };
+        continue;
+      case "step:complete":
+        yield {
+          type: "output:text",
+          index: -1,
+          text: `✓ ${event.name} (${event.durationMs}ms)`,
+        };
+        continue;
+      case "step:error":
+        // Don't swallow: this just adds a log line before the child's
+        // runWorkflow() rethrows out of this loop, which propagates as this
+        // step's own failure in the parent.
+        yield {
+          type: "output:text",
+          index: -1,
+          text: `✗ ${event.name}: ${event.error.message}`,
+        };
+        continue;
+      default:
+        // output:text/tool/cost/structured, step:iteration/inner,
+        // step:healing/judge, log — pass through unchanged. The OUTER
+        // runWorkflow's index-patch block below unconditionally overwrites
+        // .index for these types regardless of what they already carry, so
+        // an event from a forEach inside the nested child (double nesting)
+        // still gets correctly re-attributed to the parent's row.
+        // (step:interjection is synthesized directly by the TUI, not by
+        // runWorkflow's own generator, so it never appears here.)
+        yield event;
+    }
+  }
+}
 // Self-healing: auto-repair failed script steps via Claude
 // ============================================================================
 

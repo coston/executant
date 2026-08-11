@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import {
   fetchWorkflowSource,
   isRemoteWorkflow,
+  resolveWorkflowRef,
   toRawUrl,
   workflowTaskName,
 } from "../lib/remote-workflow.js";
@@ -201,4 +203,121 @@ test("fetchWorkflowSource wraps network errors", async () => {
   } finally {
     globalThis.fetch = original;
   }
+});
+
+// ============================================================================
+// resolveWorkflowRef
+// ============================================================================
+
+test("resolveWorkflowRef: explicit URL is used as-is (rewritten to raw), regardless of origin", () => {
+  const result = resolveWorkflowRef(
+    { kind: "local", dir: "/home/user/tasks" },
+    "https://github.com/o/r/blob/main/child.yaml",
+  );
+  assert.deepEqual(result, {
+    key: "https://raw.githubusercontent.com/o/r/main/child.yaml",
+    kind: "remote",
+  });
+});
+
+test("resolveWorkflowRef: absolute local path under a local origin", () => {
+  const result = resolveWorkflowRef(
+    { kind: "local", dir: "/home/user/tasks" },
+    "/etc/other/child.yaml",
+  );
+  assert.deepEqual(result, { key: "/etc/other/child.yaml", kind: "local" });
+});
+
+test("resolveWorkflowRef: relative path resolves against a local origin's directory", () => {
+  const result = resolveWorkflowRef(
+    { kind: "local", dir: "/home/user/tasks" },
+    "./child.yaml",
+  );
+  assert.deepEqual(result, {
+    key: "/home/user/tasks/child.yaml",
+    kind: "local",
+  });
+});
+
+test("resolveWorkflowRef: relative path with no origin throws", () => {
+  assert.throws(
+    () => resolveWorkflowRef(undefined, "./child.yaml"),
+    /Cannot resolve relative workflow reference ".\/child.yaml"/,
+  );
+});
+
+test("resolveWorkflowRef: sibling relative path resolves against a remote origin's URL", () => {
+  const result = resolveWorkflowRef(
+    {
+      kind: "remote",
+      url: "https://raw.githubusercontent.com/o/r/main/tasks/parent.yaml",
+    },
+    "./child.yaml",
+  );
+  assert.deepEqual(result, {
+    key: "https://raw.githubusercontent.com/o/r/main/tasks/child.yaml",
+    kind: "remote",
+  });
+});
+
+test("resolveWorkflowRef: ../ relative path resolves against a remote origin's URL", () => {
+  const result = resolveWorkflowRef(
+    {
+      kind: "remote",
+      url: "https://raw.githubusercontent.com/o/r/main/tasks/parent.yaml",
+    },
+    "../shared/child.yaml",
+  );
+  assert.deepEqual(result, {
+    key: "https://raw.githubusercontent.com/o/r/main/shared/child.yaml",
+    kind: "remote",
+  });
+});
+
+test("resolveWorkflowRef: explicit cross-host URL under a remote origin is allowed", () => {
+  const result = resolveWorkflowRef(
+    {
+      kind: "remote",
+      url: "https://raw.githubusercontent.com/o/r/main/tasks/parent.yaml",
+    },
+    "https://example.com/other/child.yaml",
+  );
+  assert.deepEqual(result, {
+    key: "https://example.com/other/child.yaml",
+    kind: "remote",
+  });
+});
+
+test("resolveWorkflowRef: a remote origin resolves an absolute-looking local path to a URL, never the filesystem", () => {
+  const result = resolveWorkflowRef(
+    {
+      kind: "remote",
+      url: "https://raw.githubusercontent.com/o/r/main/tasks/parent.yaml",
+    },
+    "/etc/passwd",
+  );
+  assert.deepEqual(result, {
+    key: "https://raw.githubusercontent.com/etc/passwd",
+    kind: "remote",
+  });
+  // /etc/passwd genuinely exists on any POSIX box this test runs on — the
+  // point is that resolveWorkflowRef must never even consider reading it.
+  assert.equal(existsSync("/etc/passwd"), true);
+});
+
+test("resolveWorkflowRef: a remote origin rejects a reference that resolves to a non-http(s) URL", () => {
+  // A reference carrying its own absolute scheme (e.g. file://) overrides the
+  // base entirely under WHATWG URL resolution — new URL() would otherwise
+  // happily return a file: URL still tagged kind: "remote".
+  assert.throws(
+    () =>
+      resolveWorkflowRef(
+        {
+          kind: "remote",
+          url: "https://raw.githubusercontent.com/o/r/main/tasks/parent.yaml",
+        },
+        "file:///etc/passwd",
+      ),
+    /resolved to a non-http\(s\) URL "file:\/\/\/etc\/passwd"/,
+  );
 });

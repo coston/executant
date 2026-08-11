@@ -40,11 +40,13 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `repeat: N` - Runs the step N times sequentially (compiles to a ForEachTask at load time); mutually exclusive with `forEach`; `{{item}}` is the 1-based iteration number
    - `steps` - Optional array of child steps on a `forEach`/`repeat` step; each iteration runs all child steps in order with `{{item}}` substituted; mutually exclusive with `command`/`prompt`/`message` on the parent step; requires `forEach` or `repeat` to be present
    - `timeout_seconds: N` - Optional; kill the step process after N seconds and throw TimeoutError (exit code 3); works for both script and prompt steps
+   - `type: workflow` - Runs another workflow (local path or URL) as a self-contained nested sub-run via the `workflow:` field; its steps nest under this one step in the parent's view. `vars:` on the step passes overrides to the child. All nested workflows (however deep, local or remote) are fetched and resolved before any step runs, so a bad reference fails fast at load time. A remote workflow's relative reference always resolves against its own URL, never the local filesystem. Not supported inside `forEach`/`repeat`, or as a `--from-step`/`--step`/`--to-step` target.
 
 2. **TypeScript implementation** (`src/`)
    - `src/index.ts` - Entry point: CLI parsing, Ink TUI rendering, CI mode (NDJSON), `plan`/`refine`/`update` subcommands; creates `InterjectChannel` and passes it to both `runWorkflow` and `App`
-   - `src/load-workflow.ts` - YAML → typed `Workflow`
-   - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
+   - `src/load-workflow.ts` - YAML → typed `Workflow`; `workflow:` steps are produced with `workflow: null`, unresolved
+   - `src/resolve-workflow.ts` - Recursively resolves every `workflow:` step (local file or URL) before execution starts, so a bad reference anywhere in the chain fails fast at load time; guards against cycles, excessive depth, and excessive total fan-out
+   - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection, nested `workflow:` step execution; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
    - `src/retrospective.ts` - Post-mortem generated when a step fails fatally; analyses the error, the step output, and the workflow file itself, and produces a `refine` instruction when the workflow is at fault. Disable with `EXECUTANT_RETROSPECTIVE=0`
    - `src/logger.ts` - Subscribes to event stream; writes `.log` files to `.claude/executant.local/logs/`; exports the `Observer` interface shared with telemetry
    - `src/telemetry.ts` - Opt-in OpenTelemetry observer; exports traces + metrics via OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
@@ -57,8 +59,9 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
 ```
 src/
 ├── index.ts              # Entry point (CLI, TUI, CI mode, plan/refine/update subcommands)
-├── load-workflow.ts      # YAML → typed Workflow
-├── runner.ts             # Workflow execution (self-healing, judge, forEach, context)
+├── load-workflow.ts      # YAML → typed Workflow (workflow: steps unresolved)
+├── resolve-workflow.ts   # Eagerly resolves nested workflow: steps before execution
+├── runner.ts             # Workflow execution (self-healing, judge, forEach, nested workflows, context)
 ├── retrospective.ts      # Failure post-mortem (root cause + task-file advice)
 ├── logger.ts             # Execution logger (log files); exports the shared Observer interface
 ├── telemetry.ts          # Opt-in OpenTelemetry observer (OTLP traces + metrics)
@@ -68,7 +71,7 @@ src/
 ├── types.ts              # All shared types
 ├── version.ts            # Single source for CURRENT_VERSION (read from package.json)
 ├── lib/
-│   ├── remote-workflow.ts # `executant <url>`: GitHub/gist raw rewrite, gh-token fetch
+│   ├── remote-workflow.ts # `executant <url>`: GitHub/gist raw rewrite, gh-token fetch, resolveWorkflowRef
 │   ├── trace-context.ts  # TRACEPARENT registry shared by telemetry + all spawn sites
 │   └── utils.ts          # Shared pure utilities (slugify, formatTimestamp, etc.)
 ├── tasks/

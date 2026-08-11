@@ -42,6 +42,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 - **script** — runs bash directly (no AI cost)
 - **log** — emits a plain progress marker
 - **forEach** — repeats one or more child steps for each item in a list or shell command output; use a `steps:` array on the forEach step to run multiple child steps per iteration; `repeat: N` is shorthand for a forEach with a generated numeric list `["1"..."N"]` — `{{item}}` gives the 1-based iteration number in all child steps
+- **workflow** — runs another workflow (local file or URL) as a self-contained nested sub-run; its steps nest under this one step, and a `vars:` map passes overrides to the child. Every referenced workflow is fetched and validated before execution starts, so a bad reference anywhere in the chain fails fast. Not supported inside `forEach`/`repeat`.
 
 ### Quality Controls
 

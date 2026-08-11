@@ -1,0 +1,15 @@
+goal: "Reusable deploy sub-pipeline — referenced by workflow-step-parent.yaml"
+
+# {{region}} has no default here — it must come from the referencing step's
+# `vars:` override (see workflow-step-parent.yaml). A parent that forgets the
+# override fails fast at load time with an "unknown placeholder" error,
+# rather than deploying to the wrong place silently.
+
+steps:
+  - name: build
+    type: script
+    command: echo "Building for region {{region}}"
+
+  - name: deploy
+    type: script
+    command: echo "Deploying to {{region}}"
