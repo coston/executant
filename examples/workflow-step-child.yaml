@@ -1,9 +1,12 @@
 goal: "Reusable deploy sub-pipeline — referenced by workflow-step-parent.yaml"
 
-# {{region}} has no default here — it must come from the referencing step's
-# `vars:` override (see workflow-step-parent.yaml). A parent that forgets the
-# override fails fast at load time with an "unknown placeholder" error,
-# rather than deploying to the wrong place silently.
+# A valueless var is this module's interface — the vars it REQUIRES from
+# outside (a CLI --var or the referencing step's `vars:`). A parent that
+# forgets to supply one fails fast at load time, rather than deploying to the
+# wrong place silently. workflow-step-child-alt.yaml declares the same
+# interface, so the two are interchangeable.
+vars:
+  region: # required — supplied by the parent step's vars: (or --var)
 
 steps:
   - name: build

@@ -501,6 +501,8 @@ describe("loadWorkflow — cliVars", () => {
   test("CLI var is substituted into command", () => {
     const file = tmpYaml(`
 goal: test
+vars:
+  env:
 steps:
   - name: run
     command: deploy --env {{env}}
@@ -528,6 +530,7 @@ steps:
     const file = tmpYaml(`
 goal: test
 vars:
+  env:
   region: us-east-1
 steps:
   - name: run
@@ -543,6 +546,7 @@ steps:
 goal: test
 vars:
   base: foo
+  extra:
 steps:
   - name: s
     command: echo {{base}} {{extra}}
@@ -601,6 +605,82 @@ steps:
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as CommandTask;
     assert.equal(task.timeoutSeconds, undefined);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// var contract — a valueless var is required-from-outside
+// ----------------------------------------------------------------------------
+
+describe("loadWorkflow — required vars (declared with no value)", () => {
+  test("required var provided via CLI is substituted and exposed", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region:
+steps:
+  - name: run
+    command: deploy --region {{region}}
+`);
+    const wf = loadWorkflow(file, { region: "us-east-1" });
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.command, "deploy --region us-east-1");
+    assert.equal(wf.vars!["region"], "us-east-1");
+  });
+
+  test("required var not provided throws, naming it", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region:
+steps:
+  - name: run
+    command: deploy --region {{region}}
+`);
+    assert.throws(() => loadWorkflow(file), /missing required var "region"/);
+  });
+
+  test("provided var with no declared slot throws", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region: us-east-1
+steps:
+  - name: run
+    command: deploy --region {{region}}
+`);
+    assert.throws(
+      () => loadWorkflow(file, { sneaky: "value" }),
+      /was given "sneaky" but does not declare it/,
+    );
+  });
+
+  test("a var with a value is a default and needs no external value", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region: us-east-1
+steps:
+  - name: run
+    command: deploy --region {{region}}
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.command, "deploy --region us-east-1");
+  });
+
+  test("CLI var overriding a declared default is allowed", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  region: us-east-1
+steps:
+  - name: run
+    command: deploy --region {{region}}
+`);
+    const wf = loadWorkflow(file, { region: "us-west-2" });
+    const task = wf.tasks[0] as CommandTask;
+    assert.equal(task.command, "deploy --region us-west-2");
   });
 });
 
@@ -804,6 +884,49 @@ steps:
 `);
     const wf = loadWorkflow(file);
     assert.equal(wf.origin?.kind, "local");
+  });
+
+  test("workflow ref containing {{var}} is resolved from the parent's vars", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  src: ./modules/azure.yaml
+steps:
+  - name: run
+    workflow: "{{src}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as WorkflowTask;
+    assert.equal(task.type, "workflow");
+    assert.equal(task.ref, "./modules/azure.yaml");
+    assert.equal(task.workflow, null);
+  });
+
+  test("CLI var overrides the workflow ref (late binding)", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  src: ./modules/azure.yaml
+steps:
+  - name: run
+    workflow: "{{src}}"
+`);
+    const wf = loadWorkflow(file, { src: "./modules/jira.yaml" });
+    const task = wf.tasks[0] as WorkflowTask;
+    assert.equal(task.ref, "./modules/jira.yaml");
+  });
+
+  test("unknown placeholder in a workflow ref throws at load time", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    workflow: "{{missing}}"
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /Step "run" workflow contains unknown placeholder "\{\{missing\}\}"/,
+    );
   });
 
   test("workflow step inside forEach's steps: list is rejected", () => {

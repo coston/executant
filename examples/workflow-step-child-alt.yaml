@@ -1,0 +1,16 @@
+goal: "Alternate deploy sub-pipeline — interchangeable with workflow-step-child.yaml"
+
+# Declares the same required-var interface as workflow-step-child.yaml, so a
+# parent can late-bind to either module by pointing its `workflow:` ref at a
+# different file. See workflow-step-late-bound.yaml.
+vars:
+  region: # required — supplied by the parent step's vars: (or --var)
+
+steps:
+  - name: build
+    type: script
+    command: echo "Alt-building for region {{region}}"
+
+  - name: deploy
+    type: script
+    command: echo "Alt-deploying to {{region}} via alternate provider"

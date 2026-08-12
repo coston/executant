@@ -60,7 +60,12 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
 const RawWorkflowSchema = z.object({
   goal: z.string(),
   steps: z.array(RawStepSchema),
-  vars: z.record(z.string(), z.string()).optional(),
+  // A var with a value is a default (overridable by --var or a parent step's
+  // vars:). A var declared with NO value (null, i.e. `name:` with nothing
+  // after it) is REQUIRED — it must be supplied from outside. A missing
+  // required var, or a provided --var that isn't declared here at all, is a
+  // load-time error (see validateVarContract).
+  vars: z.record(z.string(), z.string().nullable()).optional(),
 });
 
 export function loadWorkflow(
@@ -108,7 +113,15 @@ export function parseWorkflow(
     throw new Error(`Invalid workflow file "${label}":\n${detail}`);
   }
 
-  const vars = { ...(doc.vars ?? {}), ...cliVars };
+  const declaredVars = doc.vars ?? {};
+  validateVarContract(declaredVars, cliVars, label);
+  // Null-valued vars are required and carry no default; they're guaranteed
+  // present in cliVars by the check above, so keep only real defaults here.
+  const defaults: Record<string, string> = {};
+  for (const [key, value] of Object.entries(declaredVars)) {
+    if (value !== null) defaults[key] = value;
+  }
+  const vars = { ...defaults, ...cliVars };
 
   const seen = new Set<string>();
   for (const step of doc.steps) {
@@ -127,6 +140,42 @@ export function parseWorkflow(
     tasks: doc.steps.map((step) => convertStep(step, vars)),
     ...(origin && { origin }),
   };
+}
+
+/**
+ * Enforces the var contract at load time, so a workflow is explicit about what
+ * it needs from outside and nothing can be smuggled in undeclared:
+ *  - every externally-provided var (CLI --var, or a parent step's `vars:`) must
+ *    be declared in `vars` — an undeclared one is an error.
+ *  - every required var (declared with no value, i.e. null) must actually be
+ *    provided.
+ * `label` names the source (file path or URL) in error messages.
+ */
+function validateVarContract(
+  vars: Record<string, string | null>,
+  provided: Record<string, string>,
+  label: string,
+): void {
+  const declared = new Set(Object.keys(vars));
+  for (const name of Object.keys(provided)) {
+    if (!declared.has(name)) {
+      throw new Error(
+        `Workflow "${label}" was given "${name}" but does not declare it — ` +
+          `add "${name}" to vars: (with a value for a default, or no value to require it).`,
+      );
+    }
+  }
+
+  const missing = Object.keys(vars).filter(
+    (name) => vars[name] === null && !(name in provided),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Workflow "${label}" is missing required var${missing.length > 1 ? "s" : ""} ` +
+        `${missing.map((n) => `"${n}"`).join(", ")} — ` +
+        `declared with no default, so provide via --var NAME=VALUE or a parent workflow step's vars:`,
+    );
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -266,7 +315,7 @@ function convertInnerStep(
         type: "workflow",
         name,
         continueOnError,
-        ref: step.workflow,
+        ref: substituteVars(step.workflow, vars, name, "workflow"),
         workflow: null,
         ...(refVars && { refVars }),
       } satisfies WorkflowTask;

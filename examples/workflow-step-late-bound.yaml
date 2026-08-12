@@ -1,0 +1,31 @@
+goal: "Late-bind a nested workflow: pick which module runs via a var"
+
+# NOTE: Prefer a DIRECT reference (workflow: ./workflow-step-child.yaml) —
+# see workflow-step-parent.yaml. That keeps the wiring legible. Late-binding
+# via a var, shown here, is only for when the INVOKER must pick the module at
+# run time (e.g. a --var from CI). Both children share the same var interface
+# ({{region}}), so either works.
+#
+# Default runs workflow-step-child.yaml. Swap to the alternate deployer with:
+#   executant examples/workflow-step-late-bound.yaml \
+#     --var deployer=./workflow-step-child-alt.yaml
+#
+# An unknown placeholder in the ref fails fast at load time, like any var.
+
+vars:
+  target_region: us-east-1
+  deployer: ./workflow-step-child.yaml # default module
+
+steps:
+  - name: preflight
+    type: log
+    message: "Starting release"
+
+  - name: release
+    workflow: "{{deployer}}" # late-bound — resolved from the var above
+    vars:
+      region: "{{target_region}}"
+
+  - name: postflight
+    type: log
+    message: "Release complete"

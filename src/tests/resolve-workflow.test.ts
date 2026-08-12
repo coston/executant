@@ -194,6 +194,46 @@ describe("resolveWorkflow — local references", () => {
     const resolved = await resolveWorkflow(wf);
     assert.deepEqual(resolved.tasks, wf.tasks);
   });
+
+  test("parent step vars: satisfy a child's required vars", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nvars:\n  region:\nsteps:\n  - name: deploy\n    command: deploy --region {{region}}\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n    vars:\n      region: us-east-1\n",
+    );
+
+    const resolved = await resolveWorkflow(loadWorkflow(parentPath));
+    const child = (resolved.tasks[0] as WorkflowTask).workflow;
+    assert.equal(
+      (child?.tasks[0] as CommandTask).command,
+      "deploy --region us-east-1",
+    );
+  });
+
+  test("a parent that under-provides a child's required vars fails fast at resolve time", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nvars:\n  region:\nsteps:\n  - name: deploy\n    command: deploy --region {{region}}\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    await assert.rejects(
+      () => resolveWorkflow(loadWorkflow(parentPath)),
+      /missing required var "region"/,
+    );
+  });
 });
 
 // ----------------------------------------------------------------------------

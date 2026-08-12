@@ -75,10 +75,28 @@ steps:
 
 The child's steps run in order and nest under this one step in the parent's view — `release` shows as a single row, not one per child step, and a failure inside the child fails `release` the same way any other step failure would (`continue_on_error` on the workflow step works as usual).
 
+A child module's required vars — the entries in its `vars:` block declared with no value (see [Variables at Runtime](#variables-at-runtime)) — are its interface: the vars it requires from whoever runs it. Because every reference is resolved before any step runs, a parent that forgets to pass one of the child's required vars fails fast at load time rather than deep into the run.
+
 Every referenced workflow, however deep the chain and however many local files or URLs it crosses, is fetched and validated **before execution starts** — a bad reference anywhere fails fast at load time, before any step runs or any API cost is spent. Relative references resolve against wherever the *referencing* workflow itself lives:
 
 - A local workflow's relative reference resolves against its own directory.
 - A remote workflow's relative reference resolves against its own URL — never the local filesystem, even for a reference that looks like an absolute local path. This means a workflow fetched from GitHub can reference sibling files in the same repo by relative path and it works the same way whether you run it locally or straight from a URL.
+
+Point the `workflow:` reference straight at the module file — that keeps the wiring legible: you can see exactly what each step runs by reading the pipeline. When you need a different module, prefer a separate pipeline file that names it directly over parameterizing one file.
+
+For the cases where the *invoker* — not the pipeline author — must choose the module at run time (a CI job parameterized by `--var`, a matrix that would otherwise need many near-identical files), the `workflow:` reference is substituted like any other field, so it can be late-bound to a var:
+
+```yaml
+vars:
+  deployer: ./modules/deploy-staging.yaml # default; override with --var deployer=...
+steps:
+  - name: deploy
+    workflow: "{{deployer}}"
+    vars:
+      region: "{{region}}"
+```
+
+An unknown placeholder in the reference fails fast at load time, same as any other var. Use this only when the choice genuinely happens at invocation; otherwise a direct reference is clearer.
 
 Not supported: `workflow:` steps inside `forEach`/`repeat` (a nested workflow is resolved once, at load time, before any iteration runs — there's no way to thread a per-iteration value into it), and `--from-step`/`--step`/`--to-step` targeting a nested workflow's own steps (resume from an earlier step instead).
 
@@ -171,6 +189,30 @@ executant --var env=staging --var region=eu-west-1 deploy.yaml
 ```
 
 CLI vars override any same-named vars in the workflow's `vars:` section. Multiple `--var` flags are accepted.
+
+### Required vars
+
+There is one convention for both defaults and required values: the `vars:` block. A var **with** a value is a default the workflow supplies for itself, overridable from outside. A var declared **with no value** (an empty `name:`) is **required** — it has no default and must come from a `--var` or, when the workflow runs as a nested `workflow:` step, the parent step's `vars:`:
+
+```yaml
+goal: "Deploy a service to a region"
+
+vars:
+  env: staging # has a default — overridable
+  region: # required — no default; must be supplied from outside
+
+steps:
+  - name: deploy
+    type: script
+    command: echo "Deploying {{env}} to {{region}}"
+```
+
+This is enforced at load time, before any step runs:
+
+- A required var (declared with no value) that nothing provides is an error: `missing required var "region" — declared with no default, so provide via --var REGION=VALUE or a parent workflow step's vars:`.
+- A `--var` (or parent `vars:`) that matches no declared `vars:` slot is an error: `was given "region" but does not declare it — add "region" to vars: (with a value for a default, or no value to require it)`. You cannot pass a var a workflow doesn't declare.
+
+This makes a workflow explicit about what it needs from outside: its required (valueless) vars are its interface signature, so a parent that under-provides a nested module's required vars fails fast rather than substituting an empty value.
 
 ## Provider & Model Selection
 
