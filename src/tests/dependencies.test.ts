@@ -31,7 +31,13 @@ describe("claude dependency", { skip: !claudeInstalled }, () => {
 // ── local model inference (skipped when dev tools not present) ───────────────
 
 const llamaInstalled = hasCli("llama-server");
-const modelsPresent = existsSync(MODELS_DIR);
+// Local model inference is optional (see docs/local-models.md) — the GGUF
+// files are a large, opt-in download. Skip these presence checks unless the
+// models have actually been downloaded; the MODELS_DIR can exist (created by
+// setup) while empty, so gate on the files themselves, not just the directory.
+const modelsPresent = MODELS.every((model) =>
+  existsSync(join(MODELS_DIR, model.file)),
+);
 
 describe("llama-server binary", { skip: !llamaInstalled }, () => {
   test("llama-server is on PATH", () => {
