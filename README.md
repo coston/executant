@@ -73,7 +73,7 @@ steps:
       region: us-east-1 # passed to the child; overrides its own vars
 ```
 
-The child's steps run in order and nest under this one step in the parent's view — `release` shows as a single row, not one per child step, and a failure inside the child fails `release` the same way any other step failure would (`continue_on_error` on the workflow step works as usual).
+The child's steps run in order and nest under this one step in the parent's view — `release` stays a single top-level row, with each child step shown beneath it as an indented sub-row (`✔ [1/3] build image`) and a `(2/3)` counter on the parent — and a failure inside the child fails `release` the same way any other step failure would (`continue_on_error` on the workflow step works as usual).
 
 A child module's required vars — the entries in its `vars:` block declared with no value (see [Variables at Runtime](#variables-at-runtime)) — are its interface: the vars it requires from whoever runs it. Because every reference is resolved before any step runs, a parent that forgets to pass one of the child's required vars fails fast at load time rather than deep into the run.
 

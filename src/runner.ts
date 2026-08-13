@@ -499,6 +499,13 @@ async function* runNestedWorkflow(
   // workDir is inherited unchanged (not derived from the child workflow's own
   // location) so a single .executant-cancel file stops the whole run at the
   // next step boundary, wherever it is — not just steps at the top level.
+  // The child's steps are surfaced to the TUI as iteration rows under this
+  // step — one row per child step — so a `workflow:` step expands in the step
+  // list instead of hiding its progress in the log pane. Reusing the existing
+  // iteration machinery keeps the UI (and the reducer) untouched.
+  const childTotal = task.workflow.tasks.length;
+  let childIndex = 0;
+
   for await (const event of runWorkflow(
     task.workflow,
     { retrospective: false, workDir },
@@ -523,6 +530,14 @@ async function* runNestedWorkflow(
       case "step:retrospective":
         continue; // disabled above via retrospective:false — should never fire
       case "step:start":
+        childIndex = event.index + 1;
+        yield {
+          type: "step:iteration",
+          index: -1,
+          item: event.name,
+          iteration: childIndex,
+          total: childTotal,
+        };
         yield { type: "output:text", index: -1, text: `→ ${event.name}` };
         continue;
       case "step:complete":
@@ -542,13 +557,28 @@ async function* runNestedWorkflow(
           text: `✗ ${event.name}: ${event.error.message}`,
         };
         continue;
+      // A forEach (or deeper nesting) inside the child would otherwise append
+      // its own rows here, competing with the one-row-per-child-step mapping
+      // above. Fold that progress into the current child's row instead.
+      case "step:iteration":
+        yield {
+          type: "step:inner",
+          index: -1,
+          iteration: childIndex,
+          innerIndex: event.iteration - 1,
+          innerTotal: event.total,
+          name: event.item,
+        };
+        continue;
+      case "step:inner":
+        continue;
       default:
-        // output:text/tool/cost/structured, step:iteration/inner,
+        // output:text/tool/cost/structured,
         // step:healing/judge, log — pass through unchanged. The OUTER
         // runWorkflow's index-patch block below unconditionally overwrites
         // .index for these types regardless of what they already carry, so
-        // an event from a forEach inside the nested child (double nesting)
-        // still gets correctly re-attributed to the parent's row.
+        // an event from deep inside the nested child still gets correctly
+        // re-attributed to the parent's row.
         // (step:interjection is synthesized directly by the TUI, not by
         // runWorkflow's own generator, so it never appears here.)
         yield event;

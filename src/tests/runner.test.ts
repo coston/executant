@@ -14,6 +14,8 @@ import type {
   FromStepTarget,
   OutputTextEvent,
   StepErrorEvent,
+  StepInnerEvent,
+  StepIterationEvent,
   StepRetrospectiveEvent,
   StepSkipEvent,
   StepStartEvent,
@@ -617,6 +619,67 @@ describe("runWorkflow — nested workflow steps", () => {
       .filter((e) => e.index === 0)
       .map((e) => e.text);
     assert.ok(text.some((t) => t.includes("build")));
+  });
+
+  test("child steps surface as iteration rows under the parent step", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: build\n    command: echo build\n  - name: push\n    command: echo push\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectEvents(wf);
+    const iterations = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.deepEqual(
+      iterations.map((e) => [e.item, e.iteration, e.total, e.index]),
+      [
+        ["build", 1, 2, 0],
+        ["push", 2, 2, 0],
+      ],
+    );
+  });
+
+  test("a forEach inside the child folds into the child step's row, not new rows", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: fan-out\n    forEach:\n      - a\n      - b\n    command: echo {{item}}\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectEvents(wf);
+    const iterations = events.filter(
+      (e): e is StepIterationEvent => e.type === "step:iteration",
+    );
+    assert.deepEqual(
+      iterations.map((e) => e.item),
+      ["fan-out"],
+    );
+    const inner = events.filter(
+      (e): e is StepInnerEvent => e.type === "step:inner",
+    );
+    assert.deepEqual(
+      inner.map((e) => [e.name, e.innerIndex, e.innerTotal, e.index]),
+      [
+        ["a", 0, 2, 0],
+        ["b", 1, 2, 0],
+      ],
+    );
   });
 
   test("child failure propagates as the parent step's error", async () => {
