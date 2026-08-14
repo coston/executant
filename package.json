@@ -1,6 +1,6 @@
 {
   "name": "executant",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "description": "Harness for YAML-defined workflows that enables stepping through Claude sessions and bash commands",
   "repository": {
     "type": "git",
