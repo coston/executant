@@ -24,6 +24,7 @@ import { TaskRow } from "./TaskRow.js";
 import { IterationList } from "./IterationRow.js";
 import { LogPane } from "./LogPane.js";
 import { useInterval } from "./useInterval.js";
+import { useStatusLine } from "./useStatusLine.js";
 import {
   countIterationRows,
   formatHeaderElapsed,
@@ -66,6 +67,9 @@ export function App({
   // True once a retrospective is on screen and waiting for the user to choose
   // an action. While set, the app deliberately does not exit on the failure.
   const [awaitingRetrospective, setAwaitingRetrospective] = useState(false);
+  // Summed independently of the reducer, which intentionally drops cost
+  // events — this is only for the statusline payload, not the task list.
+  const [totalCostUsd, setTotalCostUsd] = useState(0);
 
   const { isRawModeSupported } = useStdin();
 
@@ -82,6 +86,9 @@ export function App({
         for await (const event of events) {
           if (!active) break;
           dispatch(event);
+          if (event.type === "output:cost") {
+            setTotalCostUsd((c) => c + event.usd);
+          }
           if (event.type === "step:retrospective" && isRawModeSupported) {
             interactiveRetrospective = true;
             setAwaitingRetrospective(true);
@@ -126,6 +133,8 @@ export function App({
     updateCheck.then(setUpdateVersion);
   }, [updateCheck]);
 
+  const statusLine = useStatusLine(workflow, totalCostUsd, state.startTime);
+
   // Tick counter drives spinner animation and live elapsed time in TaskRow.
   // Stops incrementing once the workflow finishes to avoid unnecessary renders.
   const [tick, setTick] = useState(0);
@@ -147,9 +156,13 @@ export function App({
     MAX_VISIBLE_ITERATIONS,
   );
 
-  // +1 when the update-available banner is showing; +1 when interject input is open
+  // +1 when the update-available banner is showing; +1 when interject input is
+  // open; +1 when the statusline has produced output
   const FIXED_OVERHEAD =
-    12 + (updateVersion ? 1 : 0) + (isInterjecting ? 1 : 0);
+    12 +
+    (updateVersion ? 1 : 0) +
+    (isInterjecting ? 1 : 0) +
+    (statusLine ? 1 : 0);
 
   // Budget rows for the task list, leaving room for iteration rows + log pane minimum.
   const availableForTaskSection = Math.max(
@@ -176,7 +189,7 @@ export function App({
   const showRetrospective = Boolean(state.retrospective);
   const retrospectiveMaxRows = Math.max(
     RETROSPECTIVE_MIN_ROWS,
-    terminalRows - 8 - (updateVersion ? 1 : 0),
+    terminalRows - 8 - (updateVersion ? 1 : 0) - (statusLine ? 1 : 0),
   );
 
   const elapsed = formatHeaderElapsed(state.startTime, state.endTime);
@@ -319,6 +332,7 @@ export function App({
             v{updateVersion} available — run: executant update
           </Text>
         )}
+        {statusLine && <Text dimColor>{statusLine}</Text>}
         <Text dimColor>
           {isInterjecting
             ? "typing interjection…"

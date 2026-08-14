@@ -279,6 +279,7 @@ steps:
 | `EXECUTANT_PROVIDER`          | Agent backend: `claude` or `opencode`                                                               | `claude`              |
 | `EXECUTANT_MODEL`             | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc.                 | per-provider default  |
 | `EXECUTANT_AGENT`             | OpenCode `--agent` name (ignored by Claude)                                                         | —                     |
+| `EXECUTANT_STATUSLINE`        | Set to `0` to disable the [statusline](#statusline) integration                                     | enabled               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables [observability](#observability): exports traces + metrics to this OTLP/HTTP collector       | unset (telemetry off) |
 | `OTEL_SERVICE_NAME`           | `service.name` on exported telemetry                                                                | `executant`           |
 | `TRACEPARENT`                 | Set _by_ executant on every subprocess when telemetry is on — W3C trace context of the current step | —                     |
@@ -396,6 +397,10 @@ Notes:
 - Steps with `continue_on_error: true` don't end the run, so they don't produce a retrospective.
 - In `--ci` mode the post-mortem is emitted as a `step:retrospective` NDJSON event instead of a pane; the update action is interactive-only.
 - Remote (URL) workflows get the report but no update action — there is no local file to rewrite.
+
+## Statusline
+
+If a `.claude/settings.local.json` or `.claude/settings.json` (project, walking up from `cwd`, then user-level) declares a `statusLine.command`, executant runs it on start and every 30s, feeding it the same JSON shape Claude Code sends its own statusline (session id, model, cwd, an approximate running cost), and renders the command's first output line above the TUI footer. Best-effort throughout: a missing command, malformed settings, or a failing/slow script just means no statusline — never a broken run. Disable with `EXECUTANT_STATUSLINE=0`.
 
 ## Observability
 
