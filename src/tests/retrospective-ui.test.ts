@@ -11,14 +11,53 @@
 // ink-testing-library's stdin reports isTTY and implements setRawMode, so
 // Ink's useInput is live and `stdin.write("u")` behaves like a real keypress.
 
-import { test, describe } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { render } from "ink-testing-library";
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { App } from "../ui/App.js";
-import { RetrospectivePane } from "../ui/RetrospectivePane.js";
+import {
+  RetrospectivePane,
+  formatRetrospectiveReport,
+} from "../ui/RetrospectivePane.js";
 import type { Event, Retrospective, Workflow } from "../types.js";
+
+// c's clipboard write goes through the real copyToClipboard — no mocking
+// hook exists for it (its export isn't reconfigurable under ESM), so these
+// tests give it an isolated PATH with a stub "clipboard tool" instead, the
+// same technique clipboard.test.ts uses for the utility itself.
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+function setPlatform(value: string) {
+  Object.defineProperty(process, "platform", { ...platformDescriptor, value });
+}
+let binDir: string;
+let originalPath: string | undefined;
+beforeEach(() => {
+  binDir = mkdtempSync(join(tmpdir(), "executant-retro-clip-"));
+  originalPath = process.env.PATH;
+  process.env.PATH = binDir;
+  setPlatform("linux");
+});
+afterEach(() => {
+  process.env.PATH = originalPath;
+  rmSync(binDir, { recursive: true, force: true });
+  if (platformDescriptor)
+    Object.defineProperty(process, "platform", platformDescriptor);
+});
+function installClipboardStub(succeed: boolean) {
+  const path = join(binDir, "wl-copy");
+  writeFileSync(
+    path,
+    succeed
+      ? `#!${process.execPath}\nprocess.stdin.resume();process.stdin.on("end",()=>process.exit(0));\n`
+      : `#!${process.execPath}\nprocess.exit(1);\n`,
+  );
+  chmodSync(path, 0o755);
+}
 
 const RETRO: Retrospective = {
   step: "check-dist",
@@ -39,6 +78,26 @@ const RETRO: Retrospective = {
 
 /** Lets Ink flush its render and input handling before assertions. */
 const settle = () => new Promise((r) => setTimeout(r, 60));
+
+/**
+ * Polls until `frame()` matches `pattern` or 2s elapses. Spawning the
+ * clipboard stub is a real child process, so its completion time varies with
+ * how busy the machine running the suite is — unlike the rest of this file,
+ * a fixed settle() is too flaky here.
+ */
+async function waitForFrame(
+  frame: () => string | undefined,
+  pattern: RegExp,
+): Promise<string> {
+  const deadline = Date.now() + 2000;
+  let last = frame() ?? "";
+  while (Date.now() < deadline) {
+    last = frame() ?? "";
+    if (pattern.test(last)) return last;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return last;
+}
 
 function renderPane(
   props: Partial<React.ComponentProps<typeof RetrospectivePane>> = {},
@@ -164,6 +223,60 @@ describe("RetrospectivePane keyboard", () => {
     stdin.write("o");
     await settle();
     assert.match(lastFrame() ?? "", /root cause/);
+  });
+
+  test("c copies the full report and shows a confirmation", async () => {
+    installClipboardStub(true);
+    const { stdin, lastFrame, actions } = renderPane();
+    await settle();
+    stdin.write("c");
+    assert.match(
+      await waitForFrame(lastFrame, /Copied to clipboard/),
+      /Copied to clipboard/,
+    );
+    // c is not a step action — it doesn't dismiss or trigger update.
+    assert.deepEqual(actions, []);
+  });
+
+  test("c reports a failure when no clipboard tool is available", async () => {
+    const { stdin, lastFrame } = renderPane();
+    await settle();
+    stdin.write("c");
+    assert.match(
+      await waitForFrame(lastFrame, /Couldn't copy/),
+      /Couldn't copy/,
+    );
+  });
+
+  test("a later keypress clears the stale copy status", async () => {
+    installClipboardStub(true);
+    const { stdin, lastFrame } = renderPane();
+    await settle();
+    stdin.write("c");
+    await waitForFrame(lastFrame, /Copied to clipboard/);
+    stdin.write("o");
+    await settle();
+    assert.doesNotMatch(lastFrame() ?? "", /Copied to clipboard/);
+  });
+});
+
+describe("formatRetrospectiveReport", () => {
+  test("includes every section shown in the pane", () => {
+    const text = formatRetrospectiveReport(RETRO);
+    assert.match(text, /retrospective — check-dist/);
+    assert.match(text, /dist\/ was never created/);
+    assert.match(text, /No build step runs before the check/);
+    assert.match(text, /No such file or directory/);
+    assert.match(text, /add a build step before it/);
+  });
+
+  test("notes when no workflow change would help", () => {
+    const text = formatRetrospectiveReport({
+      ...RETRO,
+      workflowFixable: false,
+      refineInstruction: "",
+    });
+    assert.match(text, /No workflow change would have prevented this/);
   });
 });
 

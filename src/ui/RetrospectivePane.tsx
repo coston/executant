@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Retrospective } from "../types.js";
 import { theme } from "./theme.js";
+import { copyToClipboard } from "../lib/clipboard.js";
 
 type RetrospectiveAction = "update" | "dismiss";
 
@@ -76,6 +77,44 @@ export function fitLists(
   };
 }
 
+/** Plain-text rendering of the full report, independent of what the pane trims to fit the terminal. */
+export function formatRetrospectiveReport(
+  retrospective: Retrospective,
+): string {
+  const lines = [
+    `retrospective — ${retrospective.step}`,
+    "",
+    retrospective.summary,
+    "",
+    "root cause",
+    retrospective.rootCause,
+  ];
+  if (retrospective.evidence.length > 0) {
+    lines.push(
+      "",
+      "evidence",
+      ...retrospective.evidence.map((e) => `  · ${e}`),
+    );
+  }
+  if (retrospective.suggestions.length > 0) {
+    lines.push(
+      "",
+      "task file",
+      ...retrospective.suggestions.flatMap((s) => [
+        `  · ${s.step ? `${s.step}: ` : ""}${s.issue}`,
+        `    → ${s.change}`,
+      ]),
+    );
+  }
+  if (!retrospective.workflowFixable) {
+    lines.push(
+      "",
+      "No workflow change would have prevented this — fix the underlying issue and re-run.",
+    );
+  }
+  return lines.join("\n");
+}
+
 /** Which actions the user can take, given whether a local file can be updated. */
 export function availableActions(
   retrospective: Retrospective,
@@ -106,9 +145,24 @@ export function RetrospectivePane({
   // The analysis is a reading of the output, not the output itself. `o` shows
   // the raw lines so the user can check that reading against what happened.
   const [showingOutput, setShowingOutput] = useState(false);
+  // Transient feedback for `c` — cleared on the next keypress so it never
+  // goes stale while the user keeps interacting with the pane.
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   useInput(
     (input, key) => {
+      if (input.toLowerCase() === "c") {
+        setCopyStatus(null);
+        copyToClipboard(formatRetrospectiveReport(retrospective)).then((ok) =>
+          setCopyStatus(
+            ok
+              ? "Copied to clipboard."
+              : "Couldn't copy — no clipboard tool found (install xclip, wl-copy, or xsel).",
+          ),
+        );
+        return;
+      }
+      setCopyStatus(null);
       if (input.toLowerCase() === "o" && outputLines.length > 0) {
         setShowingOutput((v) => !v);
         return;
@@ -129,7 +183,7 @@ export function RetrospectivePane({
     retrospective.evidence.length,
     retrospective.suggestions.length,
     maxRows,
-    onAction ? actions.length + 1 : 0,
+    onAction ? actions.length + 2 : 0,
   );
   // Output view: title + section header + the action rows, rest is output.
   const outputRows = Math.max(
@@ -237,6 +291,13 @@ export function RetrospectivePane({
             <Text dimColor>
               {"  "}[o]{" "}
               {showingOutput ? "back to the analysis" : "show the step output"}
+            </Text>
+          )}
+          <Text dimColor>{"  "}[c] Copy report to clipboard</Text>
+          {copyStatus && (
+            <Text dimColor>
+              {"  "}
+              {copyStatus}
             </Text>
           )}
         </Box>
