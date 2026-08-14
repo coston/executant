@@ -360,6 +360,19 @@ async function* runForEach(
     return;
   }
 
+  // A zero-item forEach completes "successfully" doing nothing — which
+  // reads identically to a healthy no-op unless it's called out. Usually a
+  // sign the source command's own inputs (e.g. an unresolved var, an
+  // empty/missing file) aren't what was expected, not that there's
+  // genuinely no work.
+  if (total === 0 && startIteration === 1) {
+    yield {
+      type: "log",
+      level: "warn",
+      text: `forEach resolved to 0 items in "${task.name}" — this step will do nothing. Check the source command's own inputs.`,
+    };
+  }
+
   for (const [i, item] of items.entries()) {
     const iteration = i + 1;
     if (iteration < startIteration) continue; // silent skip

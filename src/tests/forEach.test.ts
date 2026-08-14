@@ -63,6 +63,69 @@ steps:
     assert.equal(typeof task.forEach, "string");
   });
 
+  test("substitutes vars in a shell-command forEach source", () => {
+    // Prior bug: forEach's own source string was never run through
+    // substituteVars, unlike every other field — a var reference in the
+    // shell command (e.g. `grep ... {{scenarios_file}}`) stayed literally
+    // unresolved, so the command grepped a file literally named
+    // "{{scenarios_file}}" and silently produced zero items instead of
+    // failing loudly.
+    const file = tmpYaml(`
+goal: test
+vars:
+  target_file: /tmp/whatever.txt
+steps:
+  - name: list
+    forEach: "grep -l foo {{target_file}}"
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+
+    assert.equal(task.forEach, "grep -l foo /tmp/whatever.txt");
+  });
+
+  test("substitutes vars in each item of an inline-list forEach source", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  suffix: .spec.ts
+steps:
+  - name: list
+    forEach: ["a{{suffix}}", "b{{suffix}}"]
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+
+    assert.deepEqual(task.forEach, ["a.spec.ts", "b.spec.ts"]);
+  });
+
+  test("throws when the forEach source references an undefined var", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: list
+    forEach: "printf '%s\\n' {{missing_var}}"
+    command: echo "{{item}}"
+`);
+
+    assert.throws(
+      () => loadWorkflow(file),
+      (err: Error) => {
+        assert.ok(
+          err.message.includes("missing_var"),
+          `expected "missing_var" in: ${err.message}`,
+        );
+        assert.ok(
+          err.message.includes('"list"'),
+          `expected step name in: ${err.message}`,
+        );
+        return true;
+      },
+    );
+  });
+
   test("vars substitution applies to inner task but NOT to {{item}}", () => {
     const file = tmpYaml(`
 goal: test
@@ -118,6 +181,29 @@ steps:
 // ----------------------------------------------------------------------------
 
 describe("runWorkflow — forEach events", () => {
+  test("warns when the forEach source resolves to zero items", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: loop
+    forEach: "printf ''"
+    command: echo "{{item}}"
+`),
+    );
+    const events = await collectEvents(wf);
+
+    const warning = events.find((e) => e.type === "log" && e.level === "warn");
+    assert.ok(warning, "expected a warn log for a zero-item forEach");
+    assert.ok(
+      "text" in warning! && warning.text.includes("0 items"),
+      `expected "0 items" in the warning: ${JSON.stringify(warning)}`,
+    );
+
+    const iterations = events.filter((e) => e.type === "step:iteration");
+    assert.equal(iterations.length, 0);
+  });
+
   test("yields step:iteration events with correct metadata", async () => {
     const wf = loadWorkflow(
       tmpYaml(`

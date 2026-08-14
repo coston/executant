@@ -186,9 +186,12 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
   const { name, continue_on_error: continueOnError = false } = step;
 
   // forEach/repeat wraps inner steps — detect before type switch.
-  // NOTE: substituteVars is called inside convertInnerStep, which means only
-  // workflow vars are substituted. {{item}} is intentionally left as-is here
-  // because it is a runtime placeholder resolved by the runner per iteration.
+  // NOTE: substituteVars is called both on forEach's own source below and
+  // inside convertInnerStep for the wrapped steps, which means only workflow
+  // vars are substituted in either place. {{item}} is intentionally left
+  // as-is inside inner steps because it's a runtime placeholder resolved by
+  // the runner per iteration — it has no meaning in forEach's own source,
+  // since forEach is what PRODUCES item, not a consumer of it.
   if (step.repeat !== undefined && step.forEach !== undefined) {
     throw new Error(`Step "${name}" cannot have both repeat and forEach`);
   }
@@ -198,10 +201,17 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
         `Step "${name}" cannot have both steps and command/prompt/message`,
       );
     }
+    // step.forEach is either a shell command (string) or an inline list
+    // (string[]) — both can reference {{vars}} (e.g. `grep ... {{scenarios_file}}`
+    // as the command, or a literal item referencing a var), and both need the
+    // same substitution every other field gets. Unlike inner steps, {{item}}
+    // has no meaning here — forEach is what PRODUCES item, not a consumer of it.
     const forEachValue =
       step.repeat !== undefined
         ? Array.from({ length: step.repeat }, (_, i) => String(i + 1))
-        : step.forEach!;
+        : typeof step.forEach === "string"
+          ? substituteVars(step.forEach, vars, name, "forEach")
+          : step.forEach!.map((v) => substituteVars(v, vars, name, "forEach"));
     const stepWithoutLoop = {
       ...step,
       repeat: undefined,
