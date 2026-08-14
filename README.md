@@ -175,6 +175,24 @@ steps:
         command: npm run build --workspace={{item}}
 ```
 
+By default `forEach`/`repeat` iterations run one at a time. Add `concurrency: N` when iterations are genuinely independent and the per-item work is slow enough that wall-clock time matters — it runs up to N at once, in batches (batch two starts only once every item in batch one has finished):
+
+```yaml
+steps:
+  - name: verify each package
+    forEach: [packages/api, packages/web, packages/shared]
+    concurrency: 3
+    steps:
+      - name: lint {{item}}
+        type: script
+        command: npm run lint --workspace={{item}}
+      - name: test {{item}}
+        type: script
+        command: npm test --workspace={{item}}
+```
+
+`concurrency` buys speed, not lower token cost — each iteration still pays its own full context, so scope what each iteration reads independently of whether it runs concurrently. Don't reach for it when iterations share a mutable resource (the same working tree, a scratch file one iteration writes and another reads) or when a later step needs a view across every item to decide anything — those need coordination or a final aggregation step, not concurrency inside the loop. There's also no `--from-step` support into a specific iteration of a concurrent step — a resume target inside one re-runs every iteration from the start instead (with a warning), so design each iteration to detect and skip its own already-done work rather than relying on resume.
+
 Use `repeat: N` as shorthand when there is no meaningful list — just a count. `{{item}}` is the 1-based iteration number:
 
 ```yaml

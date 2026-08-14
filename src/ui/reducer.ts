@@ -85,15 +85,18 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
       };
 
     case "step:iteration": {
-      const prev =
-        finalizeIterations(
-          state.tasks[event.index]?.iterationHistory,
-          "complete",
-        ) ?? [];
+      // No longer finalizes whatever was previously "running" on arrival —
+      // under concurrency multiple iterations are legitimately "running" at
+      // once, so a new start is not evidence an earlier one finished.
+      // Completion is always explicit now, via step:iteration-complete.
+      const prev = state.tasks[event.index]?.iterationHistory ?? [];
       // Cap stored history: a forEach over thousands of items would otherwise
       // grow this array without bound (the UI only ever shows the last few).
-      // The running record is always the last element, so trimming the front
-      // never drops the one that step:inner / finalizeIterations mutate.
+      // Trimming from the front assumes concurrency stays well under this
+      // cap — MAX_ITERATION_HISTORY (500) comfortably covers the "cap ~10
+      // concurrent" convention used elsewhere, so a still-running record
+      // being trimmed out from under a later step:iteration-complete would
+      // need triple-digit concurrency to happen.
       const combined = [
         ...prev,
         {
@@ -113,10 +116,13 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
     }
 
     case "step:inner": {
+      // Matched by iteration number, not "whichever is running" — under
+      // concurrency several records can be "running" at once, and this
+      // event belongs to exactly one of them.
       const iterationHistory = (
         state.tasks[event.index]?.iterationHistory ?? []
       ).map((r) =>
-        r.status === "running"
+        r.status === "running" && r.iteration === event.iteration
           ? {
               ...r,
               inner: {
@@ -125,6 +131,17 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
                 name: event.name,
               },
             }
+          : r,
+      );
+      return updateTask(state, event.index, { iterationHistory });
+    }
+
+    case "step:iteration-complete": {
+      const iterationHistory = (
+        state.tasks[event.index]?.iterationHistory ?? []
+      ).map((r) =>
+        r.status === "running" && r.iteration === event.iteration
+          ? { ...r, status: event.status, endTime: Date.now() }
           : r,
       );
       return updateTask(state, event.index, { iterationHistory });

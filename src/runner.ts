@@ -348,6 +348,49 @@ async function* runForEach(
 ): AsyncGenerator<Event> {
   const items = await resolveItems(task.forEach);
   const total = items.length;
+
+  // A zero-item forEach completes "successfully" doing nothing — which
+  // reads identically to a healthy no-op unless it's called out. Usually a
+  // sign the source command's own inputs (e.g. an unresolved var, an
+  // empty/missing file) aren't what was expected, not that there's
+  // genuinely no work.
+  if (total === 0 && (from?.[0] ?? 1) === 1) {
+    yield {
+      type: "log",
+      level: "warn",
+      text: `forEach resolved to 0 items in "${task.name}" — this step will do nothing. Check the source command's own inputs.`,
+    };
+  }
+
+  const concurrency = task.concurrency ?? 1;
+  if (concurrency > 1) {
+    // No --from-step support here: iterations aren't run in a knowable
+    // order, so there's no single "resume from iteration N" that means
+    // anything. Re-running the whole step is the correct recovery — each
+    // iteration should detect and skip its own already-done work rather
+    // than lean on infra-level resume (see AGENTS.md).
+    if (from && from.length > 0) {
+      yield {
+        type: "log",
+        level: "warn",
+        text: `[from-step] "${task.name}" runs with concurrency ${concurrency} and doesn't support resuming into a specific iteration — running all ${total} iterations from the start.`,
+      };
+    }
+    yield* runForEachConcurrent(task, items, concurrency, channel, workDir);
+    return;
+  }
+
+  yield* runForEachSequential(task, items, from, channel, workDir);
+}
+
+async function* runForEachSequential(
+  task: ForEachTask,
+  items: string[],
+  from: number[] | undefined,
+  channel: InterjectChannel | undefined,
+  workDir: string,
+): AsyncGenerator<Event> {
+  const total = items.length;
   const innerTotal = task.inner.length;
   const startIteration = from?.[0] ?? 1;
 
@@ -358,19 +401,6 @@ async function* runForEach(
       text: `[from-step] No iterations to run: target iteration ${startIteration} exceeds total ${total} in "${task.name}"`,
     };
     return;
-  }
-
-  // A zero-item forEach completes "successfully" doing nothing — which
-  // reads identically to a healthy no-op unless it's called out. Usually a
-  // sign the source command's own inputs (e.g. an unresolved var, an
-  // empty/missing file) aren't what was expected, not that there's
-  // genuinely no work.
-  if (total === 0 && startIteration === 1) {
-    yield {
-      type: "log",
-      level: "warn",
-      text: `forEach resolved to 0 items in "${task.name}" — this step will do nothing. Check the source command's own inputs.`,
-    };
   }
 
   for (const [i, item] of items.entries()) {
@@ -425,6 +455,13 @@ async function* runForEach(
             level: "warn",
             text: `[forEach] Step "${substituted.name}" failed — aborting remaining children and iterations`,
           };
+          yield {
+            type: "step:iteration-complete",
+            index: -1,
+            iteration,
+            status: "error",
+            error: error.message,
+          };
           throw error;
         }
         yield {
@@ -433,6 +470,180 @@ async function* runForEach(
           text: `[forEach] Step "${substituted.name}" failed (continuing): ${error.message}`,
         };
       }
+    }
+    yield {
+      type: "step:iteration-complete",
+      index: -1,
+      iteration,
+      status: "complete",
+    };
+  }
+}
+
+/**
+ * Runs iterations in batches of `concurrency`, all items in a batch started
+ * together and interleaved live via mergeAsyncGenerators — batch N+1 starts
+ * only once every item in batch N has finished (success or not). Not a
+ * streaming pool: a slow item in a batch holds up the next batch's start
+ * even if other slots are free, which keeps the "batch of N, then the next
+ * batch" mental model simple and matches the "cap N concurrent" pattern
+ * already used by hand in several workflow prompts.
+ */
+async function* runForEachConcurrent(
+  task: ForEachTask,
+  items: string[],
+  concurrency: number,
+  channel: InterjectChannel | undefined,
+  workDir: string,
+): AsyncGenerator<Event> {
+  const total = items.length;
+
+  for (let start = 0; start < items.length; start += concurrency) {
+    const batch = items.slice(start, start + concurrency);
+    const gens = batch.map((item, k) =>
+      runOneIteration(task, item, start + k + 1, total, channel, workDir),
+    );
+
+    let batchError: string | undefined;
+    for await (const event of mergeAsyncGenerators(gens)) {
+      if (
+        event.type === "step:iteration-complete" &&
+        event.status === "error"
+      ) {
+        batchError ??= event.error;
+      }
+      yield event;
+    }
+
+    if (batchError !== undefined && !task.continueOnError) {
+      yield {
+        type: "log",
+        level: "warn",
+        text: `[forEach] An iteration failed in "${task.name}" — aborting remaining batches`,
+      };
+      throw new Error(
+        `forEach "${task.name}" had a failing iteration: ${batchError}`,
+      );
+    }
+  }
+}
+
+/**
+ * Runs one forEach iteration's inner steps in order (an iteration's OWN
+ * steps are still sequential — e.g. "extract" must finish before "write"
+ * reads its output — only iterations run concurrently with each other, not
+ * an iteration's own children). Never throws: every failure, expected or
+ * not, becomes a step:iteration-complete(status: "error") event instead, so
+ * a rejected promise can never reach mergeAsyncGenerators' Promise.race and
+ * silently take down sibling iterations that are still in flight.
+ */
+async function* runOneIteration(
+  task: ForEachTask,
+  item: string,
+  iteration: number,
+  total: number,
+  channel: InterjectChannel | undefined,
+  workDir: string,
+): AsyncGenerator<Event> {
+  const innerTotal = task.inner.length;
+  try {
+    // index: -1 here — runWorkflow patches it to the real step index
+    yield { type: "step:iteration", index: -1, item, iteration, total };
+
+    for (const [j, innerTask] of task.inner.entries()) {
+      const substituted = substituteItem(innerTask, item);
+      if (innerTotal > 1) {
+        yield {
+          type: "step:inner",
+          index: -1,
+          iteration,
+          innerIndex: j,
+          innerTotal,
+          name: substituted.name,
+        };
+      }
+      try {
+        for await (const event of runStep(
+          substituted,
+          undefined,
+          channel,
+          workDir,
+        )) {
+          if (event.type !== "step:iteration" && event.type !== "step:inner") {
+            yield event;
+          }
+        }
+      } catch (err) {
+        const error = normalizeError(err);
+        if (!substituted.continueOnError) {
+          yield {
+            type: "log",
+            level: "warn",
+            text: `[forEach] Step "${substituted.name}" failed in iteration ${iteration} ("${item}") — aborting the rest of this iteration`,
+          };
+          yield {
+            type: "step:iteration-complete",
+            index: -1,
+            iteration,
+            status: "error",
+            error: error.message,
+          };
+          return;
+        }
+        yield {
+          type: "log",
+          level: "warn",
+          text: `[forEach] Step "${substituted.name}" failed in iteration ${iteration} ("${item}", continuing): ${error.message}`,
+        };
+      }
+    }
+    yield {
+      type: "step:iteration-complete",
+      index: -1,
+      iteration,
+      status: "complete",
+    };
+  } catch (err) {
+    // Belt and suspenders: nothing above should reach here (both throw
+    // sites are already caught), but a mis-shaped task or a future edit
+    // that adds an uncaught path must still surface as a failed iteration,
+    // never as an unhandled rejection that kills unrelated sibling
+    // iterations sharing this batch.
+    yield {
+      type: "step:iteration-complete",
+      index: -1,
+      iteration,
+      status: "error",
+      error: normalizeError(err).message,
+    };
+  }
+}
+
+/**
+ * Merges multiple async generators into one, yielding each value as soon as
+ * its generator produces it — not round-robin, not batched by source.
+ * Finished generators drop out; the merge ends once all have.
+ */
+async function* mergeAsyncGenerators<T>(
+  generators: AsyncGenerator<T>[],
+): AsyncGenerator<T> {
+  const pending = new Map<
+    number,
+    Promise<{ idx: number; result: IteratorResult<T> }>
+  >();
+
+  const pull = (idx: number) =>
+    generators[idx]!.next().then((result) => ({ idx, result }));
+
+  generators.forEach((_, idx) => pending.set(idx, pull(idx)));
+
+  while (pending.size > 0) {
+    const { idx, result } = await Promise.race(pending.values());
+    if (result.done) {
+      pending.delete(idx);
+    } else {
+      yield result.value;
+      pending.set(idx, pull(idx));
     }
   }
 }

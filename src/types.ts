@@ -111,6 +111,14 @@ export interface ForEachTask extends BaseTask {
    * Nested ForEachTask is supported for multi-level iteration.
    */
   inner: Task[];
+  /**
+   * Run up to this many iterations concurrently, in batches (batch N+1 starts
+   * once batch N fully settles — not a streaming pool). Omitted or 1 keeps
+   * the original strictly-sequential behavior unchanged. `--from-step`
+   * resuming into a concurrent forEach is not supported — the runner throws
+   * rather than silently resuming wrong.
+   */
+  concurrency?: number;
 }
 
 /**
@@ -215,6 +223,23 @@ export interface StepInnerEvent {
   innerIndex: number; // 0-based child step index
   innerTotal: number; // total child steps
   name: string; // child step name ({{item}} already substituted)
+}
+
+/**
+ * Fired when one forEach iteration's own inner steps finish, success or not.
+ * Sequential forEach never needed this — the next step:iteration (or the
+ * parent step:complete/step:error as a final sweep) was always enough to
+ * infer completion, because at most one iteration was ever running. Under
+ * concurrency multiple iterations run at once and can finish in any order,
+ * so completion needs its own signal identifying WHICH iteration it's for.
+ */
+export interface StepIterationCompleteEvent {
+  type: "step:iteration-complete";
+  index: number; // parent forEach step index
+  iteration: number; // 1-based
+  status: "complete" | "error";
+  /** Set when status is "error" — the failing inner step's error message. */
+  error?: string;
 }
 
 /** A line of plain text output from a command or Claude's text blocks. */
@@ -355,6 +380,7 @@ export type Event =
   | StepSkipEvent
   | StepIterationEvent
   | StepInnerEvent
+  | StepIterationCompleteEvent
   | OutputTextEvent
   | OutputToolEvent
   | OutputCostEvent
@@ -515,6 +541,7 @@ export type RawStep = {
   llm_as_judge?: boolean;
   allowed_tools?: string[];
   forEach?: string[] | string;
+  concurrency?: number;
   repeat?: number;
   context?: string[];
   steps?: RawStep[];

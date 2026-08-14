@@ -59,7 +59,10 @@ describe("reducer — iteration history", () => {
     assert.equal(history[0].endTime, undefined);
   });
 
-  test("second step:iteration marks first as complete and appends new record", () => {
+  test("second step:iteration does not retroactively complete the first (concurrent-safe)", () => {
+    // Starting iteration 2 while 1 is still running must not read as 1
+    // having finished — under concurrency both are genuinely in flight at
+    // once. Completion is always explicit now, via step:iteration-complete.
     let state = forEachState();
     state = reducer(state, {
       type: "step:iteration",
@@ -79,9 +82,39 @@ describe("reducer — iteration history", () => {
     assert.ok(history);
     assert.equal(history.length, 2);
     assert.equal(history[0].item, "a.ts");
+    assert.equal(history[0].status, "running");
+    assert.equal(history[0].endTime, undefined);
+    assert.equal(history[1].item, "b.ts");
+    assert.equal(history[1].status, "running");
+    assert.equal(history[1].endTime, undefined);
+  });
+
+  test("step:iteration-complete marks the matching iteration complete by number, leaving others running", () => {
+    let state = forEachState();
+    state = reducer(state, {
+      type: "step:iteration",
+      index: 0,
+      item: "a.ts",
+      iteration: 1,
+      total: 3,
+    });
+    state = reducer(state, {
+      type: "step:iteration",
+      index: 0,
+      item: "b.ts",
+      iteration: 2,
+      total: 3,
+    });
+    state = reducer(state, {
+      type: "step:iteration-complete",
+      index: 0,
+      iteration: 1,
+      status: "complete",
+    });
+    const history = state.tasks[0].iterationHistory;
+    assert.ok(history);
     assert.equal(history[0].status, "complete");
     assert.ok(history[0].endTime !== undefined);
-    assert.equal(history[1].item, "b.ts");
     assert.equal(history[1].status, "running");
     assert.equal(history[1].endTime, undefined);
   });
@@ -234,6 +267,12 @@ steps:
       innerTotal: 2,
       name: "lint",
     });
+    state = reducer(state, {
+      type: "step:iteration-complete",
+      index: 0,
+      iteration: 1,
+      status: "complete",
+    });
     // Start next iteration — the new record should have no inner
     state = reducer(state, {
       type: "step:iteration",
@@ -242,11 +281,14 @@ steps:
       iteration: 2,
       total: 3,
     });
-    const running = state.tasks[0].iterationHistory?.find(
-      (r) => r.status === "running",
+    // Multiple records can be "running" concurrently now, so look up the
+    // specific iteration rather than assuming the first "running" match.
+    const iter2 = state.tasks[0].iterationHistory?.find(
+      (r) => r.iteration === 2,
     );
-    assert.equal(running?.item, "b.ts");
-    assert.equal(running?.inner, undefined);
+    assert.equal(iter2?.item, "b.ts");
+    assert.equal(iter2?.status, "running");
+    assert.equal(iter2?.inner, undefined);
   });
 
   test("step:complete on non-forEach task leaves iterationHistory undefined", () => {
@@ -299,7 +341,9 @@ steps:
         total: 600,
       });
     }
-    // step:inner must still find and update the running (last) record.
+    // step:inner is matched by iteration number, so it must still find and
+    // update iteration 600 specifically even though every retained record
+    // is "running" (none of the 600 starts above ever completed).
     state = reducer(state, {
       type: "step:inner",
       index: 0,
@@ -308,10 +352,10 @@ steps:
       innerTotal: 2,
       name: "lint",
     });
-    const running = state.tasks[0].iterationHistory?.find(
-      (r) => r.status === "running",
+    const iter600 = state.tasks[0].iterationHistory?.find(
+      (r) => r.iteration === 600,
     );
-    assert.equal(running?.inner?.name, "lint");
+    assert.equal(iter600?.inner?.name, "lint");
     // step:complete finalizes every retained record.
     state = reducer(state, {
       type: "step:complete",

@@ -143,6 +143,12 @@ YAML — step fields (all step types):
                     iteration in every child step's name, command, and prompt.
   repeat            int     Run this step N times; {{item}} is the 1-based
                     iteration number. Mutually exclusive with forEach.
+  concurrency       int     Run up to N iterations at once, in batches
+                    (batch N+1 starts once batch N fully settles) instead
+                    of one at a time. Requires forEach or repeat. No
+                    --from-step support into a specific iteration — a
+                    resume target inside a concurrent step re-runs every
+                    iteration instead, with a warning.
   steps             list    Multiple child steps to run per forEach/repeat
                     iteration. Mutually exclusive with command/prompt on the
                     parent step. Requires forEach or repeat.

@@ -45,6 +45,7 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
     llm_as_judge: z.boolean().optional(),
     allowed_tools: z.array(z.string()).optional(),
     forEach: z.union([z.array(z.string()), z.string()]).optional(),
+    concurrency: z.number().int().positive().optional(),
     repeat: z.number().int().positive().optional(),
     context: z.array(z.string()).optional(),
     steps: z.array(RawStepSchema).min(1).optional(),
@@ -195,6 +196,15 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
   if (step.repeat !== undefined && step.forEach !== undefined) {
     throw new Error(`Step "${name}" cannot have both repeat and forEach`);
   }
+  if (
+    step.concurrency !== undefined &&
+    step.repeat === undefined &&
+    step.forEach === undefined
+  ) {
+    throw new Error(
+      `Step "${name}" sets "concurrency" but has no "forEach" or "repeat" to apply it to`,
+    );
+  }
   if (step.repeat !== undefined || step.forEach !== undefined) {
     if (step.steps && (step.command || step.prompt || step.message)) {
       throw new Error(
@@ -237,6 +247,7 @@ function convertStep(step: RawStep, vars: Record<string, string>): Task {
       continueOnError,
       forEach: forEachValue,
       inner,
+      ...(step.concurrency !== undefined && { concurrency: step.concurrency }),
     } satisfies ForEachTask;
   }
 

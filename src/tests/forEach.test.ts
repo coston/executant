@@ -6,6 +6,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { loadWorkflow } from "../load-workflow.js";
 import { reducer, buildInitialState } from "../ui/reducer.js";
@@ -17,9 +19,15 @@ import type {
   OutputTextEvent,
   StepInnerEvent,
   StepIterationEvent,
+  StepIterationCompleteEvent,
   StepStartEvent,
 } from "../types.js";
-import { tmpYaml, collectEvents, collectEventsUntilError } from "./helpers.js";
+import {
+  tmpYaml,
+  tmpDir,
+  collectEvents,
+  collectEventsUntilError,
+} from "./helpers.js";
 import { runWorkflow } from "../runner.js";
 
 // ----------------------------------------------------------------------------
@@ -173,6 +181,71 @@ steps:
     const wf = loadWorkflow(file);
     const task = wf.tasks[0] as ForEachTask;
     assert.equal(task.continueOnError, true);
+  });
+
+  test("parses concurrency onto ForEachTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    forEach: [a, b, c]
+    concurrency: 3
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+    assert.equal(task.concurrency, 3);
+  });
+
+  test("concurrency is absent when not set (sequential, unchanged)", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    forEach: [a, b]
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+    assert.equal(task.concurrency, undefined);
+  });
+
+  test("concurrency applies to repeat too", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: run
+    repeat: 3
+    concurrency: 2
+    command: echo "{{item}}"
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ForEachTask;
+    assert.equal(task.concurrency, 2);
+  });
+
+  test("throws when concurrency is set without forEach or repeat", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: bad
+    concurrency: 3
+    command: echo hi
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      (err: Error) => {
+        assert.ok(
+          err.message.includes('"bad"'),
+          `expected step name in: ${err.message}`,
+        );
+        assert.ok(
+          err.message.includes("concurrency"),
+          `expected mention of concurrency in: ${err.message}`,
+        );
+        return true;
+      },
+    );
   });
 });
 
@@ -442,7 +515,10 @@ steps:
     assert.equal(history[0].status, "running");
   });
 
-  test("appends to iterationHistory on subsequent events, marking previous complete", () => {
+  test("appends to iterationHistory on subsequent events, both left running", () => {
+    // Starting a second iteration must not retroactively complete the
+    // first — under concurrency both can be genuinely in flight at once.
+    // Completion is explicit now, via step:iteration-complete.
     let state = makeState();
     state = reducer(state, { type: "step:start", index: 0, name: "loop" });
     state = reducer(state, {
@@ -464,7 +540,7 @@ steps:
     assert.ok(history);
     assert.equal(history.length, 2);
     assert.equal(history[0].item, "x");
-    assert.equal(history[0].status, "complete");
+    assert.equal(history[0].status, "running");
     assert.equal(history[1].item, "y");
     assert.equal(history[1].status, "running");
   });
@@ -1199,7 +1275,7 @@ steps:
     assert.deepEqual(running?.inner, { index: 0, total: 2, name: "A x" });
   });
 
-  test("new step:iteration marks previous running record complete (inner cleared)", () => {
+  test("new step:iteration leaves the previous record running; explicit completion clears it, new record has no inner", () => {
     let state = makeMultiStepState();
     state = reducer(state, { type: "step:start", index: 0, name: "process" });
     state = reducer(state, {
@@ -1217,13 +1293,20 @@ steps:
       innerTotal: 2,
       name: "B x",
     });
-    // New iteration: previous record (x) is now complete; new record (y) has no inner yet
+    // A new iteration starting does NOT retroactively complete the prior
+    // one — that's the concurrent-safe behavior. Completion is explicit.
     state = reducer(state, {
       type: "step:iteration",
       index: 0,
       item: "y",
       iteration: 2,
       total: 2,
+    });
+    state = reducer(state, {
+      type: "step:iteration-complete",
+      index: 0,
+      iteration: 1,
+      status: "complete",
     });
 
     const history = state.tasks[0].iterationHistory;
@@ -1489,5 +1572,233 @@ steps:
       .map((e) => (e as StepStartEvent).name);
     assert.deepEqual(starts, ["second"]);
     assert.ok(events.some((e) => e.type === "workflow:complete"));
+  });
+});
+
+// ----------------------------------------------------------------------------
+// runner: forEach concurrency
+// ----------------------------------------------------------------------------
+
+describe("runWorkflow — forEach concurrency", () => {
+  test("iterations genuinely overlap in time, not just run without error", async () => {
+    const dir = tmpDir();
+    const timingFile = join(dir, "timing.txt");
+
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+vars:
+  timing_file: "${timingFile}"
+steps:
+  - name: loop
+    forEach: [a, b, c]
+    concurrency: 3
+    steps:
+      - name: "work {{item}}"
+        type: script
+        command: |
+          echo "start {{item}} $(date +%s%N)" >> {{timing_file}}
+          sleep 0.3
+          echo "end {{item}} $(date +%s%N)" >> {{timing_file}}
+`),
+    );
+
+    await collectEvents(wf);
+
+    const lines = readFileSync(timingFile, "utf8").trim().split("\n");
+    const starts = lines
+      .filter((l) => l.startsWith("start"))
+      .map((l) => Number(l.split(" ")[2]));
+    const ends = lines
+      .filter((l) => l.startsWith("end"))
+      .map((l) => Number(l.split(" ")[2]));
+    assert.equal(starts.length, 3);
+    assert.equal(ends.length, 3);
+
+    // Real concurrency: every item started before any item ended. A
+    // sequential run would have each item's end precede the next item's
+    // start — the opposite of this.
+    const latestStart = Math.max(...starts);
+    const earliestEnd = Math.min(...ends);
+    assert.ok(
+      latestStart < earliestEnd,
+      `expected all starts before any end (overlap) — starts=${starts}, ends=${ends}`,
+    );
+  });
+
+  test("concurrency 2 over 3 items: third item waits for the first batch to fully settle", async () => {
+    const dir = tmpDir();
+    const timingFile = join(dir, "timing.txt");
+
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+vars:
+  timing_file: "${timingFile}"
+steps:
+  - name: loop
+    forEach: [a, b, c]
+    concurrency: 2
+    steps:
+      - name: "work {{item}}"
+        type: script
+        command: |
+          echo "start {{item}} $(date +%s%N)" >> {{timing_file}}
+          sleep 0.2
+          echo "end {{item}} $(date +%s%N)" >> {{timing_file}}
+`),
+    );
+
+    await collectEvents(wf);
+
+    const lines = readFileSync(timingFile, "utf8").trim().split("\n");
+    const timeOf = (item: string, kind: "start" | "end") =>
+      Number(
+        lines.find((l) => l.startsWith(`${kind} ${item} `))!.split(" ")[2],
+      );
+
+    // a and b are batch 1 (concurrency 2); c is batch 2, alone.
+    const batch1LatestEnd = Math.max(timeOf("a", "end"), timeOf("b", "end"));
+    assert.ok(
+      timeOf("c", "start") >= batch1LatestEnd,
+      "item c (batch 2) should not start until both batch-1 items have ended",
+    );
+  });
+
+  test("emits step:iteration-complete for every iteration, with the right numbers", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: loop
+    forEach: [a, b, c]
+    concurrency: 3
+    command: echo "{{item}}"
+`),
+    );
+
+    const events = await collectEvents(wf);
+    const completions = events.filter(
+      (e): e is StepIterationCompleteEvent =>
+        e.type === "step:iteration-complete",
+    );
+    assert.deepEqual(
+      completions.map((e) => e.iteration).sort((x, y) => x - y),
+      [1, 2, 3],
+    );
+    assert.ok(completions.every((e) => e.status === "complete"));
+  });
+
+  test("a failing iteration lets the rest of its own batch finish, then aborts remaining batches", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: loop
+    forEach: [ok1, bad, ok2, never]
+    concurrency: 3
+    command: |
+      if [ "{{item}}" = "bad" ]; then exit 1; fi
+      echo "ran {{item}}"
+`),
+    );
+
+    const { events, error } = await collectEventsUntilError(wf);
+    assert.ok(error, "expected the workflow to fail overall");
+
+    const completions = events.filter(
+      (e): e is StepIterationCompleteEvent =>
+        e.type === "step:iteration-complete",
+    );
+    // Batch 1 is [ok1, bad, ok2] (concurrency 3) — all three settle, one as
+    // error. Batch 2 ([never]) must not run at all.
+    assert.deepEqual(
+      completions.map((e) => e.iteration).sort((x, y) => x - y),
+      [1, 2, 3],
+    );
+    const outputs = events
+      .filter((e): e is OutputTextEvent => e.type === "output:text")
+      .map((e) => e.text);
+    assert.ok(outputs.some((t) => t.includes("ran ok1")));
+    assert.ok(outputs.some((t) => t.includes("ran ok2")));
+    assert.ok(
+      !outputs.some((t) => t.includes("ran never")),
+      "batch 2 should never have started",
+    );
+  });
+
+  test("continueOnError on the forEach step lets every batch run despite failures", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: loop
+    forEach: [ok1, bad, ok2]
+    concurrency: 3
+    continue_on_error: true
+    command: |
+      if [ "{{item}}" = "bad" ]; then exit 1; fi
+      echo "ran {{item}}"
+  - name: after
+    command: echo "after ran"
+`),
+    );
+
+    const events = await collectEvents(wf);
+    assert.ok(events.some((e) => e.type === "workflow:complete"));
+    const outputs = events
+      .filter((e): e is OutputTextEvent => e.type === "output:text")
+      .map((e) => e.text);
+    assert.ok(outputs.some((t) => t.includes("ran ok1")));
+    assert.ok(outputs.some((t) => t.includes("ran ok2")));
+    assert.ok(outputs.some((t) => t.includes("after ran")));
+  });
+
+  test("zero items with concurrency set: warns, does not crash", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: loop
+    forEach: "printf ''"
+    concurrency: 3
+    command: echo "{{item}}"
+`),
+    );
+
+    const events = await collectEvents(wf);
+    const warning = events.find((e) => e.type === "log" && e.level === "warn");
+    assert.ok(warning, "expected a warn log for a zero-item forEach");
+    assert.ok(events.some((e) => e.type === "workflow:complete"));
+  });
+
+  test("--from-step into a concurrent forEach warns and runs every iteration, not just the targeted one", async () => {
+    const wf = loadWorkflow(
+      tmpYaml(`
+goal: test
+steps:
+  - name: loop
+    forEach: [a, b, c]
+    concurrency: 3
+    command: echo "ran {{item}}"
+`),
+    );
+
+    // Target iteration 2 specifically — a sequential forEach would skip
+    // iteration 1. A concurrent one can't honor that, so it should run all 3.
+    const events = await collectWithOptions(wf, { fromStep: [1, 2] });
+
+    const warning = events.find(
+      (e) =>
+        e.type === "log" && e.level === "warn" && e.text.includes("from-step"),
+    );
+    assert.ok(warning, "expected a from-step warning");
+
+    const outputs = events
+      .filter((e): e is OutputTextEvent => e.type === "output:text")
+      .map((e) => e.text);
+    assert.ok(outputs.some((t) => t.includes("ran a")));
+    assert.ok(outputs.some((t) => t.includes("ran b")));
+    assert.ok(outputs.some((t) => t.includes("ran c")));
   });
 });
