@@ -92,6 +92,30 @@ steps:
     );
   });
 
+  test("resolves an output var whose own value nests another var placeholder", () => {
+    const dir = tmpDir();
+    // coverage_out's raw value nests {{docs_dir}} — the same pattern real
+    // workflows use (e.g. ticket_file: "{{docs_dir}}/ticket.md"). A prior bug
+    // returned this raw, unresolved (a literal "{{docs_dir}}" path segment)
+    // because output resolution was a plain lookup, not a substitution.
+    const file = tmpYaml(`
+goal: test
+vars:
+  coverage_out: "{{docs_dir}}/coverage.txt"
+  docs_dir: "${dir}"
+steps:
+  - name: run_coverage
+    type: script
+    command: echo "coverage data"
+    output: coverage_out
+`);
+
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as CommandTask;
+
+    assert.equal(task.output, join(dir, "coverage.txt"));
+  });
+
   test("output works alongside self_healing and max_healing_attempts", () => {
     const dir = tmpDir();
     const outputPath = join(dir, "out.txt");

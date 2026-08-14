@@ -355,7 +355,13 @@ function resolveVarPath(
       `Step "${stepName}" ${label} references undefined var "${varName}" — add it to the vars section`,
     );
   }
-  return vars[varName];
+  // A var's own raw value can itself nest another {{var}} placeholder (e.g.
+  // ticket_file: "{{docs_dir}}/ticket.md") — substituteVars resolves that the
+  // same way it already does for prompt/command text, instead of returning
+  // the raw unresolved string. A raw return here previously produced a path
+  // containing a literal "{{docs_dir}}" segment: silently wrong for output:
+  // (writes/checks the wrong path) and a confusing read failure for context:.
+  return substituteVars(vars[varName], vars, stepName, label);
 }
 
 function resolveContextFiles(
