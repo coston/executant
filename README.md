@@ -121,12 +121,13 @@ executant plan --fast "for each file in the list, run the linter"
 
 ## Context & Variables
 
-Use `vars` to define shared values substituted as `{{var_name}}` in any prompt or command. Pair with `context` to inject file contents directly into a prompt at runtime, and `output` to pipe a script step's stdout into a file for downstream steps to read.
+Use `vars` to define shared values substituted as `{{var_name}}` in any prompt or command. Pair with `context` to inject file contents directly into a prompt at runtime, and `output` to have a step produce a file for downstream steps to read. What `output` means depends on the step: a script step's stdout is captured to the file; a prompt step's file is expected to already exist by the time the step finishes (from its own Write/Edit tool calls) — the step fails if it doesn't, so you don't need a separate `test -f ...` script step just to catch a step that silently skipped writing its file.
 
 ```yaml
 vars:
   spec: docs/spec.md
   report: /tmp/report.txt
+  diagnostic: /tmp/diagnostic.md
 
 steps:
   - name: implement
@@ -137,6 +138,10 @@ steps:
     type: script
     command: npm run audit
     output: report # captures stdout to /tmp/report.txt
+
+  - name: diagnose
+    prompt: Diagnose current-vs-required behavior and write {{diagnostic}}.
+    output: diagnostic # fails the step if this file doesn't exist afterward
 
   - name: summarise
     prompt: Summarise the audit findings in {{report}}.

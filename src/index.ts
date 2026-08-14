@@ -148,7 +148,12 @@ YAML — step fields (all step types):
                     parent step. Requires forEach or repeat.
   context           list    Var names whose file-path values are prepended to
                     a prompt step's content at runtime.
-  output            string  Var name; captures script stdout to that file path.
+  output            string  Var name naming a file path this step should
+                    produce. Script steps: captures stdout to that file.
+                    Prompt steps: the step fails if the file doesn't exist
+                    when it finishes (checked, not captured — a prompt
+                    step's real output is whatever it wrote via tool
+                    calls). Not supported on log/workflow steps.
 
 YAML — prompt step fields (type: prompt, or inferred when prompt is present):
   prompt            string  (required) Instructions sent to Claude

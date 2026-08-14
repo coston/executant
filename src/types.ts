@@ -82,6 +82,16 @@ export interface ClaudeTask extends BaseTask {
    * whose values are file paths).
    */
   contextFiles?: string[];
+  /**
+   * Resolved file path the step is expected to have produced (typically via
+   * Write/Edit tool calls) by the time it completes. Populated by load-workflow
+   * from the `output:` YAML field (which names a var whose value is the file
+   * path) — the same field CommandTask uses for capturing stdout, but here the
+   * runner only checks the file exists after the step; a prompt step's real
+   * artifact is whatever it wrote, not its narration text, so there's nothing
+   * meaningful to capture. Missing file fails the step.
+   */
+  output?: string;
   /** Kill the agent subprocess and throw TimeoutError after this many seconds. */
   timeoutSeconds?: number;
 }

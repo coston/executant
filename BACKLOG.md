@@ -28,6 +28,10 @@ Known improvements deferred from code reviews and audits.
 
 - **Vars-aware caching in `resolveWorkflow`** — two `workflow:` steps referencing the same file are currently fetched and parsed independently. A cache would need to key on the resolved path/URL *and* the step's `vars:` override (serialized), since two steps referencing the same file with different overrides must not share a resolved `Workflow` — added complexity that isn't justified without evidence repeated-reference workflows are common.
 
+## Implemented (workflow authoring, 2026-08)
+
+- ✅ **`output:` on prompt steps** — previously only script/command steps captured stdout to the named file; on a prompt step `output:` parsed fine but was silently a no-op. Now a prompt step's `output:` checks the named file exists after the step completes (a prompt step's real artifact is whatever it wrote via tool calls, not its narration text) and fails the step if it doesn't — no self-healing/judge retry on that failure, deliberately, for the same reason self-healing stays off deterministic script steps whose failure should hard-stop the run. Setting `output:` on a `log`/`workflow` step (which have nothing to produce) is now a load-time error instead of a silent no-op.
+
 ## Implemented (observability, 2026-07)
 
 - ✅ **Structured `step:healing` / `step:judge` events** — the self-healing loop and LLM-as-judge now emit typed events (phase/attempt/exit code; verdict/attempt/feedback) alongside the existing free-text logs, giving CI NDJSON consumers and telemetry machine-readable quality-control progress.

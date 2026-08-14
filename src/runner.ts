@@ -302,6 +302,18 @@ async function* runStep(
       yield* enriched.llmAsJudge
         ? runClaudeWithJudge(enriched)
         : runAgent(enriched);
+      // A prompt step's real artifact is whatever it wrote via tool calls,
+      // not its narration text — so `output:` here is a postcondition check,
+      // not a capture (contrast the command case above, which does capture
+      // stdout). Deliberately no self-healing/judge retry on this failure:
+      // that could paper over the agent skipping the write entirely instead
+      // of surfacing it, the same reasoning that keeps self_healing off
+      // deterministic script steps whose failure should hard-stop the run.
+      if (enriched.output && !existsSync(enriched.output)) {
+        throw new Error(
+          `Step "${enriched.name}" expected to produce "${enriched.output}" but it doesn't exist`,
+        );
+      }
       break;
     }
     case "forEach":

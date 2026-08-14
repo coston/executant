@@ -268,6 +268,10 @@ function convertInnerStep(
     }
 
     case "log": {
+      if (step.output)
+        throw new Error(
+          `Step "${name}" sets "output" but a log step has nothing to produce — output is only meaningful on script/command and prompt steps`,
+        );
       const message = step.message ?? step.prompt ?? name;
       return {
         type: "log",
@@ -292,6 +296,9 @@ function convertInnerStep(
         ...(step.provider && { provider: step.provider }),
         ...(step.agent && { agent: step.agent }),
         ...(contextFiles.length > 0 && { contextFiles }),
+        ...(step.output && {
+          output: resolveOutputFile(step.output, vars, name),
+        }),
         ...(step.timeout_seconds !== undefined && {
           timeoutSeconds: step.timeout_seconds,
         }),
@@ -302,6 +309,10 @@ function convertInnerStep(
       if (!step.workflow)
         throw new Error(
           `Step "${name}" has type workflow but no workflow field`,
+        );
+      if (step.output)
+        throw new Error(
+          `Step "${name}" sets "output" but a workflow step has nothing of its own to produce — output is only meaningful on script/command and prompt steps`,
         );
       const refVars = step.vars
         ? Object.fromEntries(
