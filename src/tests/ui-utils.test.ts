@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { countIterationRows } from "../ui/utils.js";
+import { clamp, countIterationRows } from "../ui/utils.js";
 import type { IterationRecord } from "../types.js";
 
 const MAX = 8;
@@ -72,5 +72,32 @@ describe("countIterationRows", () => {
       { ...makeRecord(2, 2), item: "src/foo.ts" },
     ];
     assert.equal(countIterationRows(history, MAX), 2);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// clamp
+// ----------------------------------------------------------------------------
+
+describe("clamp", () => {
+  test("returns the value unchanged when within range", () => {
+    assert.equal(clamp(5, 0, 10), 5);
+  });
+
+  test("clamps to the minimum", () => {
+    assert.equal(clamp(-5, 0, 10), 0);
+  });
+
+  test("clamps to the maximum", () => {
+    assert.equal(clamp(15, 0, 10), 10);
+  });
+
+  test("min equal to max pins the value", () => {
+    assert.equal(clamp(15, 7, 7), 7);
+  });
+
+  test("an inverted range (min > max) still returns a bounded value", () => {
+    assert.equal(clamp(15, 10, 3), 10);
+    assert.equal(clamp(-15, 10, 3), 10);
   });
 });

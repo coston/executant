@@ -15,10 +15,29 @@ interface Props {
   isActive?: boolean;
   /** Maximum visible lines. Defaults to 15. */
   maxLines?: number;
+  /** Lines scrolled back from the live tail. 0 = pinned to the tail. */
+  scrollOffset?: number;
 }
 
-export function LogPane({ lines, isActive = false, maxLines = 15 }: Props) {
-  const visible = lines.slice(-maxLines);
+export function LogPane({
+  lines,
+  isActive = false,
+  maxLines = 15,
+  scrollOffset = 0,
+}: Props) {
+  // The scroll indicator takes one of the box's rows rather than adding one,
+  // so the box's total height never exceeds maxLines regardless of scroll
+  // state — callers size the terminal layout around that being a hard cap.
+  // maxScroll is computed against that reduced budget so the oldest line is
+  // still reachable, not one that's permanently pinned just out of view.
+  const scrolledBudget = Math.max(1, maxLines - 1);
+  const maxScroll = Math.max(0, lines.length - scrolledBudget);
+  const offset = Math.min(scrollOffset, maxScroll);
+  const isPinnedToTail = offset === 0;
+  const contentBudget = isPinnedToTail ? maxLines : scrolledBudget;
+  const end = lines.length - offset;
+  const start = Math.max(0, end - contentBudget);
+  const visible = lines.slice(start, end);
 
   if (visible.length === 0) {
     return (
@@ -35,16 +54,21 @@ export function LogPane({ lines, isActive = false, maxLines = 15 }: Props) {
       flexDirection="column"
       marginTop={1}
       borderStyle="single"
-      borderColor={theme.border}
+      borderColor={isPinnedToTail ? theme.border : theme.warning}
       paddingX={1}
     >
       {visible.map((line, i) => (
         <LogLine
-          key={i}
+          key={start + i}
           text={line}
-          cursor={isActive && i === visible.length - 1}
+          cursor={isActive && isPinnedToTail && i === visible.length - 1}
         />
       ))}
+      {!isPinnedToTail && (
+        <Text dimColor>
+          — scrolled up {offset} line{offset === 1 ? "" : "s"} · ↓ to follow —
+        </Text>
+      )}
     </Box>
   );
 }

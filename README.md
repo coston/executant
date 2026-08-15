@@ -344,6 +344,15 @@ press i  →  ▷ don't delete that file, use git revert▌  esc to cancel
 
 **What it can't do:** interrupt a Claude step mid-execution. The Claude CLI processes each invocation as a complete unit; there's no mechanism to inject a message partway through. To abort a runaway step immediately, press `q`.
 
+## Output pane: scroll and resize
+
+The step list is always shown in full — it's the primary view, and it's never trimmed to make room. The live output pane below it does all the resizing instead, shrinking to whatever space is left under the full list.
+
+- **Scroll**: `↑`/`k` and `↓`/`j` move one line at a time, `PageUp`/`PageDown` move a page. Scrolling up pauses live-tailing and shows `— scrolled up N lines · ↓ to follow —`; scrolling back down to the bottom resumes following the active step's output. Scroll position resets to the live tail whenever a new step starts.
+- **Resize**: `[` shrinks the pane, `]` grows it — one line at a time. Where the terminal supports it, you can also grab the pane's bottom border with the mouse and drag. Either way, the first resize freezes the pane at that height for the rest of the run; it no longer auto-grows or auto-shrinks as later steps' step lists grow, though it's still clamped down if a shrinking terminal window can't fit it.
+
+Mouse dragging is best-effort — Ink (the TUI library executant is built on) has no built-in support for mouse input or on-screen element position, so it's reconstructed from raw terminal escape sequences and may not work in every terminal/multiplexer combination. `[`/`]` always work.
+
 ## Failure retrospectives
 
 When a step fails and stops the run, executant writes a post-mortem before it exits and shows it in the TUI:

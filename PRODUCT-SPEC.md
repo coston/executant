@@ -59,6 +59,7 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 ### TUI Controls
 
 - **`i` — interjection** — opens a text input at the bottom of the screen. The typed message is queued and prepended as `[User correction from a previous step]` to the next Claude step's prompt. If a Claude step is currently running, the message waits for the next Claude step (the Claude CLI processes each invocation as a complete unit; mid-execution injection is not possible). If a script step is running, the message is similarly deferred. Press Esc to cancel without sending.
+- **Output pane scroll and resize** — the step list is always shown in full; the live output pane absorbs all the resizing. `↑`/`k`/`PageUp` and `↓`/`j`/`PageDown` scroll back through a step's output and return to following its live tail; `[`/`]` (or dragging the pane's bottom border with the mouse, where the terminal supports it) resizes the pane, and that size then stays fixed for the rest of the run instead of springing back to auto-sizing on the next step.
 - **`q` / Ctrl+C** — abort the workflow immediately
 - **Retrospective actions** — after a failure, `u` updates the task file with the suggested changes, `d` dismisses, and `o` toggles between the analysis and the failing step's raw output; ↑↓ + Enter select. The update action is offered only when a local task file exists and changing it would have helped
 

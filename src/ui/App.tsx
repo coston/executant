@@ -27,10 +27,12 @@ import { IterationList } from "./IterationRow.js";
 import { LogPane } from "./LogPane.js";
 import { useInterval } from "./useInterval.js";
 import { useStatusLine } from "./useStatusLine.js";
+import { useOutputResize } from "./useOutputResize.js";
 import {
   countIterationRows,
   formatHeaderElapsed,
   EXIT_DELAY_MS,
+  MIN_OUTPUT_ROWS,
 } from "./utils.js";
 import { formatDuration, formatTokenCount } from "../lib/utils.js";
 import { theme } from "./theme.js";
@@ -168,12 +170,13 @@ export function App({
     if (!state.endTime) setTick((t) => t + 1);
   }, 100);
 
-  // Compute how many log lines can fit without overflowing the terminal.
-  // Overflow causes Ink to miscount its rendered height → text sprays above the UI.
+  // The step list is never trimmed — it's the primary view. The output pane
+  // absorbs all the resizing: it shrinks to whatever room is left under a
+  // full step list, down to MIN_OUTPUT_ROWS, instead of the old behavior of
+  // hiding earlier steps to protect the pane's height.
   // Fixed overhead: outer padding(2) + brand+margin(2) + header+margin(2)
   // + taskList margin(1) + logPane marginTop+borders(3) + footer+margin(2) = 12 rows.
   const terminalRows = stdout?.rows ?? 24;
-  const LOG_PANE_MIN = 5;
 
   // Count iteration rows rendered beneath the running forEach task.
   const runningTask = state.tasks.find((t) => t.status === "running");
@@ -190,24 +193,56 @@ export function App({
     (isInterjecting ? 1 : 0) +
     (statusLine ? 1 : 0);
 
-  // Budget rows for the task list, leaving room for iteration rows + log pane minimum.
-  const availableForTaskSection = Math.max(
-    1,
-    terminalRows - FIXED_OVERHEAD - LOG_PANE_MIN - iterationRowCount,
-  );
-  // Reserve 1 row for the "··· N earlier" indicator when truncating
-  const visibleTaskCount =
-    state.tasks.length > availableForTaskSection
-      ? availableForTaskSection - 1
-      : state.tasks.length;
-  const taskSlice = state.tasks.slice(-visibleTaskCount);
-  const hiddenTaskCount = state.tasks.length - taskSlice.length;
+  const taskRowsUsed = state.tasks.length;
 
-  const taskRowsUsed = visibleTaskCount + (hiddenTaskCount > 0 ? 1 : 0);
-  const logPaneMaxLines = Math.max(
-    LOG_PANE_MIN,
+  // Room the output pane would get if it were purely auto-sized this frame.
+  // This is also the ceiling for a user-fixed height: the pane can be frozen
+  // smaller than this, but never so large it pushes the step list off screen.
+  const autoOutputRows = Math.max(
+    MIN_OUTPUT_ROWS,
     terminalRows - FIXED_OVERHEAD - taskRowsUsed - iterationRowCount,
   );
+
+  const showOutputPane =
+    !state.retrospective && Boolean(state.tasks[state.currentIndex]);
+  // Boolean(...): ink's `isRawModeSupported` is `stdin.isTTY`, which Node
+  // leaves `undefined` (not `false`) on a non-TTY stdin. useInput's isActive
+  // option only treats a literal `false` as inactive — `undefined` defaults
+  // to active — so this must never leak through the `&&` chain unboxed.
+  const outputControlsEnabled = Boolean(
+    showOutputPane &&
+    isRawModeSupported &&
+    !isInterjecting &&
+    !awaitingRetrospective &&
+    !awaitingReportChoice,
+  );
+
+  // Rows above/below the output pane's borders this frame — used only to
+  // calibrate mouse-drag row math; must stay in step with FIXED_OVERHEAD.
+  // Above: outer top padding(1) + brand+margin(2) + header+margin(2)
+  // + step list rows(taskRowsUsed + iterationRowCount) + step list
+  // margin(1) + pane's own top margin(1) = 7 + taskRowsUsed + iterationRowCount.
+  const rowsAboveOutputPane = 7 + taskRowsUsed + iterationRowCount;
+  // Below: footer margin(1) + hint line(1) + outer bottom padding(1), plus
+  // whichever of the update banner / statusline / interject input show.
+  const rowsBelowOutputPane =
+    3 +
+    (updateVersion ? 1 : 0) +
+    (statusLine ? 1 : 0) +
+    (isInterjecting ? 1 : 0);
+
+  const { outputRows, scrollOffset, resetScroll } = useOutputResize({
+    autoMaxRows: autoOutputRows,
+    enabled: outputControlsEnabled,
+    rowsAboveOutputPane,
+    rowsBelowOutputPane,
+  });
+
+  // Re-pin to the live tail whenever the active step changes. Deliberately
+  // keyed only on currentIndex — resetScroll's identity is stable (useCallback).
+  useEffect(() => {
+    resetScroll();
+  }, [state.currentIndex, resetScroll]);
 
   // With the task list and log pane hidden, the pane gets every row the fixed
   // chrome does not need: padding(2) + brand+margin(2) + header+margin(2)
@@ -252,37 +287,30 @@ export function App({
         </Text>
       </Box>
 
-      {/* Task list — hidden once the retrospective takes over the screen. The
-          run is finished and the pane names the step that ended it, so the
-          rows are better spent on the post-mortem than on a frozen list. */}
+      {/* Task list — the primary view, always shown in full. Hidden once the
+          retrospective takes over the screen. The run is finished and the
+          pane names the step that ended it, so the rows are better spent on
+          the post-mortem than on a frozen list. */}
       {!showRetrospective && (
         <Box flexDirection="column" marginBottom={1}>
-          {hiddenTaskCount > 0 && (
-            <Text dimColor>
-              {"  "}··· {hiddenTaskCount} earlier
-            </Text>
-          )}
-          {taskSlice.map((taskState, i) => {
-            const globalIndex = hiddenTaskCount + i;
-            return (
-              <Box key={globalIndex} flexDirection="column">
-                <TaskRow
-                  index={globalIndex}
+          {state.tasks.map((taskState, index) => (
+            <Box key={index} flexDirection="column">
+              <TaskRow
+                index={index}
+                tick={tick}
+                taskState={taskState}
+                isActive={index === state.currentIndex}
+              />
+              {taskState.status === "running" &&
+              taskState.iterationHistory?.length ? (
+                <IterationList
+                  iterationHistory={taskState.iterationHistory}
                   tick={tick}
-                  taskState={taskState}
-                  isActive={globalIndex === state.currentIndex}
+                  maxVisible={MAX_VISIBLE_ITERATIONS}
                 />
-                {taskState.status === "running" &&
-                taskState.iterationHistory?.length ? (
-                  <IterationList
-                    iterationHistory={taskState.iterationHistory}
-                    tick={tick}
-                    maxVisible={MAX_VISIBLE_ITERATIONS}
-                  />
-                ) : null}
-              </Box>
-            );
-          })}
+              ) : null}
+            </Box>
+          ))}
         </Box>
       )}
 
@@ -310,7 +338,8 @@ export function App({
           <LogPane
             lines={activeTask.lines}
             isActive={activeTask.status === "running"}
-            maxLines={logPaneMaxLines}
+            maxLines={outputRows}
+            scrollOffset={scrollOffset}
           />
         )
       )}
@@ -405,7 +434,9 @@ export function App({
               ? "↑↓ to choose  ·  enter to confirm  ·  o for the step output"
               : awaitingReportChoice
                 ? ""
-                : "press q to quit  ·  i to interject"}
+                : outputControlsEnabled
+                  ? "press q to quit  ·  i to interject  ·  ↑↓ scroll output  ·  [ ] resize"
+                  : "press q to quit  ·  i to interject"}
         </Text>
       </Box>
 

@@ -91,7 +91,9 @@ src/
 │   ├── PlanApp.tsx        # TUI for plan/refine subcommands
 │   ├── TaskRow.tsx        # Renders a single step row
 │   ├── IterationRow.tsx   # Renders forEach iteration progress
-│   ├── LogPane.tsx        # Scrolling output pane
+│   ├── LogPane.tsx        # Scrolling output pane; scrollOffset windowing + scroll indicator
+│   ├── useOutputResize.ts # Output pane scroll/resize: keyboard (reliable) + mouse drag (best-effort)
+│   ├── mouseResize.ts     # Pure SGR-mouse/DSR parsing + drag math for useOutputResize
 │   ├── BrandMark.tsx      # Animated brand header
 │   └── reducer.ts        # ExecutionState reducer; handles step:interjection event
 └── prompts/              # AI prompt templates

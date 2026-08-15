@@ -43,6 +43,13 @@ export function countIterationRows(
 /** Delay before Ink unmounts to allow the final frame to render. */
 export const EXIT_DELAY_MS = 300;
 
+/** Floor for the output pane's height — enough for its borders plus one line. */
+export const MIN_OUTPUT_ROWS = 3;
+
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
 /** Elapsed time for workflow/plan headers. */
 export function formatHeaderElapsed(start: number, end?: number): string {
   const ms = (end ?? Date.now()) - start;
