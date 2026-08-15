@@ -333,6 +333,45 @@ steps:
     assert.deepEqual(next, state);
   });
 
+  test("output:usage leaves state unchanged", () => {
+    const state = buildState();
+    const next = reducer(state, {
+      type: "output:usage",
+      index: 0,
+      usage: {
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+    });
+    assert.deepEqual(next, state);
+  });
+
+  test("workflow:report stores the report on execution state", () => {
+    const state = buildState();
+    const report = {
+      durationMs: 1000,
+      totalCostUsd: 0.1,
+      totalTokens: {
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+      overflowTokens: 0,
+      overflowCalls: 0,
+      stepNarrative: [
+        { name: "a", durationMs: 100, costUsd: 0.1, qualityEvents: [] },
+      ],
+      suggestion: "add concurrency: 4",
+    };
+    const next = reducer(state, { type: "workflow:report", report });
+    assert.deepEqual(next.report, report);
+    // Nothing else about state changes.
+    assert.deepEqual(next.tasks, state.tasks);
+  });
+
   test("output:text with index beyond tasks.length is a no-op", () => {
     const state = buildState();
     const next = reducer(state, {

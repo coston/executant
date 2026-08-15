@@ -90,6 +90,22 @@ export function timestamp(): string {
   return formatTimestamp(new Date());
 }
 
+/** Human-readable duration for run reports (e.g. "45s", "3m 12s", "1h 05m"). */
+export function formatDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** Thousands-grouped token count for run reports (e.g. "123,456"). */
+export function formatTokenCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
 // Matches ANSI CSI sequences (including ?-prefixed like cursor-hide ESC[?25l),
 // OSC sequences (ESC]...\x07), and bare carriage returns.
 const ANSI_RE = /\x1B(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07)|[\r]/g;

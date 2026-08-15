@@ -9,7 +9,7 @@
 import { execSync, spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ZodType } from "zod";
-import type { ClaudeTask, Event } from "../types.js";
+import type { ClaudeTask, Event, TokenUsage } from "../types.js";
 import { resolveAgentModel } from "./agent.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
 import {
@@ -169,10 +169,32 @@ function* parseClaudeMessage(msg: unknown): Generator<Event> {
       // index: -1 here — runWorkflow patches it to the real step index
       yield { type: "output:cost", index: -1, usd: cost };
     }
+    const usage = parseUsage(msg["usage"]);
+    if (usage) {
+      // index: -1 here — runWorkflow patches it to the real step index
+      yield { type: "output:usage", index: -1, usage };
+    }
     if (msg["structured_output"] != null) {
       yield { type: "output:structured", data: msg["structured_output"] };
     }
   }
+}
+
+/**
+ * Reads the result message's `usage` object. Missing or malformed usage
+ * (older CLI versions, mocked test output) yields undefined rather than
+ * throwing — token reporting is best-effort, never load-bearing for a step's
+ * success.
+ */
+function parseUsage(raw: unknown): TokenUsage | undefined {
+  if (!isObject(raw)) return undefined;
+  const num = (v: unknown) => (typeof v === "number" ? v : 0);
+  return {
+    inputTokens: num(raw["input_tokens"]),
+    outputTokens: num(raw["output_tokens"]),
+    cacheCreationTokens: num(raw["cache_creation_input_tokens"]),
+    cacheReadTokens: num(raw["cache_read_input_tokens"]),
+  };
 }
 
 // ----------------------------------------------------------------------------

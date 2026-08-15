@@ -14,9 +14,11 @@ import type {
   InterjectChannel,
   Retrospective,
   RunOptions,
+  RunReport,
   Workflow,
 } from "../types.js";
 import { RetrospectivePane } from "./RetrospectivePane.js";
+import { ReportPrompt } from "./ReportPrompt.js";
 import { TimeoutError } from "../types.js";
 import { getErrorMessage } from "../lib/utils.js";
 import { reducer, buildInitialState } from "./reducer.js";
@@ -30,6 +32,7 @@ import {
   formatHeaderElapsed,
   EXIT_DELAY_MS,
 } from "./utils.js";
+import { formatDuration, formatTokenCount } from "../lib/utils.js";
 import { theme } from "./theme.js";
 import { BrandMark } from "./BrandMark.js";
 
@@ -67,6 +70,10 @@ export function App({
   // True once a retrospective is on screen and waiting for the user to choose
   // an action. While set, the app deliberately does not exit on the failure.
   const [awaitingRetrospective, setAwaitingRetrospective] = useState(false);
+  // True once a successful run's report is on screen with no suggestion yet
+  // and the terminal can take input — ReportPrompt then owns the keyboard
+  // and decides when to exit, instead of the usual auto-exit-after-delay.
+  const [awaitingReportChoice, setAwaitingReportChoice] = useState(false);
   // Summed independently of the reducer, which intentionally drops cost
   // events — this is only for the statusline payload, not the task list.
   const [totalCostUsd, setTotalCostUsd] = useState(0);
@@ -80,6 +87,11 @@ export function App({
     // here so the catch below knows to hand control to the pane instead of
     // tearing the TUI down a moment later.
     let interactiveRetrospective = false;
+    // workflow:report arrives immediately before workflow:complete — stash it
+    // here (dispatch's effect on state.report isn't guaranteed visible yet
+    // inside this same synchronous handler) so the completion branch can
+    // decide whether ReportPrompt has anything worth offering.
+    let pendingReport: RunReport | undefined;
 
     (async () => {
       try {
@@ -93,9 +105,23 @@ export function App({
             interactiveRetrospective = true;
             setAwaitingRetrospective(true);
           }
+          if (event.type === "workflow:report") {
+            pendingReport = event.report;
+          }
           if (event.type === "workflow:complete") {
-            // Leave the final state visible briefly, then exit.
-            setTimeout(() => exit(), EXIT_DELAY_MS);
+            // A suggestion is only worth offering when one wasn't already
+            // generated automatically (EXECUTANT_REPORT_SUGGESTION=1) and the
+            // terminal can actually take a keypress — otherwise fall back to
+            // the usual "leave the final state visible briefly, then exit."
+            if (
+              isRawModeSupported &&
+              pendingReport &&
+              pendingReport.suggestion === undefined
+            ) {
+              setAwaitingReportChoice(true);
+            } else {
+              setTimeout(() => exit(), EXIT_DELAY_MS);
+            }
           }
           if (event.type === "workflow:cancelled") {
             process.exitCode = 4;
@@ -309,6 +335,45 @@ export function App({
         </Box>
       )}
 
+      {/* Run report — shown once, after workflow:report fires on a
+          successful completion (absent for cancelled/failed runs).
+          Interactive (ReportPrompt) when the terminal supports input and no
+          suggestion was already generated automatically; otherwise the plain
+          stats-only block, matching non-interactive/CI-adjacent terminals. */}
+      {state.report && awaitingReportChoice && (
+        <ReportPrompt
+          report={state.report}
+          workflow={workflow}
+          onDone={() => {
+            setAwaitingReportChoice(false);
+            exit();
+          }}
+        />
+      )}
+      {state.report && !awaitingReportChoice && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>run report:</Text>
+          <Text dimColor>
+            {"  "}duration {formatDuration(state.report.durationMs)} · cost $
+            {state.report.totalCostUsd.toFixed(4)} · tokens{" "}
+            {formatTokenCount(
+              state.report.totalTokens.inputTokens +
+                state.report.totalTokens.outputTokens +
+                state.report.totalTokens.cacheCreationTokens +
+                state.report.totalTokens.cacheReadTokens,
+            )}
+            {state.report.overflowCalls > 0
+              ? ` (${formatTokenCount(state.report.overflowTokens)} over 200k in ${state.report.overflowCalls} call(s))`
+              : ""}
+          </Text>
+          {state.report.suggestion && (
+            <Text dimColor>
+              {"  "}efficiency idea: {state.report.suggestion}
+            </Text>
+          )}
+        </Box>
+      )}
+
       {/* Interject input — shown when user presses i */}
       {isInterjecting && interjectChannel && (
         <InterjectInput
@@ -338,7 +403,9 @@ export function App({
             ? "typing interjection…"
             : awaitingRetrospective
               ? "↑↓ to choose  ·  enter to confirm  ·  o for the step output"
-              : "press q to quit  ·  i to interject"}
+              : awaitingReportChoice
+                ? ""
+                : "press q to quit  ·  i to interject"}
         </Text>
       </Box>
 
@@ -349,7 +416,9 @@ export function App({
           onInterject={
             interjectChannel ? () => setIsInterjecting(true) : undefined
           }
-          disabled={isInterjecting || awaitingRetrospective}
+          disabled={
+            isInterjecting || awaitingRetrospective || awaitingReportChoice
+          }
         />
       )}
     </Box>

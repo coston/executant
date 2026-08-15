@@ -48,6 +48,7 @@ Executant is a TypeScript CLI tool (`src/`) that executes YAML-defined workflows
    - `src/resolve-workflow.ts` - Recursively resolves every `workflow:` step (local file or URL) before execution starts, so a bad reference anywhere in the chain fails fast at load time; guards against cycles, excessive depth, and excessive total fan-out
    - `src/runner.ts` - Pure async generator yielding `Event`s; self-healing, LLM-as-judge, forEach, context injection, nested `workflow:` step execution; accepts optional `InterjectChannel` and prepends queued interjections to the next Claude step's prompt
    - `src/retrospective.ts` - Post-mortem generated when a step fails fatally; analyses the error, the step output, and the workflow file itself, and produces a `refine` instruction when the workflow is at fault. Disable with `EXECUTANT_RETROSPECTIVE=0`
+   - `src/report.ts` - Run report generated when a workflow finishes successfully; aggregates duration/cost/token totals and a per-step quality-history narrative (all free, pure). The efficiency suggestion — one Haiku call grounded in that narrative first, the task file second — is opt-in only: automatic via `EXECUTANT_REPORT_SUGGESTION=1`, or on demand via a TUI keypress (`src/ui/ReportPrompt.tsx`, `press 'a'`). Emitted as `workflow:report` immediately before `workflow:complete`
    - `src/logger.ts` - Subscribes to event stream; writes `.log` files to `.claude/executant.local/logs/`; exports the `Observer` interface shared with telemetry
    - `src/telemetry.ts` - Opt-in OpenTelemetry observer; exports traces + metrics via OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
    - `src/types.ts` - All shared types: `Task`, `Event` (including the structured `step:healing`/`step:judge` events and the indexed `output:cost` — all emitted with an `index: -1` sentinel that `runWorkflow` patches to the real step index), `Workflow`, `RawWorkflow`/`RawStep` (YAML schema), `InterjectChannel` class
@@ -63,6 +64,7 @@ src/
 ├── resolve-workflow.ts   # Eagerly resolves nested workflow: steps before execution
 ├── runner.ts             # Workflow execution (self-healing, judge, forEach, nested workflows, context)
 ├── retrospective.ts      # Failure post-mortem (root cause + task-file advice)
+├── report.ts             # Run report on success (duration/cost/tokens + efficiency suggestion)
 ├── logger.ts             # Execution logger (log files); exports the shared Observer interface
 ├── telemetry.ts          # Opt-in OpenTelemetry observer (OTLP traces + metrics)
 ├── plan.ts               # `executant plan` subcommand
@@ -84,6 +86,7 @@ src/
 │   ├── App.tsx           # Root component; holds isInterjecting state; wires InterjectChannel
 │   ├── InterjectInput.tsx # Text input overlay shown when user presses i
 │   ├── RetrospectivePane.tsx # Failure post-mortem, output toggle, "update the task file"
+│   ├── ReportPrompt.tsx  # On-demand efficiency analysis after a successful run ('a' to analyze)
 │   ├── KeyboardHandler.tsx # Handles q/Ctrl+C/i; disabled while isInterjecting
 │   ├── PlanApp.tsx        # TUI for plan/refine subcommands
 │   ├── TaskRow.tsx        # Renders a single step row
@@ -105,7 +108,8 @@ src/
     ├── step-retrospective.txt       # Failure post-mortem + task-file evaluation
     ├── judge-evaluation.txt         # LLM-as-judge evaluation prompt
     ├── judge-retry-context.txt      # Retry context injected after judge FAIL
-    └── self-healing-fix.txt         # Self-healing error analysis prompt
+    ├── self-healing-fix.txt         # Self-healing error analysis prompt
+    └── efficiency-suggestion.txt    # Run-report efficiency suggestion prompt
 
 evals/                    # Eval test case definitions (run via npm run eval)
 ├── development-methodology.eval.yaml # development-methodology.txt (dev loop)
@@ -113,6 +117,7 @@ evals/                    # Eval test case definitions (run via npm run eval)
 ├── judge-evaluation.eval.yaml        # judge-evaluation.txt (llm_as_judge)
 ├── self-healing-fix.eval.yaml        # self-healing-fix.txt (self_healing)
 ├── plan-judge.eval.yaml              # plan-judge.txt (Pass 3)
+├── efficiency-suggestion.eval.yaml   # efficiency-suggestion.txt (run report)
 └── fixtures/             # Reusable input fixtures for test cases
     ├── research-doc-simple.md
     ├── research-doc-complex.md
@@ -129,7 +134,8 @@ evals/                    # Eval test case definitions (run via npm run eval)
     ├── plan-judge-nested-steps-valid.json
     ├── plan-judge-nested-steps-atomicity-false-positive.json
     ├── judge-injection-output.txt
-    └── goal-convert-legacy-api.txt
+    ├── goal-convert-legacy-api.txt
+    └── efficiency-suggestion-injection.yaml
 ```
 
 #### Prompts (`src/prompts/*.txt`)
@@ -144,6 +150,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - Judge evaluation (`judge-evaluation.txt`, `judge-retry-context.txt`) - Used by `llm_as_judge: true` steps (`runner.ts`)
 - Failure retrospective (`step-retrospective.txt`) - Used by `generateRetrospective` (`retrospective.ts`) when a step fails fatally
 - Self-healing analysis (`self-healing-fix.txt`) - Used by `self_healing: true` failures (`runner.ts`)
+- Efficiency suggestion (`efficiency-suggestion.txt`) - Used by `generateEfficiencySuggestion` (`report.ts`) when a workflow finishes successfully
 
 #### Adding New Prompts
 
@@ -176,6 +183,7 @@ Large text blocks passed to the Claude CLI for AI tasks. Loaded via `readFileSyn
 - **Remote workflows**: The workflow argument may be an `http(s)` URL (`src/lib/remote-workflow.ts`). GitHub blob/gist page URLs are rewritten to raw; private ones authenticate with `gh auth token` (sent only to GitHub raw hosts). A remote workflow runs with `process.cwd()` as its `workDir` and log root.
 - **Failure retrospective**: When a step fails and ends the run, the runner emits `step:retrospective` before rethrowing. The TUI shows the root cause, the evidence, and any task-file changes worth making, and offers to apply them via `refine` on `workflow.sourcePath` (run by `index.ts` after Ink exits). The analysis agent gets no tools and its own failures are swallowed — the original step error must always reach the user. The prompt receives the judge/self-healing history and forEach position accumulated by `runWorkflow`, so a step killed by `llm_as_judge` is analysed against every verdict rather than the bare "failed after 5 attempts". One API call per fatal failure, capped at 120s; `--no-retrospective` / `EXECUTANT_RETROSPECTIVE=0` disables it (the test suite sets the env var).
 - **Interjection**: User presses `i` during execution to queue a correction. The message is prepended to the next Claude step's prompt as `[User correction from a previous step]`. The Claude CLI cannot receive mid-execution stdin input (it buffers all stdin until EOF before processing), so true mid-step injection is not possible — the correction always targets the next step.
+- **Run report**: When a workflow finishes successfully, the runner emits `workflow:report` immediately before `workflow:complete` — duration, total API cost, total tokens (parsed from the Claude CLI's `usage` object as `output:usage` events), how many tokens fell into Anthropic's >200k-token extended-context pricing tier (computed per call, not as a running session total), and a per-step narrative (name/duration/cost/judge-healing history, kept even for steps that passed). All of that is free (pure aggregation) and always computed. The efficiency suggestion is separate and **opt-in only** — `isEfficiencySuggestionEnabled()` defaults to off, so an automated/CI run never spends an API call it didn't ask for. Turn it on either with `EXECUTANT_REPORT_SUGGESTION=1` (automatic, included in the emitted report) or interactively: the TUI holds the run open after completion and offers `[a] analyze this run` (`src/ui/ReportPrompt.tsx`) — pressing `a` calls the same Haiku analysis directly, any other key skips it. The call itself is grounded in the run narrative first (a judge FAIL or self-healing fix is direct evidence of where prompting fell short, and takes priority over any structural YAML observation) and capped at 10 minutes, not seconds — nothing is blocked on it anymore either way. Any failure just omits the suggestion. Not emitted for a cancelled run, a fatal step failure, or a nested `workflow:` sub-run (`report: false`, mirroring `retrospective: false`).
 
 ### TypeScript Logging (`src/logger.ts`)
 

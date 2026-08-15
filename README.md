@@ -280,6 +280,7 @@ steps:
 | `EXECUTANT_MODEL`             | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc.                 | per-provider default  |
 | `EXECUTANT_AGENT`             | OpenCode `--agent` name (ignored by Claude)                                                         | —                     |
 | `EXECUTANT_STATUSLINE`        | Set to `0` to disable the [statusline](#statusline) integration                                     | enabled               |
+| `EXECUTANT_REPORT_SUGGESTION` | Set to `0` to skip the [run report](#run-report)'s efficiency-suggestion API call                   | enabled               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables [observability](#observability): exports traces + metrics to this OTLP/HTTP collector       | unset (telemetry off) |
 | `OTEL_SERVICE_NAME`           | `service.name` on exported telemetry                                                                | `executant`           |
 | `TRACEPARENT`                 | Set _by_ executant on every subprocess when telemetry is on — W3C trace context of the current step | —                     |
@@ -397,6 +398,34 @@ Notes:
 - Steps with `continue_on_error: true` don't end the run, so they don't produce a retrospective.
 - In `--ci` mode the post-mortem is emitted as a `step:retrospective` NDJSON event instead of a pane; the update action is interactive-only.
 - Remote (URL) workflows get the report but no update action — there is no local file to rewrite.
+
+## Run Report
+
+When a workflow finishes successfully, executant shows a run report — wall-clock duration, total API cost, total tokens (in/out/cache), and how much of that fell into Anthropic's long-context pricing tier:
+
+```
+run report:
+  duration 4m 12s · cost $0.8341 · tokens 182,304 (12,000 over 200k in 1 call(s))
+  [a] analyze this run for efficiency improvements · any other key to skip
+```
+
+Press **`a`** to run an efficiency analysis on demand — a Haiku call (no tools, up to 10 minutes) that reads what actually happened during the run (judge retries, self-healing fixes, failures) and suggests one concrete improvement to the task file:
+
+```
+  efficiency idea: write-tests needed a judge retry because the prompt didn't ask for an empty-input test case — add that to the prompt's requirements.
+  press any key to exit
+```
+
+Any other key skips it and exits immediately.
+
+Notes:
+
+- **Duration, cost, and tokens are always shown** — they're free, pure aggregation over events the run already produced. Only the efficiency analysis costs an API call, and it's entirely opt-in: nothing runs unless you press `a`, so an automated or CI run is never disturbed by an API call it didn't ask for.
+- **The analysis is grounded in what happened, not just the YAML.** It reads the run's own judge/self-healing history first — a step that needed a retry is direct evidence of where the prompting fell short — and falls back to a structural read of the task file (e.g. a `forEach` with no `concurrency:`) only when every step passed clean on the first attempt. It also judges whether the task file looks like a reusable template (parameterized `vars:`, used across repos) versus a one-off, and phrases the suggestion accordingly — general and prompt-focused for a template, concrete for a one-off.
+- **Automate it** with `EXECUTANT_REPORT_SUGGESTION=1` — the analysis then runs automatically as part of the report (same Haiku call, same 10-minute cap) and the TUI shows the result directly instead of prompting for a keypress. Useful for a workflow you run unattended but still want the analysis from every time.
+- **The overflow figure** counts tokens billed at the extended-context rate: the excess above 200,000 tokens, summed across every _individual_ call whose own context (input + cache) crossed that line. Many small calls that add up to a lot across a run never trigger it — only a single call that was that large, matching how the pricing tier is actually billed.
+- **Not shown** for a cancelled run, a run that ends in a fatal step failure (see [failure retrospectives](#failure-retrospectives) instead), or for a nested `workflow:` sub-run — only the outermost run produces one report.
+- The free part (duration/cost/tokens/overflow) is always written to the log file and, in `--ci` mode, emitted as a `workflow:report` NDJSON event immediately before `workflow:complete`. A suggestion appears there too only when generated automatically (`EXECUTANT_REPORT_SUGGESTION=1`) — the on-demand TUI analysis runs after the log file's report block is already written, so it's shown on screen but not persisted to the log.
 
 ## Statusline
 

@@ -182,6 +182,59 @@ describe("Logger", () => {
       logger.observe({ type: "output:text", index: -1, text: "ignored" }),
     );
   });
+
+  test("workflow:report writes duration, cost, tokens, overflow, and the suggestion", () => {
+    const logger = createLogger(logDir, "test-task");
+    logger.observe({ type: "workflow:start", workflow: FAKE_WORKFLOW });
+    logger.observe({
+      type: "workflow:report",
+      report: {
+        durationMs: 65_000,
+        totalCostUsd: 1.2345,
+        totalTokens: {
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheCreationTokens: 50,
+          cacheReadTokens: 25,
+        },
+        overflowTokens: 10_000,
+        overflowCalls: 1,
+        stepNarrative: [],
+        suggestion: "add concurrency: 4 to the deploy step",
+      },
+    });
+    const content = readLogFile(logDir);
+    assert.ok(content.includes("Run Report"));
+    assert.ok(content.includes("1m 05s"));
+    assert.ok(content.includes("$1.2345"));
+    assert.ok(content.includes("1,275")); // total tokens
+    assert.ok(content.includes("1 call(s), 10,000 token(s)"));
+    assert.ok(content.includes("add concurrency: 4 to the deploy step"));
+  });
+
+  test("workflow:report shows 'none' for overflow and 'not requested' for a missing suggestion", () => {
+    const logger = createLogger(logDir, "test-task");
+    logger.observe({ type: "workflow:start", workflow: FAKE_WORKFLOW });
+    logger.observe({
+      type: "workflow:report",
+      report: {
+        durationMs: 500,
+        totalCostUsd: 0,
+        totalTokens: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+        },
+        overflowTokens: 0,
+        overflowCalls: 0,
+        stepNarrative: [],
+      },
+    });
+    const content = readLogFile(logDir);
+    assert.ok(content.includes("Long-context overflow: none"));
+    assert.ok(content.includes("Efficiency suggestion: not requested"));
+  });
 });
 
 // ----------------------------------------------------------------------------

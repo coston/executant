@@ -19,7 +19,9 @@ import {
   getArray,
   buildExitError,
   resolveClaudePath,
+  runClaude,
 } from "../tasks/claude.js";
+import type { OutputUsageEvent } from "../types.js";
 
 // ----------------------------------------------------------------------------
 // METHODOLOGY — content integrity
@@ -395,5 +397,96 @@ describe("resolveClaudePath — PATH manipulation", () => {
         return true;
       },
     );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// result message parsing — output:usage
+// ----------------------------------------------------------------------------
+
+describe("runClaude — token usage parsing", () => {
+  let mockDir: string;
+  let originalPath: string;
+
+  beforeEach(() => {
+    originalPath = process.env["PATH"] ?? "";
+    mockDir = join(tmpdir(), `claude-usage-test-${Date.now()}`);
+    mkdirSync(mockDir, { recursive: true });
+    process.env["PATH"] = `${mockDir}:${originalPath}`;
+  });
+
+  afterEach(() => {
+    process.env["PATH"] = originalPath;
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  function installResult(resultLine: object): void {
+    const script = join(mockDir, "claude");
+    writeFileSync(
+      script,
+      `#!/usr/bin/env bash
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
+echo '${JSON.stringify(resultLine)}'
+exit 0
+`,
+      "utf8",
+    );
+    chmodSync(script, 0o755);
+  }
+
+  async function runAndCollectUsage(): Promise<OutputUsageEvent | undefined> {
+    const task = { type: "claude" as const, name: "t", prompt: "do it" };
+    const events = [];
+    for await (const e of runClaude(task)) events.push(e);
+    return events.find((e): e is OutputUsageEvent => e.type === "output:usage");
+  }
+
+  test("emits output:usage with the four token fields from a full usage object", async () => {
+    installResult({
+      type: "result",
+      total_cost_usd: 0.05,
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 200,
+        cache_creation_input_tokens: 50,
+        cache_read_input_tokens: 25,
+      },
+    });
+    const usageEvent = await runAndCollectUsage();
+    assert.ok(usageEvent, "expected an output:usage event");
+    assert.deepEqual(usageEvent.usage, {
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheCreationTokens: 50,
+      cacheReadTokens: 25,
+    });
+  });
+
+  test("defaults missing individual usage fields to 0 rather than throwing", async () => {
+    installResult({
+      type: "result",
+      total_cost_usd: 0.05,
+      usage: { input_tokens: 500 },
+    });
+    const usageEvent = await runAndCollectUsage();
+    assert.ok(usageEvent);
+    assert.deepEqual(usageEvent.usage, {
+      inputTokens: 500,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    });
+  });
+
+  test("emits no output:usage event when the result message has no usage field", async () => {
+    installResult({ type: "result", total_cost_usd: 0.05 });
+    const usageEvent = await runAndCollectUsage();
+    assert.equal(usageEvent, undefined);
+  });
+
+  test("emits no output:usage event when usage is malformed (not an object)", async () => {
+    installResult({ type: "result", total_cost_usd: 0.05, usage: "oops" });
+    const usageEvent = await runAndCollectUsage();
+    assert.equal(usageEvent, undefined);
   });
 });

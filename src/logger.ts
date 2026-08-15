@@ -9,10 +9,12 @@
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { Event } from "./types.js";
+import type { Event, RunReport } from "./types.js";
 import {
   slugify,
   formatTimestamp,
+  formatDuration,
+  formatTokenCount,
   getErrorMessage,
   getToolArg,
 } from "./lib/utils.js";
@@ -141,6 +143,29 @@ function onLogMessage(s: LogState, level: string, text: string): LogState {
   return s;
 }
 
+function onReport(s: LogState, report: RunReport): LogState {
+  const t = report.totalTokens;
+  const totalTokens =
+    t.inputTokens + t.outputTokens + t.cacheCreationTokens + t.cacheReadTokens;
+  const lines = [
+    `\n${"━".repeat(51)}\nRun Report`,
+    `  Duration: ${formatDuration(report.durationMs)}`,
+    `  Cost: $${report.totalCostUsd.toFixed(4)}`,
+    `  Tokens: ${formatTokenCount(totalTokens)} total ` +
+      `(${formatTokenCount(t.inputTokens)} in, ${formatTokenCount(t.outputTokens)} out, ` +
+      `${formatTokenCount(t.cacheCreationTokens)} cache-write, ${formatTokenCount(t.cacheReadTokens)} cache-read)`,
+    report.overflowCalls > 0
+      ? `  Long-context overflow: ${report.overflowCalls} call(s), ${formatTokenCount(report.overflowTokens)} token(s) billed at the extended rate`
+      : `  Long-context overflow: none`,
+    report.suggestion
+      ? `  Efficiency suggestion: ${report.suggestion}`
+      : `  Efficiency suggestion: not requested — opt in with EXECUTANT_REPORT_SUGGESTION=1, or press 'a' after a run in the TUI`,
+    "━".repeat(51),
+  ];
+  appendLog(s.logFile, lines.join("\n"));
+  return s;
+}
+
 function onWorkflowComplete(ctx: LogContext, s: LogState): LogState {
   appendLog(
     s.logFile,
@@ -205,6 +230,8 @@ function reduce(ctx: LogContext, s: LogState, event: Event): LogState {
     }
     case "log":
       return onLogMessage(s, event.level, event.text);
+    case "workflow:report":
+      return onReport(s, event.report);
     case "workflow:complete":
     case "workflow:cancelled":
       return onWorkflowComplete(ctx, s);

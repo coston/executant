@@ -29,7 +29,9 @@ import type {
   RunOptions,
   StepHealingEvent,
   StepJudgeEvent,
+  StepSummary,
   Task,
+  TokenUsage,
   Workflow,
   WorkflowTask,
 } from "./types.js";
@@ -40,6 +42,11 @@ import {
   generateRetrospective,
   isRetrospectiveEnabled,
 } from "./retrospective.js";
+import {
+  buildRunReport,
+  generateEfficiencySuggestion,
+  isEfficiencySuggestionEnabled,
+} from "./report.js";
 import {
   loadPrompt,
   getErrorMessage,
@@ -121,6 +128,11 @@ export async function* runWorkflow(
   yield { type: "workflow:start", workflow };
 
   let lastStepOutput: string | undefined;
+  // Accumulated across the whole run for the final workflow:report — only
+  // read when options.report !== false (see the report block after the loop).
+  let totalCostUsd = 0;
+  const usageEvents: TokenUsage[] = [];
+  const stepNarrative: StepSummary[] = [];
 
   for (const [i, task] of workflow.tasks.entries()) {
     // Cooperative cancellation: operator writes this file to stop between steps.
@@ -158,16 +170,24 @@ export async function* runWorkflow(
     // Both are the story a post-mortem needs and neither survives in the error
     // message: a judge exhaustion says only "failed after 5 attempts", and a
     // forEach failure names the container rather than the item that broke.
+    // qualityHistory is also what the run report's stepNarrative carries
+    // forward — kept even for a step that ultimately succeeds, since a step
+    // that needed 2 self-healing attempts before passing is exactly the kind
+    // of "prompting fell short" signal an efficiency analysis needs and a
+    // step's bare success/failure never shows.
     const qualityHistory: string[] = [];
     let position: string | undefined;
+    let stepCostUsd = 0;
     try {
       for await (const event of runStep(task, from, channel, workDir)) {
         if (
           event.type === "step:iteration" ||
           event.type === "step:inner" ||
+          event.type === "step:iteration-complete" ||
           event.type === "output:text" ||
           event.type === "output:tool" ||
           event.type === "output:cost" ||
+          event.type === "output:usage" ||
           event.type === "step:healing" ||
           event.type === "step:judge"
         ) {
@@ -175,6 +195,11 @@ export async function* runWorkflow(
             if (lines.length >= LAST_OUTPUT_MAX_LINES) lines.shift();
             lines.push(event.text);
           }
+          if (event.type === "output:cost") {
+            totalCostUsd += event.usd;
+            stepCostUsd += event.usd;
+          }
+          if (event.type === "output:usage") usageEvents.push(event.usage);
           if (event.type === "step:iteration")
             position = `iteration ${event.iteration}/${event.total} (item: ${event.item})`;
           if (event.type === "step:inner")
@@ -193,6 +218,12 @@ export async function* runWorkflow(
         name: task.name,
         durationMs: Date.now() - stepStart,
       };
+      stepNarrative.push({
+        name: task.name,
+        durationMs: Date.now() - stepStart,
+        costUsd: stepCostUsd,
+        qualityEvents: qualityHistory,
+      });
     } catch (err) {
       // A nested workflow step noticed .executant-cancel and stopped itself —
       // that must stop THIS run too, not read as this step merely finishing.
@@ -248,7 +279,41 @@ export async function* runWorkflow(
         }
         throw error;
       }
+      // continueOnError kept the run going — record the failure itself as
+      // the strongest possible "prompting fell short" signal for this step.
+      stepNarrative.push({
+        name: task.name,
+        durationMs: Date.now() - stepStart,
+        costUsd: stepCostUsd,
+        qualityEvents: [...qualityHistory, `step failed: ${error.message}`],
+        failed: true,
+      });
     }
+  }
+
+  if (options.report ?? true) {
+    // Best-effort — generateEfficiencySuggestion never throws, so this can't
+    // knock the run's success reporting off course. Duration/cost/token/
+    // narrative are always computed (they're free); the suggestion call is
+    // opt-in only (EXECUTANT_REPORT_SUGGESTION=1) so an automated/CI run is
+    // never disturbed by an extra API call it didn't ask for. Interactively,
+    // the TUI offers the same analysis on demand via a keypress once the run
+    // report is on screen (src/ui/ReportPrompt.tsx) — that path calls
+    // generateEfficiencySuggestion directly, outside this generator, since by
+    // then runWorkflow has already finished.
+    const suggestion = isEfficiencySuggestionEnabled()
+      ? await generateEfficiencySuggestion(workflow, stepNarrative)
+      : undefined;
+    yield {
+      type: "workflow:report",
+      report: buildRunReport({
+        durationMs: Date.now() - workflowStart,
+        totalCostUsd,
+        usageEvents,
+        stepNarrative,
+        suggestion,
+      }),
+    };
   }
 
   yield {
@@ -744,7 +809,7 @@ async function* runNestedWorkflow(
 
   for await (const event of runWorkflow(
     task.workflow,
-    { retrospective: false, workDir },
+    { retrospective: false, report: false, workDir },
     channel,
   )) {
     switch (event.type) {
@@ -777,6 +842,17 @@ async function* runNestedWorkflow(
         yield { type: "output:text", index: -1, text: `→ ${event.name}` };
         continue;
       case "step:complete":
+        // Without this, the row's endTime never gets set — IterationRow
+        // falls back to `Date.now() - startTime` for its duration, so an
+        // already-finished child step keeps showing a live, growing elapsed
+        // time (tracking the PARENT step's wall clock) instead of freezing
+        // at how long that child actually took.
+        yield {
+          type: "step:iteration-complete",
+          index: -1,
+          iteration: childIndex,
+          status: "complete",
+        };
         yield {
           type: "output:text",
           index: -1,
@@ -787,6 +863,13 @@ async function* runNestedWorkflow(
         // Don't swallow: this just adds a log line before the child's
         // runWorkflow() rethrows out of this loop, which propagates as this
         // step's own failure in the parent.
+        yield {
+          type: "step:iteration-complete",
+          index: -1,
+          iteration: childIndex,
+          status: "error",
+          error: event.error.message,
+        };
         yield {
           type: "output:text",
           index: -1,

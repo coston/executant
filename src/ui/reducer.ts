@@ -179,10 +179,14 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
     }
 
     case "output:cost":
-      return state; // cost events are intentionally not shown in the TUI
+    case "output:usage":
+      return state; // cost/usage events are intentionally not shown live in the TUI
 
     case "output:structured":
       return state; // structured output is consumed by callers, not shown in the TUI
+
+    case "workflow:report":
+      return { ...state, report: event.report };
 
     case "log": {
       const idx = state.currentIndex;

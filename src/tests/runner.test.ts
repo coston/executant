@@ -15,6 +15,7 @@ import type {
   OutputTextEvent,
   StepErrorEvent,
   StepInnerEvent,
+  StepIterationCompleteEvent,
   StepIterationEvent,
   StepRetrospectiveEvent,
   StepSkipEvent,
@@ -646,6 +647,58 @@ describe("runWorkflow — nested workflow steps", () => {
         ["push", 2, 2, 0],
       ],
     );
+  });
+
+  test("each child step gets its own step:iteration-complete — was missing, so IterationRow's endTime never froze and every already-finished child kept showing a live, growing duration instead of its real one", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: build\n    command: echo build\n  - name: push\n    command: echo push\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const events = await collectEvents(wf);
+    const completions = events.filter(
+      (e): e is StepIterationCompleteEvent =>
+        e.type === "step:iteration-complete",
+    );
+    assert.deepEqual(
+      completions.map((e) => [e.iteration, e.status, e.index]),
+      [
+        [1, "complete", 0],
+        [2, "complete", 0],
+      ],
+    );
+  });
+
+  test("a failing child step's step:iteration-complete carries status error and the error message", async () => {
+    const dir = tmpDir();
+    writeYaml(
+      dir,
+      "child.yaml",
+      "goal: child\nsteps:\n  - name: fail-here\n    command: exit 1\n",
+    );
+    const parentPath = writeYaml(
+      dir,
+      "parent.yaml",
+      "goal: parent\nsteps:\n  - name: deploy\n    workflow: ./child.yaml\n",
+    );
+
+    const wf = await loadNested(parentPath);
+    const { events } = await collectEventsUntilError(wf);
+    const completion = events.find(
+      (e): e is StepIterationCompleteEvent =>
+        e.type === "step:iteration-complete",
+    );
+    assert.ok(completion, "expected a step:iteration-complete for fail-here");
+    assert.equal(completion!.status, "error");
+    assert.ok(completion!.error?.includes("exit"));
   });
 
   test("a forEach inside the child folds into the child step's row, not new rows", async () => {

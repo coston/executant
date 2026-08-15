@@ -281,6 +281,30 @@ export interface OutputCostEvent {
   usd: number;
 }
 
+/**
+ * Token counts for a single Claude invocation, mirroring the Anthropic API's
+ * usage object. cacheCreationTokens/cacheReadTokens count toward the same
+ * per-request context size as inputTokens for pricing-tier purposes, but are
+ * broken out because they're billed at different rates.
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+/** Token usage reported at the end of a Claude invocation, alongside output:cost. */
+export interface OutputUsageEvent {
+  type: "output:usage";
+  /**
+   * 0-based step index. Inner generators emit -1 as a sentinel;
+   * runWorkflow patches this to the real step index before yielding downstream.
+   */
+  index: number;
+  usage: TokenUsage;
+}
+
 /** Schema-validated JSON object from a Claude invocation that used --json-schema. */
 export interface OutputStructuredEvent {
   type: "output:structured";
@@ -370,6 +394,67 @@ export interface StepRetrospectiveEvent {
   retrospective: Retrospective;
 }
 
+/**
+ * What happened during one step, kept for the whole run (not discarded when
+ * the step succeeds) so a later efficiency analysis can see where prompting
+ * actually struggled — not just what the task file says the step should do.
+ */
+export interface StepSummary {
+  name: string;
+  durationMs: number;
+  costUsd: number;
+  /**
+   * Judge/healing history for this step, in order (`describeQualityEvent`
+   * formatted) — empty when the step passed clean on the first attempt.
+   * This is the direct evidence of "where the prompting fell short": a
+   * judge FAIL's feedback or a self-healing fix says why, in a way the
+   * step's bare success/failure never does.
+   */
+  qualityEvents: string[];
+  /** True when this step failed but continue_on_error let the run proceed. */
+  failed?: boolean;
+}
+
+/**
+ * Summary produced once a run finishes successfully: total time and API
+ * usage, how much of that usage fell in Anthropic's long-context pricing
+ * tier (>200k tokens in a single call's context), what happened step by
+ * step, and — only when requested — a one-sentence efficiency idea for the
+ * task file grounded in that history.
+ */
+export interface RunReport {
+  durationMs: number;
+  totalCostUsd: number;
+  totalTokens: TokenUsage;
+  /**
+   * Tokens billed at the extended-context rate: the sum, across every call
+   * whose own context (input + cache) individually exceeded 200,000 tokens,
+   * of the amount past that threshold. A running total across many small
+   * calls never contributes here — only a single call that was that large.
+   */
+  overflowTokens: number;
+  /** Number of calls that individually crossed the 200k-token threshold. */
+  overflowCalls: number;
+  /** One entry per step that ran, in order. */
+  stepNarrative: StepSummary[];
+  /**
+   * Absent unless EXECUTANT_REPORT_SUGGESTION=1 (opt-in — off by default so
+   * CI/automated runs are never disturbed) or the TUI's on-demand analysis
+   * has been requested and completed for this report.
+   */
+  suggestion?: string;
+}
+
+/**
+ * Fired once, immediately before workflow:complete, when a run finishes
+ * successfully at the top level. Not emitted for nested `workflow:` steps
+ * (see RunOptions.report) or for cancelled/fatally-failed runs.
+ */
+export interface WorkflowReportEvent {
+  type: "workflow:report";
+  report: RunReport;
+}
+
 export type Event =
   | WorkflowStartEvent
   | WorkflowCompleteEvent
@@ -384,12 +469,14 @@ export type Event =
   | OutputTextEvent
   | OutputToolEvent
   | OutputCostEvent
+  | OutputUsageEvent
   | OutputStructuredEvent
   | LogEvent
   | StepInterjectionEvent
   | StepHealingEvent
   | StepJudgeEvent
-  | StepRetrospectiveEvent;
+  | StepRetrospectiveEvent
+  | WorkflowReportEvent;
 
 // ----------------------------------------------------------------------------
 // Run options  (CLI flags, not YAML — passed to runWorkflow)
@@ -416,6 +503,13 @@ export interface RunOptions {
    * EXECUTANT_RETROSPECTIVE env var (on unless set to "0").
    */
   retrospective?: boolean;
+  /**
+   * Generate a workflow:report on successful completion. Defaults to true.
+   * Set to false for nested `workflow:` sub-runs so only the outermost run
+   * produces a report — otherwise every child workflow would waste a
+   * suggestion-generation call whose result is never surfaced.
+   */
+  report?: boolean;
 }
 
 // ----------------------------------------------------------------------------
@@ -499,6 +593,8 @@ export interface ExecutionState {
   writtenFiles: string[];
   /** Post-mortem for the step that failed the run, once it has been generated. */
   retrospective?: Retrospective;
+  /** Run summary, populated once workflow:report fires on successful completion. */
+  report?: RunReport;
 }
 
 // ----------------------------------------------------------------------------

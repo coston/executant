@@ -35,6 +35,7 @@ import type {
   ClaudeTask,
   Event,
   OutputCostEvent,
+  RunReport,
   StepCompleteEvent,
   StepErrorEvent,
   StepHealingEvent,
@@ -287,6 +288,8 @@ function reduce(
       return onJudge(deps, s, event);
     case "output:cost":
       return onCost(deps, s, event);
+    case "workflow:report":
+      return onReport(s, event.report);
     default:
       // output:text is deliberately NOT recorded — per-line span events would
       // grow without bound. The rest (log, step:inner, …) carry nothing the
@@ -487,6 +490,26 @@ function onCost(
     stepCost: s.stepCost + event.usd,
     totalCost: s.totalCost + event.usd,
   };
+}
+
+/**
+ * workflow:report fires just before workflow:complete, so the root span is
+ * still open — stamp the run totals onto it rather than opening a new span
+ * for a summary that has no duration of its own.
+ */
+function onReport(s: TelemetryState, report: RunReport): TelemetryState {
+  if (!s.root) return s;
+  const t = report.totalTokens;
+  s.root.setAttribute(
+    "executant.report.tokens.total",
+    t.inputTokens + t.outputTokens + t.cacheCreationTokens + t.cacheReadTokens,
+  );
+  s.root.setAttribute(
+    "executant.report.tokens.overflow",
+    report.overflowTokens,
+  );
+  s.root.setAttribute("executant.report.overflow_calls", report.overflowCalls);
+  return s;
 }
 
 // ----------------------------------------------------------------------------

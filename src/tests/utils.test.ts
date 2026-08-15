@@ -17,6 +17,8 @@ import {
   slugify,
   extractJsonObject,
   formatTimestamp,
+  formatDuration,
+  formatTokenCount,
   getErrorMessage,
   fillTemplate,
   formatZodIssues,
@@ -209,6 +211,48 @@ describe("formatTimestamp", () => {
   test("pads single-digit month, day, hour, minute, second", () => {
     const d = new Date(2026, 0, 1, 1, 1, 1);
     assert.equal(formatTimestamp(d), "20260101-010101");
+  });
+});
+
+// ----------------------------------------------------------------------------
+// formatDuration
+// ----------------------------------------------------------------------------
+
+describe("formatDuration", () => {
+  test("renders sub-minute durations as seconds", () => {
+    assert.equal(formatDuration(45_000), "45s");
+    assert.equal(formatDuration(0), "0s");
+  });
+
+  test("renders minute-scale durations as Xm SSs", () => {
+    assert.equal(formatDuration(192_000), "3m 12s"); // 3m 12s
+    assert.equal(formatDuration(65_000), "1m 05s");
+  });
+
+  test("renders hour-scale durations as Xh MMm", () => {
+    assert.equal(formatDuration(3_900_000), "1h 05m"); // 1h 5m
+  });
+
+  test("rounds to the nearest second", () => {
+    assert.equal(formatDuration(59_600), "1m 00s");
+  });
+});
+
+// ----------------------------------------------------------------------------
+// formatTokenCount
+// ----------------------------------------------------------------------------
+
+describe("formatTokenCount", () => {
+  test("adds thousands separators", () => {
+    assert.equal(formatTokenCount(1234567), "1,234,567");
+  });
+
+  test("leaves small numbers unchanged", () => {
+    assert.equal(formatTokenCount(42), "42");
+  });
+
+  test("handles zero", () => {
+    assert.equal(formatTokenCount(0), "0");
   });
 });
 

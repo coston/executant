@@ -73,12 +73,13 @@ Executant is a CLI workflow runner for developers who use Claude Code. You defin
 
 - **OpenTelemetry export** — set `OTEL_EXPORTER_OTLP_ENDPOINT` and every run exports one trace (a root span, a span per step, a span per forEach iteration — annotated with tool, self-healing, and judge activity plus API cost) and step-level metrics to an OTLP/HTTP collector
 - **Trace context propagation** — every subprocess a step spawns inherits `TRACEPARENT`, so instrumented tools inside your scripts join the run's trace
+- **Run report** — every successful run ends with wall-clock duration, total API cost, total tokens, and how much fell into Anthropic's >200k-token extended-context pricing tier (free — pure aggregation, always shown). A one-sentence efficiency idea for the task file is available on top of that, grounded in what actually happened during the run (judge retries, self-healing fixes) rather than just the YAML — but it's opt-in, not automatic: press `a` in the TUI once the report is on screen, or set `EXECUTANT_REPORT_SUGGESTION=1` to have it generated every time. Either way it's a single Haiku call, never load-bearing (a timeout or bad response just omits the line), so an unattended or CI run is never disturbed by an API call it didn't ask for
 
 This extends design principle 3 (transparent execution) beyond the terminal while honoring principle 2 (zero configuration): a single env var is the only switch, and when it is unset the OTel SDK is never even loaded. The exported data lives in your collector, not in executant — runs remain independent, with no persistent state between them.
 
 ## Non-Goals
 
-- Parallel step execution (steps are intentionally sequential)
+- Parallel execution across top-level steps (steps are intentionally sequential; `concurrency: N` on `forEach`/`repeat` parallelizes iterations *within* one step, not the step sequence itself)
 - Multi-agent coordination (each step is a single Claude session)
 - Persistent state between runs (each run is independent)
 - A graphical UI (the TUI is terminal-only)
