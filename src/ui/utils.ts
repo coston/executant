@@ -1,3 +1,4 @@
+import { formatDuration } from "../lib/utils.js";
 import type { IterationRecord, TaskStatus } from "../types.js";
 import { theme } from "./theme.js";
 
@@ -52,8 +53,7 @@ export function clamp(value: number, min: number, max: number): number {
 
 /** Elapsed time for workflow/plan headers. */
 export function formatHeaderElapsed(start: number, end?: number): string {
-  const ms = (end ?? Date.now()) - start;
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+  return formatDuration((end ?? Date.now()) - start);
 }
 
 /** Elapsed time for individual task rows — only shown when the task is active or finished. */
@@ -63,8 +63,7 @@ export function formatTaskElapsed(
   status: TaskStatus,
 ): string {
   if (!start) return "";
-  const ms = (end ?? Date.now()) - start;
   if (status === "running" || status === "complete" || status === "error")
-    return `${(ms / 1000).toFixed(1)}s`;
+    return formatDuration((end ?? Date.now()) - start);
   return "";
 }

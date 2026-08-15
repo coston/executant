@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { load as parseYaml } from "js-yaml";
 import { judgeAllCriteria } from "./judge.js";
 import { modelLabel } from "./export.js";
+import { formatDuration } from "../lib/utils.js";
 import type {
   ModelTarget,
   WorkflowComparison,
@@ -155,8 +156,9 @@ function runInWorktree(
           if (event.type === "step:start" && event.name) {
             process.stdout.write(`    → ${event.name}\n`);
           } else if (event.type === "step:complete" && event.name) {
-            const s = Math.round((event.durationMs ?? 0) / 1000);
-            process.stdout.write(`    ✓ ${event.name} (${s}s)\n`);
+            process.stdout.write(
+              `    ✓ ${event.name} (${formatDuration(event.durationMs ?? 0)})\n`,
+            );
           } else if (event.type === "step:error" && event.name) {
             process.stdout.write(
               `    ✗ ${event.name}: ${event.error?.message ?? "failed"}\n`,
@@ -244,7 +246,7 @@ export async function runWorkflowEval(
 
       const testsPassed = exitCode === 0;
       console.log(
-        `[${label}] Workflow ${testsPassed ? "✓" : "✗"} exit ${exitCode} (${Math.round(durationMs / 1000)}s)`,
+        `[${label}] Workflow ${testsPassed ? "✓" : "✗"} exit ${exitCode} (${formatDuration(durationMs)})`,
       );
 
       const diff = captureGitDiff(worktree.path, worktree.initialSha);

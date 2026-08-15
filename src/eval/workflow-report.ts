@@ -6,6 +6,7 @@
 import type { WorkflowComparison, WorkflowEvalResult } from "./types.js";
 import { modelLabel } from "./export.js";
 import { theme } from "../ui/theme.js";
+import { formatDuration } from "../lib/utils.js";
 
 const USE_COLOR = Boolean(process.stdout.isTTY) && !process.env["NO_COLOR"];
 
@@ -39,14 +40,6 @@ function scoreBar(passCount: number, total: number): string {
   return `${colorFn(bar)} ${passCount}/${total}`;
 }
 
-function fmtDuration(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}m${r > 0 ? `${r}s` : ""}`;
-}
-
 function printResultDetail(result: WorkflowEvalResult): void {
   const label = modelLabel(result.model);
   const testIcon = result.testsPassed ? pass("✓") : fail("✗");
@@ -58,7 +51,7 @@ function printResultDetail(result: WorkflowEvalResult): void {
     `\n${testIcon} ${accent(label)}  tests:${result.testsPassed ? pass("pass") : fail("fail")}  ` +
       `judge:${scoreBar(judgePass, judgeTotal)}  ` +
       `diff:${stats.filesChanged}f +${stats.insertions}/-${stats.deletions}  ` +
-      `time:${dim(fmtDuration(result.durationMs))}`,
+      `time:${dim(formatDuration(result.durationMs))}`,
   );
 
   for (const c of result.judgeResults) {
@@ -121,7 +114,7 @@ export function printWorkflowComparison(comparison: WorkflowComparison): void {
 
   // Duration row
   const timeCells = comparison.results.map((r) =>
-    dim(fmtDuration(r.durationMs)).padEnd(colWidth + (USE_COLOR ? 20 : 0)),
+    dim(formatDuration(r.durationMs)).padEnd(colWidth + (USE_COLOR ? 20 : 0)),
   );
   console.log(`  ${"duration".padEnd(caseColWidth)}  ${timeCells.join("")}\n`);
 }

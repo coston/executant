@@ -51,6 +51,7 @@ import {
   loadPrompt,
   getErrorMessage,
   fillTemplate,
+  formatDuration,
   formatToolCall,
   normalizeError,
   DEFAULT_MODEL,
@@ -856,7 +857,7 @@ async function* runNestedWorkflow(
         yield {
           type: "output:text",
           index: -1,
-          text: `✓ ${event.name} (${event.durationMs}ms)`,
+          text: `✓ ${event.name} (${formatDuration(event.durationMs)})`,
         };
         continue;
       case "step:error":

@@ -62,9 +62,9 @@ export function ReportPrompt({ report, workflow, onDone }: Props) {
   const t = report.totalTokens;
   const totalTokens =
     t.inputTokens + t.outputTokens + t.cacheCreationTokens + t.cacheReadTokens;
-  const elapsedSec = analyzeStartMs
-    ? Math.floor((Date.now() - analyzeStartMs) / 1000)
-    : 0;
+  const elapsed = formatDuration(
+    analyzeStartMs ? Date.now() - analyzeStartMs : 0,
+  );
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -86,8 +86,7 @@ export function ReportPrompt({ report, workflow, onDone }: Props) {
       {phase === "analyzing" && (
         <Text dimColor>
           {"  "}
-          {SPINNER[tick % SPINNER.length]} analyzing… ({elapsedSec}s, up to 10
-          min)
+          {SPINNER[tick % SPINNER.length]} analyzing… ({elapsed}, up to 10 min)
         </Text>
       )}
       {(phase === "done" || phase === "failed") && (

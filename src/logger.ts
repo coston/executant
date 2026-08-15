@@ -119,7 +119,7 @@ function onStepStart(
 function onStepComplete(s: LogState): LogState {
   appendLog(
     s.logFile,
-    `\nStep completed in ${((Date.now() - s.stepStartMs) / 1000).toFixed(1)}s\n`,
+    `\nStep completed in ${formatDuration(Date.now() - s.stepStartMs)}\n`,
   );
   return s;
 }

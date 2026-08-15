@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
+import { formatDuration } from "../lib/utils.js";
 import type { IterationRecord } from "../types.js";
 import { STATUS_COLOR, statusIcon } from "./utils.js";
 import { theme } from "./theme.js";
@@ -15,8 +16,9 @@ function IterationRow({ record, tick }: RowProps) {
   const innerText = record.inner
     ? ` — ${stripItem(record.inner.name, record.item)} [${record.inner.index + 1}/${record.inner.total}]`
     : "";
-  const ms = (record.endTime ?? Date.now()) - record.startTime;
-  const elapsed = `${(ms / 1000).toFixed(1)}s`;
+  const elapsed = formatDuration(
+    (record.endTime ?? Date.now()) - record.startTime,
+  );
 
   return (
     <Box>

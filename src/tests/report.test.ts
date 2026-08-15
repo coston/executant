@@ -229,7 +229,7 @@ describe("formatNarrative", () => {
       { name: "lint", durationMs: 4_100, costUsd: 0, qualityEvents: [] },
     ]);
     assert.ok(text.includes('"lint"'));
-    assert.ok(text.includes("4.1s"));
+    assert.ok(text.includes("4s"));
     assert.ok(text.includes("passed clean on the first attempt"));
   });
 

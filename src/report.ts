@@ -13,7 +13,7 @@
 
 import { z } from "zod";
 import { runAgentStructured } from "./tasks/agent.js";
-import { fillTemplate, loadPrompt } from "./lib/utils.js";
+import { fillTemplate, formatDuration, loadPrompt } from "./lib/utils.js";
 import { describeWorkflow } from "./retrospective.js";
 import type { RunReport, StepSummary, TokenUsage, Workflow } from "./types.js";
 
@@ -135,7 +135,7 @@ export function formatNarrative(stepNarrative: readonly StepSummary[]): string {
   if (stepNarrative.length === 0) return "(no steps ran)";
   return stepNarrative
     .map((s, i) => {
-      const header = `Step ${i + 1}: "${s.name}" (${(s.durationMs / 1000).toFixed(1)}s, $${s.costUsd.toFixed(4)})${s.failed ? " — FAILED (continue_on_error)" : ""}`;
+      const header = `Step ${i + 1}: "${s.name}" (${formatDuration(s.durationMs)}, $${s.costUsd.toFixed(4)})${s.failed ? " — FAILED (continue_on_error)" : ""}`;
       const body =
         s.qualityEvents.length > 0
           ? s.qualityEvents.map((e) => `  ${e}`).join("\n")

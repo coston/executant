@@ -654,11 +654,21 @@ export type RawStep = {
   vars?: Record<string, string>;
 };
 
+/** "45s", "3m 12s", "1h 05m" — mirrors formatDuration in lib/utils.ts. */
+function formatSeconds(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
 /** Thrown when a step exceeds its timeout_seconds limit. Exit code: 3. */
 export class TimeoutError extends Error {
   readonly exitCode = 3;
   constructor(stepName: string, seconds: number) {
-    super(`Step "${stepName}" timed out after ${seconds}s`);
+    super(`Step "${stepName}" timed out after ${formatSeconds(seconds)}`);
     this.name = "TimeoutError";
   }
 }
