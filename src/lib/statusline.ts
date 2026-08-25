@@ -9,8 +9,8 @@
 // It reports EXECUTANT's own numbers, never those of the Claude Code session
 // that launched it: each prompt step is a separate `claude -p` child with its
 // own context window, and a parent session's context is not observable from a
-// child process. The gauge therefore describes the most recent invocation
-// executant itself spawned.
+// child process. The gauge therefore describes the session executant itself
+// spawned — one `claude -p` per prompt step, each with its own window.
 //
 // Everything here is pure except `readRepoInfo`, which shells out to git and
 // resolves undefined on any failure — outside a repo the bar simply drops the
@@ -45,8 +45,16 @@ export function contextWindowSize(model: string): number {
 }
 
 /**
- * How much of the context window an invocation occupied. Cache creation and
- * cache read both sit in the same window as fresh input; output tokens do not.
+ * How much of its context window a session occupies, from the usage of ONE
+ * of its turns. Cache creation and cache read both sit in the same window as
+ * fresh input; output tokens do not.
+ *
+ * Apply this to a single turn's usage and take the latest — that is the
+ * session's current fill. Never apply it to the Claude CLI's final `result`
+ * usage, which sums every turn: each turn re-reads the cached prefix, so the
+ * total measures throughput, not occupancy, and a long step totalled 3781.1k
+ * against a 200k window. `src/tasks/claude.ts` therefore computes this from
+ * the per-turn `assistant` messages and emits it as `output:context`.
  */
 export function contextTokens(usage: TokenUsage | undefined): number {
   return usage

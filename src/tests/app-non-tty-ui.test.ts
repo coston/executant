@@ -102,20 +102,27 @@ describe("App on a non-TTY stdin", () => {
       },
     );
 
-    // Deliberately a fixed wait, not "poll until step-1 appears" — that text
-    // is already on screen in the very first frame (before step-1 even
-    // starts running), so a content-based exit condition would return
-    // before the vulnerable effect ever gets a chance to flush.
-    await new Promise((r) => setTimeout(r, 500));
+    // The unmount must happen even if an assertion below fails: a live Ink
+    // instance keeps timers and stdin listeners on the event loop, so an
+    // un-unmounted failure hangs this process forever and, under
+    // `node --test`, wedges the whole suite instead of reporting a failure.
+    try {
+      // Deliberately a fixed wait, not "poll until step-1 appears" — that
+      // text is already on screen in the very first frame (before step-1
+      // even starts running), so a content-based exit condition would return
+      // before the vulnerable effect ever gets a chance to flush.
+      await new Promise((r) => setTimeout(r, 500));
 
-    assert.equal(
-      rawModeCalledWithTrue,
-      false,
-      "setRawMode(true) must never be called when the stdin is not a TTY",
-    );
-    const frame = stdout.lastFrame() ?? "";
-    assert.doesNotMatch(frame, /Raw mode is not supported/);
-    assert.match(frame, /step-1/);
-    instance.unmount();
+      assert.equal(
+        rawModeCalledWithTrue,
+        false,
+        "setRawMode(true) must never be called when the stdin is not a TTY",
+      );
+      const frame = stdout.lastFrame() ?? "";
+      assert.doesNotMatch(frame, /Raw mode is not supported/);
+      assert.match(frame, /step-1/);
+    } finally {
+      instance.unmount();
+    }
   });
 });

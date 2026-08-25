@@ -21,7 +21,7 @@ import {
   resolveClaudePath,
   runClaude,
 } from "../tasks/claude.js";
-import type { OutputUsageEvent } from "../types.js";
+import type { OutputContextEvent, OutputUsageEvent } from "../types.js";
 
 // ----------------------------------------------------------------------------
 // METHODOLOGY — content integrity
@@ -488,5 +488,141 @@ exit 0
     installResult({ type: "result", total_cost_usd: 0.05, usage: "oops" });
     const usageEvent = await runAndCollectUsage();
     assert.equal(usageEvent, undefined);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// assistant message parsing — output:context (per-call window occupancy)
+// ----------------------------------------------------------------------------
+
+describe("runClaude — per-call context parsing", () => {
+  let mockDir: string;
+  let originalPath: string;
+
+  beforeEach(() => {
+    originalPath = process.env["PATH"] ?? "";
+    mockDir = join(tmpdir(), `claude-context-test-${Date.now()}`);
+    mkdirSync(mockDir, { recursive: true });
+    process.env["PATH"] = `${mockDir}:${originalPath}`;
+  });
+
+  afterEach(() => {
+    process.env["PATH"] = originalPath;
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Transcript shape taken from a real three-turn `claude -p` run: the CLI
+   * emits one assistant message per content block, all sharing that call's id
+   * and usage, and a final result whose usage is the SUM over all three calls
+   * (13236+174+322 cache creation, 24432+37668+37842 cache read).
+   */
+  const assistant = (
+    id: string,
+    block: string,
+    cacheCreation: number,
+    cacheRead: number,
+  ) =>
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        id,
+        content: [{ type: block, text: "x", name: "Bash", input: {} }],
+        usage: {
+          input_tokens: 2,
+          output_tokens: 2,
+          cache_creation_input_tokens: cacheCreation,
+          cache_read_input_tokens: cacheRead,
+        },
+      },
+    });
+
+  function installTranscript(): void {
+    const lines = [
+      assistant("msg_1", "thinking", 13_236, 24_432),
+      assistant("msg_1", "text", 13_236, 24_432),
+      assistant("msg_1", "tool_use", 13_236, 24_432),
+      assistant("msg_2", "tool_use", 174, 37_668),
+      assistant("msg_2", "tool_use", 174, 37_668),
+      assistant("msg_3", "text", 322, 37_842),
+      JSON.stringify({
+        type: "result",
+        total_cost_usd: 0.05,
+        usage: {
+          input_tokens: 6,
+          output_tokens: 328,
+          cache_creation_input_tokens: 13_732,
+          cache_read_input_tokens: 99_942,
+        },
+      }),
+    ];
+    const script = join(mockDir, "claude");
+    writeFileSync(
+      script,
+      `#!/usr/bin/env bash\n${lines.map((l) => `echo '${l}'`).join("\n")}\nexit 0\n`,
+      "utf8",
+    );
+    chmodSync(script, 0o755);
+  }
+
+  async function runAndCollect() {
+    const task = { type: "claude" as const, name: "t", prompt: "do it" };
+    const events = [];
+    for await (const e of runClaude(task)) events.push(e);
+    return {
+      context: events.filter(
+        (e): e is OutputContextEvent => e.type === "output:context",
+      ),
+      usage: events.find(
+        (e): e is OutputUsageEvent => e.type === "output:usage",
+      ),
+    };
+  }
+
+  test("reports one context sample per API call, not per content block", async () => {
+    installTranscript();
+    const { context } = await runAndCollect();
+    // Six assistant messages, three distinct message ids.
+    assert.equal(context.length, 3);
+    assert.deepEqual(
+      context.map((e) => e.tokens),
+      [37_670, 37_844, 38_166],
+    );
+  });
+
+  test("the last sample is the call's own context, not the run's cumulative total", async () => {
+    // Regression: the gauge was fed output:usage, whose counts are summed
+    // across every call — each turn re-reads the cached prefix, so a long
+    // step reported 3781.1k against a 200k window. Here the same transcript
+    // would read 113.7k cumulatively where the real context was 38.2k.
+    installTranscript();
+    const { context, usage } = await runAndCollect();
+    const last = context.at(-1);
+    assert.equal(last?.tokens, 38_166);
+    assert.ok(usage, "expected the cumulative output:usage event too");
+    const cumulative =
+      usage.usage.inputTokens +
+      usage.usage.cacheCreationTokens +
+      usage.usage.cacheReadTokens;
+    assert.equal(cumulative, 113_680);
+    assert.ok(
+      last!.tokens < cumulative,
+      "per-call context must be below the cumulative total",
+    );
+  });
+
+  test("emits no context event for an assistant message without usage", async () => {
+    const script = join(mockDir, "claude");
+    writeFileSync(
+      script,
+      `#!/usr/bin/env bash
+echo '{"type":"assistant","message":{"id":"m","content":[{"type":"text","text":"hi"}]}}'
+exit 0
+`,
+      "utf8",
+    );
+    chmodSync(script, 0o755);
+    const { context } = await runAndCollect();
+    assert.equal(context.length, 0);
   });
 });

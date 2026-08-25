@@ -2,21 +2,31 @@
 // STATUS BAR UI TESTS
 // ============================================================================
 // Renders the real App and verifies the context gauge above the footer: that
-// it starts empty, moves as output:usage events land, and disappears entirely
-// under EXECUTANT_STATUSLINE=0.
+// it starts empty, moves as per-call output:context events land, ignores the
+// cumulative output:usage totals, and disappears under EXECUTANT_STATUSLINE=0.
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
-import { render } from "ink-testing-library";
 
 import { App } from "../ui/App.js";
 import type { Event, Workflow } from "../types.js";
+import { withInk, waitForFrame, settle } from "./ink-harness.js";
 
 const WORKFLOW: Workflow = {
   goal: "test goal",
   sourcePath: "/tmp/task.yaml",
   tasks: [{ type: "command", name: "step-1", command: "true" }],
+};
+
+/** Two prompt steps — two separate `claude -p` sessions. */
+const TWO_SESSION_WORKFLOW: Workflow = {
+  goal: "test goal",
+  sourcePath: "/tmp/task.yaml",
+  tasks: [
+    { type: "claude", name: "session-1", prompt: "go" },
+    { type: "claude", name: "session-2", prompt: "go again" },
+  ],
 };
 
 /** An extended-context prompt step followed by a step that names no model. */
@@ -46,20 +56,6 @@ const RUNNING_EVENTS: Event[] = [
   { type: "step:start", index: 0, name: "step-1" },
 ];
 
-const waitForFrame = async (
-  frame: () => string | undefined,
-  pattern: RegExp,
-): Promise<string> => {
-  const deadline = Date.now() + 2000;
-  let last = frame() ?? "";
-  while (Date.now() < deadline) {
-    last = frame() ?? "";
-    if (pattern.test(last)) return last;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return last;
-};
-
 describe("App status bar", () => {
   let originalEnv: string | undefined;
 
@@ -75,48 +71,54 @@ describe("App status bar", () => {
     else process.env["EXECUTANT_STATUSLINE"] = originalEnv;
   });
 
-  const renderApp = (events: Event[], workflow: Workflow = WORKFLOW) =>
-    render(
+  /** Renders App and always unmounts, even if `body` throws. */
+  const withApp = (
+    events: Event[],
+    body: (ink: { lastFrame: () => string | undefined }) => Promise<void>,
+    workflow: Workflow = WORKFLOW,
+  ) =>
+    withInk(
       React.createElement(App, {
         workflow,
         events: runningStream(events),
         updateCheck: Promise.resolve(null),
       }),
+      body,
     );
 
   test("shows an empty gauge before any Claude step has reported usage", async () => {
-    const { lastFrame, unmount } = renderApp(RUNNING_EVENTS);
-    await waitForFrame(lastFrame, /0% 0\.0k\/200k/);
-    assert.match(lastFrame() ?? "", /━{10} 0% 0\.0k\/200k/);
-    unmount();
+    await withApp(RUNNING_EVENTS, async ({ lastFrame }) => {
+      const frame = await waitForFrame(lastFrame, /0% 0\.0k\/200k/, {
+        describe: "an empty gauge",
+      });
+      assert.match(frame, /━{10} 0% 0\.0k\/200k/);
+    });
   });
 
   test("names the repo and branch it is running in", async () => {
     // The suite runs inside executant's own checkout.
-    const { lastFrame, unmount } = renderApp(RUNNING_EVENTS);
-    await waitForFrame(lastFrame, /executant/);
-    assert.match(lastFrame() ?? "", /executant\s+\S+\s+━{10}/);
-    unmount();
+    await withApp(RUNNING_EVENTS, async ({ lastFrame }) => {
+      const frame = await waitForFrame(lastFrame, /executant\s+\S+\s+━{10}/, {
+        describe: "the repo and branch segment",
+      });
+      assert.match(frame, /executant\s+\S+\s+━{10}/);
+    });
   });
 
   test("fills the gauge as a step reports its context", async () => {
-    const { lastFrame, unmount } = renderApp([
-      ...RUNNING_EVENTS,
-      {
-        type: "output:usage",
-        index: 0,
-        usage: {
-          inputTokens: 12_200,
-          outputTokens: 1200,
-          cacheCreationTokens: 50_000,
-          cacheReadTokens: 100_000,
-        },
+    await withApp(
+      [
+        ...RUNNING_EVENTS,
+        { type: "output:context", index: 0, tokens: 162_200 },
+      ],
+      async ({ lastFrame }) => {
+        // 162200 of 200k = 81%.
+        const frame = await waitForFrame(lastFrame, /81% 162\.2k\/200k/, {
+          describe: "the gauge to fill to 81%",
+        });
+        assert.match(frame, /━{10} 81% 162\.2k\/200k/);
       },
-    ]);
-    // 12200 + 50000 + 100000 = 162200 of 200k = 81%.
-    await waitForFrame(lastFrame, /81% 162\.2k\/200k/);
-    assert.match(lastFrame() ?? "", /━{10} 81% 162\.2k\/200k/);
-    unmount();
+    );
   });
 
   test("sizes the gauge to the model of the step that reported the usage", async () => {
@@ -124,37 +126,108 @@ describe("App status bar", () => {
     // step:complete has already advanced past — so once the [1m] step
     // finished, its usage was re-scaled against the *next* step's 200k
     // window and the same token count jumped from 16% to 81%.
-    const { lastFrame, unmount } = renderApp(
+    await withApp(
       [
         { type: "workflow:start", workflow: MIXED_MODEL_WORKFLOW },
         { type: "step:start", index: 0, name: "wide-step" },
+        { type: "output:context", index: 0, tokens: 162_200 },
+        { type: "step:complete", index: 0, name: "wide-step", durationMs: 10 },
+        { type: "step:start", index: 1, name: "after" },
+      ],
+      async ({ lastFrame }) => {
+        // 162200 of 1M = 16%, and it stays that way after the step completes.
+        const frame = await waitForFrame(lastFrame, /162\.2k/, {
+          describe: "the gauge to report the step's context",
+        });
+        assert.match(frame, /16% 162\.2k\/1M/);
+      },
+      MIXED_MODEL_WORKFLOW,
+    );
+  });
+
+  test("each session gets its own gauge — no carry-over between steps", async () => {
+    // A step is one `claude -p` session with its own window. Step 2 must
+    // start from empty rather than inheriting step 1's fill, and must never
+    // show the two added together (202.2k here).
+    await withApp(
+      [
+        { type: "workflow:start", workflow: TWO_SESSION_WORKFLOW },
+        { type: "step:start", index: 0, name: "session-1" },
+        { type: "output:context", index: 0, tokens: 162_200 },
+        { type: "step:complete", index: 0, name: "session-1", durationMs: 10 },
+        { type: "step:start", index: 1, name: "session-2" },
+      ],
+      async ({ lastFrame }) => {
+        // Session 2 has opened but not yet reported a turn: empty window.
+        const reset = await waitForFrame(lastFrame, /0% 0\.0k\/200k/, {
+          describe: "the gauge to reset for the new session",
+        });
+        assert.doesNotMatch(reset, /162\.2k/);
+      },
+      TWO_SESSION_WORKFLOW,
+    );
+  });
+
+  test("a session's turns replace rather than accumulate", async () => {
+    // Within one session the conversation grows and is re-measured each
+    // turn; the gauge tracks the latest measurement, never the sum.
+    await withApp(
+      [
+        { type: "workflow:start", workflow: TWO_SESSION_WORKFLOW },
+        { type: "step:start", index: 0, name: "session-1" },
+        { type: "output:context", index: 0, tokens: 37_670 },
+        { type: "output:context", index: 0, tokens: 37_844 },
+        { type: "output:context", index: 0, tokens: 38_166 },
+      ],
+      async ({ lastFrame }) => {
+        // 38166 of 200k = 19%, not (37670+37844+38166)=113.6k = 56%.
+        const frame = await waitForFrame(lastFrame, /38\.1k/, {
+          describe: "the latest turn's occupancy",
+        });
+        assert.match(frame, /19% 38\.1k\/200k/);
+        assert.doesNotMatch(frame, /113\.6k/);
+      },
+      TWO_SESSION_WORKFLOW,
+    );
+  });
+
+  test("ignores the cumulative output:usage total", async () => {
+    // Regression: the gauge used to be fed output:usage, whose counts are the
+    // CLI's totals across every API call in the step. A long step re-reads
+    // its cached prefix each turn, so those summed to 3781.1k against a 200k
+    // window on a real run. Only per-call output:context may move the gauge.
+    await withApp(
+      [
+        ...RUNNING_EVENTS,
         {
           type: "output:usage",
           index: 0,
           usage: {
-            inputTokens: 12_200,
-            outputTokens: 1200,
-            cacheCreationTokens: 50_000,
-            cacheReadTokens: 100_000,
+            inputTokens: 6,
+            outputTokens: 328,
+            cacheCreationTokens: 500_000,
+            cacheReadTokens: 3_281_000,
           },
         },
-        { type: "step:complete", index: 0, name: "wide-step", durationMs: 10 },
-        { type: "step:start", index: 1, name: "after" },
       ],
-      MIXED_MODEL_WORKFLOW,
+      async ({ lastFrame }) => {
+        // Asserting an absence, so this waits a fixed moment rather than
+        // polling for a condition that should never arrive.
+        await settle();
+        const frame = lastFrame() ?? "";
+        assert.doesNotMatch(frame, /3781\.1k/);
+        assert.match(frame, /0% 0\.0k\/200k/);
+      },
     );
-    // 162200 of 1M = 16%, and it stays that way after the step completes.
-    await waitForFrame(lastFrame, /162\.2k/);
-    assert.match(lastFrame() ?? "", /16% 162\.2k\/1M/);
-    unmount();
   });
 
   test("EXECUTANT_STATUSLINE=0 hides it entirely", async () => {
     process.env["EXECUTANT_STATUSLINE"] = "0";
-    const { lastFrame, unmount } = renderApp(RUNNING_EVENTS);
-    await new Promise((r) => setTimeout(r, 300));
-    assert.doesNotMatch(lastFrame() ?? "", /k\/200k/);
-    assert.match(lastFrame() ?? "", /press q to quit/);
-    unmount();
+    await withApp(RUNNING_EVENTS, async ({ lastFrame }) => {
+      await waitForFrame(lastFrame, /press q to quit/, {
+        describe: "the footer",
+      });
+      assert.doesNotMatch(lastFrame() ?? "", /k\/200k/);
+    });
   });
 });

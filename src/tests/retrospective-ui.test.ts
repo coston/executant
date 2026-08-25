@@ -14,7 +14,12 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
-import { render } from "ink-testing-library";
+import {
+  renderTracked,
+  unmountAllInk,
+  waitForFrame,
+  settle,
+} from "./ink-harness.js";
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +39,12 @@ const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 function setPlatform(value: string) {
   Object.defineProperty(process, "platform", { ...platformDescriptor, value });
 }
+// Any instance a test rendered is torn down here, pass or fail: a live Ink
+// tree keeps timers and stdin listeners on the event loop, so a failed
+// assertion that skipped its unmount() would hang this process forever —
+// and with it the whole `node --test` run.
+afterEach(unmountAllInk);
+
 let binDir: string;
 let originalPath: string | undefined;
 beforeEach(() => {
@@ -86,36 +97,16 @@ const RETRO: Retrospective = {
   refineInstruction: "Add a build step before check-dist.",
 };
 
-/** Lets Ink flush its render and input handling before assertions. */
-const settle = () => new Promise((r) => setTimeout(r, 60));
-
-/**
- * Polls until `frame()` matches `pattern` or 8s elapses. Spawning the
- * clipboard stub is a real child process, so its completion time varies with
- * how busy the machine running the suite is — unlike the rest of this file,
- * a fixed settle() is too flaky here. 8s (rather than a tighter budget) is
- * deliberate: under a fully-loaded test run (hundreds of concurrent worker
- * processes), even a trivial spawn can take several real seconds.
- */
-async function waitForFrame(
-  frame: () => string | undefined,
-  pattern: RegExp,
-): Promise<string> {
-  const deadline = Date.now() + 8000;
-  let last = frame() ?? "";
-  while (Date.now() < deadline) {
-    last = frame() ?? "";
-    if (pattern.test(last)) return last;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return last;
-}
+// settle() and waitForFrame() come from ./ink-harness.js. The shared
+// deadline is deliberately generous for the same reason this file always
+// needed a long one: spawning the clipboard stub is a real child process,
+// and under a fully-loaded suite even a trivial spawn takes real seconds.
 
 function renderPane(
   props: Partial<React.ComponentProps<typeof RetrospectivePane>> = {},
 ) {
   const actions: string[] = [];
-  const app = render(
+  const app = renderTracked(
     React.createElement(RetrospectivePane, {
       retrospective: RETRO,
       sourcePath: "/tmp/task.yaml",
@@ -337,7 +328,7 @@ const FAILURE_EVENTS: Event[] = [
 
 function renderApp() {
   const updated: Retrospective[] = [];
-  const app = render(
+  const app = renderTracked(
     React.createElement(App, {
       workflow: WORKFLOW,
       events: failingStream(FAILURE_EVENTS),
@@ -383,7 +374,7 @@ describe("App on a fatal failure", () => {
   test("without a retrospective the failure path is untouched", async () => {
     const original = process.exitCode;
     const updated: Retrospective[] = [];
-    const { lastFrame, stdin, unmount } = render(
+    const { lastFrame, stdin, unmount } = renderTracked(
       React.createElement(App, {
         workflow: WORKFLOW,
         // Same failure, minus the step:retrospective event.

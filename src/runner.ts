@@ -189,6 +189,7 @@ export async function* runWorkflow(
           event.type === "output:tool" ||
           event.type === "output:cost" ||
           event.type === "output:usage" ||
+          event.type === "output:context" ||
           event.type === "step:healing" ||
           event.type === "step:judge"
         ) {

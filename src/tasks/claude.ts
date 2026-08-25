@@ -19,6 +19,7 @@ import {
   stripAnsi,
 } from "../lib/utils.js";
 import { traceparentEnv } from "../lib/trace-context.js";
+import { contextTokens } from "../lib/statusline.js";
 
 export const METHODOLOGY = loadPrompt("development-methodology");
 
@@ -110,6 +111,9 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
 
   const timeout = startTimeout(proc, task.name, task.timeoutSeconds);
   const plainLines: string[] = [];
+  // Carried across messages so per-call context is reported once per API
+  // call rather than once per content block.
+  const parseState: ParseState = {};
 
   try {
     // Merge stdout and stderr into a single line stream, parse each JSON line.
@@ -117,7 +121,7 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line) as unknown;
-        yield* parseClaudeMessage(msg);
+        yield* parseClaudeMessage(msg, parseState);
       } catch {
         // Non-JSON lines (warnings, debug output) — pass through as text.
         const clean = stripAnsi(line);
@@ -143,10 +147,40 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
 // Claude stream-json message parsing
 // ----------------------------------------------------------------------------
 
-function* parseClaudeMessage(msg: unknown): Generator<Event> {
+/**
+ * Cross-message state for parseClaudeMessage. The CLI emits one `assistant`
+ * event per content block — thinking, text, each tool_use — all carrying the
+ * same message id and the same usage, so without this the same API call's
+ * context would be reported several times over.
+ */
+interface ParseState {
+  lastContextMessageId?: string;
+}
+
+function* parseClaudeMessage(
+  msg: unknown,
+  state: ParseState = {},
+): Generator<Event> {
   if (!isObject(msg)) return;
 
   if (msg["type"] === "assistant") {
+    // Per-call context occupancy. Unlike the result message's cumulative
+    // usage, this is the number a context gauge can actually divide by a
+    // window: it's what this one call sent to the model.
+    const message = isObject(msg["message"]) ? msg["message"] : undefined;
+    const id = message ? getString(message, "id") : undefined;
+    if (message && id !== state.lastContextMessageId) {
+      const usage = parseUsage(message["usage"]);
+      if (usage) {
+        state.lastContextMessageId = id;
+        // index: -1 here — runWorkflow patches it to the real step index
+        yield {
+          type: "output:context",
+          index: -1,
+          tokens: contextTokens(usage),
+        };
+      }
+    }
     const content = getArray(msg, "message", "content");
     for (const block of content) {
       if (!isObject(block)) continue;

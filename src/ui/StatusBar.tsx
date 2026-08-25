@@ -5,16 +5,15 @@
 //
 //   executant   main  ━━━━━━━━━━ 81% 162.2k/200k
 //
-// The gauge is derived straight from the latest output:usage event, so it
-// moves as each step finishes with no polling of any kind. Only the repo name
-// and branch need I/O, and they are read once at mount.
+// The gauge is derived straight from the latest output:context event — how
+// full the running session's window is — so it moves as the session grows,
+// with no polling of any kind. Each prompt step is its own session and gets
+// its own gauge. Only the repo name and branch need I/O, read once at mount.
 
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
-import type { TokenUsage } from "../types.js";
 import {
   buildGauge,
-  contextTokens,
   contextWindowSize,
   readRepoInfo,
   type GaugeLevel,
@@ -29,13 +28,13 @@ const LEVEL_COLOR: Record<GaugeLevel, string> = {
 };
 
 interface Props {
-  /** Token usage from the most recent Claude invocation, if any has finished. */
-  usage: TokenUsage | undefined;
-  /** The running step's model — sizes the gauge (200k, or 1M for `[1m]`). */
+  /** Context tokens the running session occupies; 0 before its first turn. */
+  tokens: number;
+  /** The session's model — sizes the gauge (200k, or 1M for `[1m]`). */
   model: string;
 }
 
-export function StatusBar({ usage, model }: Props) {
+export function StatusBar({ tokens, model }: Props) {
   const [repo, setRepo] = useState<RepoInfo | undefined>(undefined);
 
   useEffect(() => {
@@ -50,7 +49,7 @@ export function StatusBar({ usage, model }: Props) {
     };
   }, []);
 
-  const gauge = buildGauge(contextTokens(usage), contextWindowSize(model));
+  const gauge = buildGauge(tokens, contextWindowSize(model));
   const level = LEVEL_COLOR[gauge.level];
 
   return (

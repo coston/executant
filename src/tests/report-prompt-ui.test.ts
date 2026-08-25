@@ -13,7 +13,12 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
-import { render } from "ink-testing-library";
+import {
+  renderTracked,
+  unmountAllInk,
+  waitForFrame,
+  settle,
+} from "./ink-harness.js";
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,21 +27,11 @@ import { App } from "../ui/App.js";
 import { ReportPrompt } from "../ui/ReportPrompt.js";
 import type { Event, RunReport, Workflow } from "../types.js";
 
-const settle = () => new Promise((r) => setTimeout(r, 60));
-
-async function waitForFrame(
-  frame: () => string | undefined,
-  pattern: RegExp,
-): Promise<string> {
-  const deadline = Date.now() + 3000;
-  let last = frame() ?? "";
-  while (Date.now() < deadline) {
-    last = frame() ?? "";
-    if (pattern.test(last)) return last;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return last;
-}
+// Any instance a test rendered is torn down here, pass or fail: a live Ink
+// tree keeps timers and stdin listeners on the event loop, so a failed
+// assertion that skipped its unmount() would hang this process forever —
+// and with it the whole `node --test` run.
+afterEach(unmountAllInk);
 
 let mockDir: string;
 let originalPath: string | undefined;
@@ -121,7 +116,7 @@ const WORKFLOW: Workflow = {
 
 function renderPrompt(report: RunReport = REPORT) {
   const done: number[] = [];
-  const app = render(
+  const app = renderTracked(
     React.createElement(ReportPrompt, {
       report,
       workflow: WORKFLOW,
@@ -249,7 +244,7 @@ function successEvents(report?: RunReport): Event[] {
 }
 
 function renderApp(events: Event[]) {
-  return render(
+  return renderTracked(
     React.createElement(App, {
       workflow: WORKFLOW,
       events: successStream(events),

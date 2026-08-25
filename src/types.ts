@@ -282,10 +282,14 @@ export interface OutputCostEvent {
 }
 
 /**
- * Token counts for a single Claude invocation, mirroring the Anthropic API's
- * usage object. cacheCreationTokens/cacheReadTokens count toward the same
- * per-request context size as inputTokens for pricing-tier purposes, but are
- * broken out because they're billed at different rates.
+ * Token counts mirroring the Anthropic API's usage object.
+ * cacheCreationTokens/cacheReadTokens count toward the same per-request
+ * context size as inputTokens for pricing-tier purposes, but are broken out
+ * because they're billed at different rates.
+ *
+ * NOTE: as carried by OutputUsageEvent these are the Claude CLI's *cumulative*
+ * totals for the whole invocation, summed over every API call the step made —
+ * not the size of any single call. See OutputContextEvent.
  */
 export interface TokenUsage {
   inputTokens: number;
@@ -294,7 +298,14 @@ export interface TokenUsage {
   cacheReadTokens: number;
 }
 
-/** Token usage reported at the end of a Claude invocation, alongside output:cost. */
+/**
+ * Token usage reported at the end of a Claude invocation, alongside
+ * output:cost — read from the CLI's final `result` message, whose counts are
+ * summed across every API call the step made. A step that ran 25 turns
+ * re-read its cached prefix 25 times, so these totals measure *throughput*,
+ * not how full any one call's context window got. For that, see
+ * OutputContextEvent.
+ */
 export interface OutputUsageEvent {
   type: "output:usage";
   /**
@@ -303,6 +314,35 @@ export interface OutputUsageEvent {
    */
   index: number;
   usage: TokenUsage;
+}
+
+/**
+ * How full the running SESSION's context window is: input + cache creation +
+ * cache read, the tokens that actually occupy a window (output tokens do
+ * not). Each prompt step is one `claude -p` session, and this describes that
+ * one session — never a total across steps.
+ *
+ * Re-emitted as the session grows. A session's turns are the same
+ * conversation measured again each time, not separate amounts to add up, so
+ * a consumer REPLACES the previous value rather than accumulating: across
+ * the three turns of a real run this reads 37,670 -> 37,844 -> 38,166, and
+ * 38,166 is the session's occupancy, not their 113,680 sum.
+ *
+ * Read from the stream's `assistant` messages, deduplicated by message id
+ * (the CLI emits one per content block, all sharing that turn's usage).
+ * Deliberately separate from OutputUsageEvent, whose cumulative totals
+ * divided by a window overstate occupancy by roughly the turn count — which
+ * is what made a long step read 3781.1k against a 200k limit.
+ */
+export interface OutputContextEvent {
+  type: "output:context";
+  /**
+   * 0-based step index. Inner generators emit -1 as a sentinel;
+   * runWorkflow patches this to the real step index before yielding downstream.
+   */
+  index: number;
+  /** Context tokens the session occupies as of its latest turn. */
+  tokens: number;
 }
 
 /** Schema-validated JSON object from a Claude invocation that used --json-schema. */
@@ -470,6 +510,7 @@ export type Event =
   | OutputToolEvent
   | OutputCostEvent
   | OutputUsageEvent
+  | OutputContextEvent
   | OutputStructuredEvent
   | LogEvent
   | StepInterjectionEvent

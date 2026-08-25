@@ -445,7 +445,11 @@ Executant renders a context gauge above the TUI footer:
  └ repo      └ branch  └ how full the last step's context window was
 ```
 
-The gauge is driven by the token usage of the **most recent Claude invocation executant spawned** — input + cache creation + cache read, the tokens that actually occupy a context window (output tokens don't). It is sized to the running step's model: 200k normally, 1M for a `[1m]` model. The bar turns amber past 70% and red past 90%. Repo and branch come from git (a detached HEAD shows the short SHA); outside a repository that segment is simply omitted.
+The gauge shows **how full the running session's context window is** — input + cache creation + cache read, the tokens that actually occupy a window (output tokens don't). It is sized to that session's model: 200k normally, 1M for a `[1m]` model. The bar turns amber past 70% and red past 90%. Repo and branch come from git (a detached HEAD shows the short SHA); outside a repository that segment is simply omitted.
+
+**One session per prompt step, one gauge per session.** Each prompt step is a separate `claude -p` with its own fresh window. The gauge fills as that session's conversation grows, and resets to empty when the next step opens its own session — context is never carried across steps, and never added up across them.
+
+Within a session the turns are not separate amounts to sum: they are the same conversation re-measured as it grows. A real three-turn step measures 37,670 → 37,844 → 38,166, and 38,166 is what it occupies. This is why the gauge cannot use the Claude CLI's end-of-step `usage` totals, which add those turns together — each turn re-reads the cached prefix, so the total measures throughput, not occupancy, and a long step reads as 3781.1k against a 200k limit.
 
 **These are executant's numbers, not those of the Claude Code session you launched it from.** Each prompt step is a separate `claude -p` child with its own context window, and a parent session's context is not observable from a child process — so the gauge describes the last step executant ran.
 

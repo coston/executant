@@ -16,7 +16,6 @@ import type {
   RunOptions,
   RunReport,
   Task,
-  TokenUsage,
   Workflow,
 } from "../types.js";
 import { RetrospectivePane } from "./RetrospectivePane.js";
@@ -56,9 +55,9 @@ function stepModel(task: Task | undefined): string {
   return resolveAgentModel({ model }) ?? DEFAULT_MODEL;
 }
 
-/** The latest finished invocation's context, and the model that sized it. */
+/** The latest API call's context occupancy, and the model that sized it. */
 interface ContextSample {
-  usage: TokenUsage;
+  tokens: number;
   model: string;
 }
 
@@ -100,11 +99,12 @@ export function App({
   // and the terminal can take input — ReportPrompt then owns the keyboard
   // and decides when to exit, instead of the usual auto-exit-after-delay.
   const [awaitingReportChoice, setAwaitingReportChoice] = useState(false);
-  // Tracked independently of the reducer, which intentionally drops usage
-  // events — this drives the status bar's context gauge, not the task list.
-  // The reporting step's model is captured alongside it: by the time the
-  // gauge renders, currentIndex has already advanced past that step, so
-  // resolving the model later would size the window from the *next* step's.
+  // How full the RUNNING SESSION's context window is — each prompt step is
+  // one `claude -p` session, and the gauge tracks that one session only.
+  // Tracked independently of the reducer, which intentionally drops these.
+  // The session's model is captured alongside it: by the time the gauge
+  // renders, currentIndex has already advanced past that step, so resolving
+  // the model later would size the window from the *next* step's.
   const [context, setContext] = useState<ContextSample | undefined>(undefined);
 
   const { isRawModeSupported } = useStdin();
@@ -127,12 +127,23 @@ export function App({
         for await (const event of events) {
           if (!active) break;
           dispatch(event);
-          if (event.type === "output:usage") {
-            // A context window belongs to the invocation that just ended, so
-            // this replaces rather than accumulates — paired with the model
-            // of the step that reported it, which is what sizes the window.
+          // A new session starts with an empty window, so the gauge drops
+          // back to zero rather than leaving the previous step's fill on
+          // screen — one session's context is never carried into the next.
+          if (
+            event.type === "step:start" &&
+            workflow.tasks[event.index]?.type === "claude"
+          ) {
+            setContext(undefined);
+          }
+          if (event.type === "output:context") {
+            // The session's occupancy as of its latest turn. This REPLACES
+            // rather than accumulates: a session's turns are the same
+            // conversation measured again as it grows, not separate amounts
+            // to add up. (Summing them is what made a long step read
+            // 3781.1k against a 200k window.)
             setContext({
-              usage: event.usage,
+              tokens: event.tokens,
               model: stepModel(workflow.tasks[event.index]),
             });
           }
@@ -466,7 +477,7 @@ export function App({
           </Text>
         )}
         {showStatusBar && (
-          <StatusBar usage={context?.usage} model={gaugeModel} />
+          <StatusBar tokens={context?.tokens ?? 0} model={gaugeModel} />
         )}
         <Text dimColor>
           {isInterjecting

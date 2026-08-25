@@ -14,28 +14,16 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
-import { render } from "ink-testing-library";
 import { App } from "../ui/App.js";
 import type { Event, Workflow } from "../types.js";
+import { withInk, waitForFrame } from "./ink-harness.js";
 
 async function* stream(events: Event[]): AsyncGenerator<Event> {
   for (const e of events) yield e;
 }
 
-const waitFor = async (
-  frame: () => string | undefined,
-  predicate: (frame: string) => boolean,
-): Promise<string> => {
-  const deadline = Date.now() + 2000;
-  let last = frame() ?? "";
-  while (Date.now() < deadline) {
-    last = frame() ?? "";
-    if (predicate(last)) return last;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return last;
-};
-const settle = () => new Promise((r) => setTimeout(r, 60));
+/** Rendered frame height, the quantity every resize assertion is about. */
+const rows = (frame: string | undefined) => (frame ?? "").split("\n").length;
 
 function workflowWithSteps(count: number): Workflow {
   return {
@@ -56,19 +44,23 @@ describe("App output pane", () => {
       { type: "workflow:start", workflow },
       { type: "step:start", index: 0, name: "step-1" },
     ];
-    const { lastFrame, unmount } = render(
+    await withInk(
       React.createElement(App, {
         workflow,
         events: stream(events),
         updateCheck: Promise.resolve(null),
       }),
+      async ({ lastFrame }) => {
+        const frame = await waitForFrame(
+          lastFrame,
+          (f) => f.includes("step-15"),
+          { describe: "the last step to appear" },
+        );
+        assert.match(frame, /step-1\b/);
+        assert.match(frame, /step-15\b/);
+        assert.doesNotMatch(frame, /earlier/);
+      },
     );
-    await waitFor(lastFrame, (f) => f.includes("step-15"));
-    const frame = lastFrame() ?? "";
-    assert.match(frame, /step-1\b/);
-    assert.match(frame, /step-15\b/);
-    assert.doesNotMatch(frame, /earlier/);
-    unmount();
   });
 
   test("[ shrinks the output pane and the size persists across the next step", async () => {
@@ -95,38 +87,45 @@ describe("App output pane", () => {
       yield { type: "output:text", index: 1, text: step2Lines };
     }
 
-    const { lastFrame, stdin, unmount } = render(
+    await withInk(
       React.createElement(App, {
         workflow,
         events: delayedStream(),
         updateCheck: Promise.resolve(null),
       }),
+      async ({ lastFrame, stdin }) => {
+        await waitForFrame(lastFrame, (f) => f.includes("output line 19"), {
+          describe: "step 1's output to arrive",
+        });
+        const before = rows(lastFrame());
+
+        // Wait for the shrink to land rather than sleeping a fixed 60ms:
+        // under a loaded machine Ink can take far longer than that to process
+        // four keystrokes and repaint, and a fixed sleep turns that into a
+        // spurious failure.
+        for (let i = 0; i < 4; i++) stdin.write("[");
+        const shrunk = await waitForFrame(lastFrame, (f) => rows(f) < before, {
+          describe: `the pane to shrink below ${before} rows`,
+        });
+        const afterShrink = rows(shrunk);
+
+        // Also scroll up in step 1 — this should NOT survive the step change,
+        // unlike the frozen height.
+        stdin.write("\x1b[A");
+        await waitForFrame(lastFrame, /scrolled up/, {
+          describe: "the scroll indicator",
+        });
+
+        // Advance to step 2 — a frozen size should carry over rather than
+        // springing back to the terminal's full auto-sized budget, but the
+        // scroll position should reset to the new step's live tail.
+        await waitForFrame(lastFrame, (f) => f.includes("step2 line 19"), {
+          describe: "step 2's output to arrive",
+        });
+        assert.equal(rows(lastFrame()), afterShrink);
+        assert.doesNotMatch(lastFrame() ?? "", /scrolled up/);
+      },
     );
-    await waitFor(lastFrame, (f) => f.includes("output line 19"));
-    const before = (lastFrame() ?? "").split("\n").length;
-
-    for (let i = 0; i < 4; i++) stdin.write("[");
-    await settle();
-    const afterShrink = (lastFrame() ?? "").split("\n").length;
-    assert.ok(
-      afterShrink < before,
-      `expected shrunk frame (${afterShrink} lines) to be shorter than before (${before})`,
-    );
-
-    // Also scroll up in step 1 — this should NOT survive the step change,
-    // unlike the frozen height.
-    stdin.write("\x1b[A");
-    await settle();
-    assert.match(lastFrame() ?? "", /scrolled up/);
-
-    // Advance to step 2 — a frozen size should carry over rather than
-    // springing back to the terminal's full auto-sized budget, but the
-    // scroll position should reset to the new step's live tail.
-    await waitFor(lastFrame, (f) => f.includes("step2 line 19"));
-    const afterNextStep = (lastFrame() ?? "").split("\n").length;
-    assert.equal(afterNextStep, afterShrink);
-    assert.doesNotMatch(lastFrame() ?? "", /scrolled up/);
-    unmount();
   });
 
   test("↑ scrolls the output pane and shows the scroll indicator", async () => {
@@ -137,27 +136,32 @@ describe("App output pane", () => {
       { type: "step:start", index: 0, name: "step-1" },
       { type: "output:text", index: 0, text: manyLines },
     ];
-    const { lastFrame, stdin, unmount } = render(
+    await withInk(
       React.createElement(App, {
         workflow,
         events: stream(events),
         updateCheck: Promise.resolve(null),
       }),
+      async ({ lastFrame, stdin }) => {
+        await waitForFrame(lastFrame, (f) => f.includes("L29"), {
+          describe: "the step's output to arrive",
+        });
+        assert.doesNotMatch(lastFrame() ?? "", /scrolled up/);
+
+        stdin.write("\x1b[A"); // up arrow
+        stdin.write("\x1b[A");
+        stdin.write("\x1b[A");
+        await waitForFrame(lastFrame, /scrolled up 3 lines/, {
+          describe: "the scroll indicator to report 3 lines",
+        });
+
+        stdin.write("\x1b[B"); // down arrow
+        stdin.write("\x1b[B");
+        stdin.write("\x1b[B");
+        await waitForFrame(lastFrame, (f) => !/scrolled up/.test(f), {
+          describe: "the scroll indicator to clear",
+        });
+      },
     );
-    await waitFor(lastFrame, (f) => f.includes("L29"));
-    assert.doesNotMatch(lastFrame() ?? "", /scrolled up/);
-
-    stdin.write("\x1b[A"); // up arrow
-    stdin.write("\x1b[A");
-    stdin.write("\x1b[A");
-    await settle();
-    assert.match(lastFrame() ?? "", /scrolled up 3 lines/);
-
-    stdin.write("\x1b[B"); // down arrow
-    stdin.write("\x1b[B");
-    stdin.write("\x1b[B");
-    await settle();
-    assert.doesNotMatch(lastFrame() ?? "", /scrolled up/);
-    unmount();
   });
 });
