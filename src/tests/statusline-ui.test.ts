@@ -1,17 +1,14 @@
 // ============================================================================
-// STATUSLINE UI TESTS
+// STATUS BAR UI TESTS
 // ============================================================================
-// Renders the real App with a project directory containing a .claude/settings
-// statusLine command, verifying the footer picks up its output — and stays
-// silent when nothing is configured or the feature is disabled.
+// Renders the real App and verifies the context gauge above the footer: that
+// it starts empty, moves as output:usage events land, and disappears entirely
+// under EXECUTANT_STATUSLINE=0.
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { render } from "ink-testing-library";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { App } from "../ui/App.js";
 import type { Event, Workflow } from "../types.js";
@@ -20,6 +17,16 @@ const WORKFLOW: Workflow = {
   goal: "test goal",
   sourcePath: "/tmp/task.yaml",
   tasks: [{ type: "command", name: "step-1", command: "true" }],
+};
+
+/** An extended-context prompt step followed by a step that names no model. */
+const MIXED_MODEL_WORKFLOW: Workflow = {
+  goal: "test goal",
+  sourcePath: "/tmp/task.yaml",
+  tasks: [
+    { type: "claude", name: "wide-step", prompt: "go", model: "opus[1m]" },
+    { type: "command", name: "after", command: "true" },
+  ],
 };
 
 /**
@@ -53,74 +60,101 @@ const waitForFrame = async (
   return last;
 };
 
-describe("App statusline", () => {
-  let projectDir: string;
-  let originalCwd: string;
+describe("App status bar", () => {
   let originalEnv: string | undefined;
 
   beforeEach(() => {
-    originalCwd = process.cwd();
     originalEnv = process.env["EXECUTANT_STATUSLINE"];
-    projectDir = mkdtempSync(join(tmpdir(), "executant-statusline-app-"));
+    // `npm test` disables the bar suite-wide so unrelated UI tests keep a
+    // stable row budget. These tests are the ones that need it on.
+    delete process.env["EXECUTANT_STATUSLINE"];
   });
 
   afterEach(() => {
-    if (process.cwd() !== originalCwd) process.chdir(originalCwd);
     if (originalEnv === undefined) delete process.env["EXECUTANT_STATUSLINE"];
     else process.env["EXECUTANT_STATUSLINE"] = originalEnv;
-    rmSync(projectDir, { recursive: true, force: true });
   });
 
-  function configureStatusLine(command: string) {
-    const claudeDir = join(projectDir, ".claude");
-    mkdirSync(claudeDir, { recursive: true });
-    writeFileSync(
-      join(claudeDir, "settings.json"),
-      JSON.stringify({ statusLine: { type: "command", command } }),
-    );
-    process.chdir(projectDir);
-  }
-
-  test("shows the configured statusLine command's output in the footer", async () => {
-    configureStatusLine("printf 'bedrock spend today: 3.21\\n'");
-    const { lastFrame, unmount } = render(
+  const renderApp = (events: Event[], workflow: Workflow = WORKFLOW) =>
+    render(
       React.createElement(App, {
-        workflow: WORKFLOW,
-        events: runningStream(RUNNING_EVENTS),
+        workflow,
+        events: runningStream(events),
         updateCheck: Promise.resolve(null),
       }),
     );
-    await waitForFrame(lastFrame, /bedrock spend today: 3\.21/);
-    assert.match(lastFrame() ?? "", /bedrock spend today: 3\.21/);
+
+  test("shows an empty gauge before any Claude step has reported usage", async () => {
+    const { lastFrame, unmount } = renderApp(RUNNING_EVENTS);
+    await waitForFrame(lastFrame, /0% 0\.0k\/200k/);
+    assert.match(lastFrame() ?? "", /━{10} 0% 0\.0k\/200k/);
     unmount();
   });
 
-  test("shows nothing extra when no statusLine is configured", async () => {
-    process.chdir(projectDir); // .claude/settings.json deliberately absent
-    const { lastFrame, unmount } = render(
-      React.createElement(App, {
-        workflow: WORKFLOW,
-        events: runningStream(RUNNING_EVENTS),
-        updateCheck: Promise.resolve(null),
-      }),
+  test("names the repo and branch it is running in", async () => {
+    // The suite runs inside executant's own checkout.
+    const { lastFrame, unmount } = renderApp(RUNNING_EVENTS);
+    await waitForFrame(lastFrame, /executant/);
+    assert.match(lastFrame() ?? "", /executant\s+\S+\s+━{10}/);
+    unmount();
+  });
+
+  test("fills the gauge as a step reports its context", async () => {
+    const { lastFrame, unmount } = renderApp([
+      ...RUNNING_EVENTS,
+      {
+        type: "output:usage",
+        index: 0,
+        usage: {
+          inputTokens: 12_200,
+          outputTokens: 1200,
+          cacheCreationTokens: 50_000,
+          cacheReadTokens: 100_000,
+        },
+      },
+    ]);
+    // 12200 + 50000 + 100000 = 162200 of 200k = 81%.
+    await waitForFrame(lastFrame, /81% 162\.2k\/200k/);
+    assert.match(lastFrame() ?? "", /━{10} 81% 162\.2k\/200k/);
+    unmount();
+  });
+
+  test("sizes the gauge to the model of the step that reported the usage", async () => {
+    // Regression: the model used to be read from state.currentIndex, which
+    // step:complete has already advanced past — so once the [1m] step
+    // finished, its usage was re-scaled against the *next* step's 200k
+    // window and the same token count jumped from 16% to 81%.
+    const { lastFrame, unmount } = renderApp(
+      [
+        { type: "workflow:start", workflow: MIXED_MODEL_WORKFLOW },
+        { type: "step:start", index: 0, name: "wide-step" },
+        {
+          type: "output:usage",
+          index: 0,
+          usage: {
+            inputTokens: 12_200,
+            outputTokens: 1200,
+            cacheCreationTokens: 50_000,
+            cacheReadTokens: 100_000,
+          },
+        },
+        { type: "step:complete", index: 0, name: "wide-step", durationMs: 10 },
+        { type: "step:start", index: 1, name: "after" },
+      ],
+      MIXED_MODEL_WORKFLOW,
     );
-    await new Promise((r) => setTimeout(r, 150));
-    assert.match(lastFrame() ?? "", /press q to quit/);
+    // 162200 of 1M = 16%, and it stays that way after the step completes.
+    await waitForFrame(lastFrame, /162\.2k/);
+    assert.match(lastFrame() ?? "", /16% 162\.2k\/1M/);
     unmount();
   });
 
-  test("EXECUTANT_STATUSLINE=0 disables it even when configured", async () => {
-    configureStatusLine("printf 'should not appear\\n'");
+  test("EXECUTANT_STATUSLINE=0 hides it entirely", async () => {
     process.env["EXECUTANT_STATUSLINE"] = "0";
-    const { lastFrame, unmount } = render(
-      React.createElement(App, {
-        workflow: WORKFLOW,
-        events: runningStream(RUNNING_EVENTS),
-        updateCheck: Promise.resolve(null),
-      }),
-    );
+    const { lastFrame, unmount } = renderApp(RUNNING_EVENTS);
     await new Promise((r) => setTimeout(r, 300));
-    assert.doesNotMatch(lastFrame() ?? "", /should not appear/);
+    assert.doesNotMatch(lastFrame() ?? "", /k\/200k/);
+    assert.match(lastFrame() ?? "", /press q to quit/);
     unmount();
   });
 });

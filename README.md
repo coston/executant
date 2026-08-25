@@ -279,7 +279,7 @@ steps:
 | `EXECUTANT_PROVIDER`          | Agent backend: `claude` or `opencode`                                                               | `claude`              |
 | `EXECUTANT_MODEL`             | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc.                 | per-provider default  |
 | `EXECUTANT_AGENT`             | OpenCode `--agent` name (ignored by Claude)                                                         | —                     |
-| `EXECUTANT_STATUSLINE`        | Set to `0` to disable the [statusline](#statusline) integration                                     | enabled               |
+| `EXECUTANT_STATUSLINE`        | Set to `0` to hide the [context gauge](#statusline) (the test suite sets this)                      | enabled               |
 | `EXECUTANT_REPORT_SUGGESTION` | Set to `0` to skip the [run report](#run-report)'s efficiency-suggestion API call                   | enabled               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables [observability](#observability): exports traces + metrics to this OTLP/HTTP collector       | unset (telemetry off) |
 | `OTEL_SERVICE_NAME`           | `service.name` on exported telemetry                                                                | `executant`           |
@@ -438,7 +438,18 @@ Notes:
 
 ## Statusline
 
-If a `.claude/settings.local.json` or `.claude/settings.json` (project, walking up from `cwd`, then user-level) declares a `statusLine.command`, executant runs it on start and every 30s, feeding it the same JSON shape Claude Code sends its own statusline (session id, model, cwd, an approximate running cost), and renders the command's first output line above the TUI footer. Best-effort throughout: a missing command, malformed settings, or a failing/slow script just means no statusline — never a broken run. Disable with `EXECUTANT_STATUSLINE=0`.
+Executant renders a context gauge above the TUI footer:
+
+```
+ executant   main  ━━━━━━━━━━ 81% 162.2k/200k
+ └ repo      └ branch  └ how full the last step's context window was
+```
+
+The gauge is driven by the token usage of the **most recent Claude invocation executant spawned** — input + cache creation + cache read, the tokens that actually occupy a context window (output tokens don't). It is sized to the running step's model: 200k normally, 1M for a `[1m]` model. The bar turns amber past 70% and red past 90%. Repo and branch come from git (a detached HEAD shows the short SHA); outside a repository that segment is simply omitted.
+
+**These are executant's numbers, not those of the Claude Code session you launched it from.** Each prompt step is a separate `claude -p` child with its own context window, and a parent session's context is not observable from a child process — so the gauge describes the last step executant ran.
+
+There is nothing to configure and nothing to poll: the gauge is derived from the event stream and updates the moment a step reports its usage. Disable it with `EXECUTANT_STATUSLINE=0`.
 
 ## Observability
 

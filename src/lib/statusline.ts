@@ -1,138 +1,134 @@
 // ============================================================================
 // STATUSLINE
 // ============================================================================
-// Best-effort integration with Claude Code's `statusLine` setting
-// (https://docs.claude.com — a `.claude/settings.json` key naming a shell
-// command that receives session JSON on stdin and prints one line to show in
-// a status bar). Executant is not an interactive Claude Code session, so it
-// synthesizes an approximation of that payload and renders whatever the
-// command prints alongside its own TUI footer.
+// The context gauge executant renders above its TUI footer:
 //
-// Every function here is best-effort and never throws: a missing command, a
-// malformed settings file, or a failing/slow script should silently mean no
-// statusline, never a broken run. Disable entirely with EXECUTANT_STATUSLINE=0.
+//   executant   main  ━━━━━━━━━━ 81% 162.2k/200k
+//   └ repo      └ branch  └ 10-cell gauge, coloured by how full the context is
+//
+// It reports EXECUTANT's own numbers, never those of the Claude Code session
+// that launched it: each prompt step is a separate `claude -p` child with its
+// own context window, and a parent session's context is not observable from a
+// child process. The gauge therefore describes the most recent invocation
+// executant itself spawned.
+//
+// Everything here is pure except `readRepoInfo`, which shells out to git and
+// resolves undefined on any failure — outside a repo the bar simply drops the
+// repo/branch segment. Disable the bar entirely with EXECUTANT_STATUSLINE=0.
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename } from "node:path";
 import { spawn } from "node:child_process";
-import { z } from "zod";
-import { stripAnsi } from "./utils.js";
-import { CURRENT_VERSION } from "../version.js";
-import type { Workflow } from "../types.js";
+import type { TokenUsage } from "../types.js";
 
-const SettingsSchema = z
-  .object({
-    statusLine: z
-      .object({ command: z.string().min(1) })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
+/** Statusline is enabled by default; opt out with EXECUTANT_STATUSLINE=0. */
+export function statusLineEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env["EXECUTANT_STATUSLINE"] !== "0";
+}
 
-function readStatusLineCommand(settingsPath: string): string | undefined {
-  try {
-    if (!existsSync(settingsPath)) return undefined;
-    const parsed = SettingsSchema.safeParse(
-      JSON.parse(readFileSync(settingsPath, "utf8")),
-    );
-    return parsed.success ? parsed.data.statusLine?.command : undefined;
-  } catch {
-    return undefined;
-  }
+// ----------------------------------------------------------------------------
+// Context window
+// ----------------------------------------------------------------------------
+
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+export const EXTENDED_CONTEXT_WINDOW = 1_000_000;
+
+/**
+ * The running model's context window, which sizes the gauge.
+ * Extended-context models carry a `[1m]` suffix in their id.
+ */
+export function contextWindowSize(model: string): number {
+  return model.toLowerCase().includes("[1m]")
+    ? EXTENDED_CONTEXT_WINDOW
+    : DEFAULT_CONTEXT_WINDOW;
 }
 
 /**
- * Finds the `statusLine.command` from the nearest `.claude/settings.local.json`
- * or `.claude/settings.json` walking up from `cwd`, falling back to the same
- * files under the user's home directory. Mirrors Claude Code's own
- * project-then-user settings precedence; local overrides shared at each level.
+ * How much of the context window an invocation occupied. Cache creation and
+ * cache read both sit in the same window as fresh input; output tokens do not.
  */
-export function findStatusLineCommand(
-  cwd: string,
-  home: string = homedir(),
-): string | undefined {
-  let dir = cwd;
-  while (true) {
-    const found =
-      readStatusLineCommand(join(dir, ".claude", "settings.local.json")) ??
-      readStatusLineCommand(join(dir, ".claude", "settings.json"));
-    if (found) return found;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return (
-    readStatusLineCommand(join(home, ".claude", "settings.local.json")) ??
-    readStatusLineCommand(join(home, ".claude", "settings.json"))
-  );
+export function contextTokens(usage: TokenUsage | undefined): number {
+  return usage
+    ? usage.inputTokens + usage.cacheCreationTokens + usage.cacheReadTokens
+    : 0;
 }
 
-interface StatusLinePayload {
-  hook_event_name: "Status";
-  session_id: string;
-  cwd: string;
-  model: { id: string; display_name: string };
-  workspace: { current_dir: string; project_dir: string };
-  version: string;
-  cost: {
-    total_cost_usd: number;
-    total_duration_ms: number;
-    total_api_duration_ms: number;
-    total_lines_added: number;
-    total_lines_removed: number;
-  };
+// ----------------------------------------------------------------------------
+// Gauge
+// ----------------------------------------------------------------------------
+
+export const GAUGE_WIDTH = 10;
+export const GAUGE_CHAR = "━";
+/** Percentages at which the gauge changes colour. */
+const WARN_PCT = 70;
+const HIGH_PCT = 90;
+
+export type GaugeLevel = "ok" | "warn" | "high";
+
+interface Gauge {
+  /** Whole percent of the window used, capped at 100. */
+  pct: number;
+  /** Gauge cells drawn in the level colour, and the remainder drawn dim. */
+  filled: string;
+  empty: string;
+  level: GaugeLevel;
+  /** e.g. "162.2k" and "200k" (or "1M" for an extended-context model). */
+  used: string;
+  limit: string;
 }
 
-/** Best-effort approximation of Claude Code's own statusLine payload. */
-export function buildStatusLinePayload(opts: {
-  workflow: Pick<Workflow, "sourcePath">;
-  sessionId: string;
-  model: string;
-  totalCostUsd: number;
-  elapsedMs: number;
-}): StatusLinePayload {
-  const cwd = process.cwd();
+/** Truncates to one decimal without rounding up, so a gauge never overstates. */
+function formatK(n: number): string {
+  return `${Math.floor(n / 1000)}.${Math.floor((n % 1000) / 100)}k`;
+}
+
+/** Whole-unit label for the window itself: "200k", "1M". */
+function formatLimit(size: number): string {
+  return size >= 1_000_000
+    ? `${size / 1_000_000}M`
+    : `${Math.round(size / 1000)}k`;
+}
+
+export function buildGauge(
+  tokens: number,
+  size: number,
+  width = GAUGE_WIDTH,
+): Gauge {
+  const pct = size > 0 ? Math.min(100, Math.floor((tokens * 100) / size)) : 0;
+  const filled = Math.floor((pct * width) / 100);
   return {
-    hook_event_name: "Status",
-    session_id: opts.sessionId,
-    cwd,
-    model: { id: opts.model, display_name: opts.model },
-    workspace: {
-      current_dir: cwd,
-      project_dir: opts.workflow.sourcePath
-        ? dirname(opts.workflow.sourcePath)
-        : cwd,
-    },
-    version: CURRENT_VERSION,
-    cost: {
-      total_cost_usd: opts.totalCostUsd,
-      total_duration_ms: opts.elapsedMs,
-      total_api_duration_ms: 0,
-      total_lines_added: 0,
-      total_lines_removed: 0,
-    },
+    pct,
+    filled: GAUGE_CHAR.repeat(filled),
+    empty: GAUGE_CHAR.repeat(width - filled),
+    level: pct >= HIGH_PCT ? "high" : pct >= WARN_PCT ? "warn" : "ok",
+    used: formatK(tokens),
+    limit: formatLimit(size),
   };
 }
 
-/**
- * Runs a statusLine command with `payload` on stdin and returns its first
- * printed line, or undefined if it errors, times out, exits non-zero, or
- * prints nothing. Runs through the shell so commands using `~`, pipes, or
- * env vars behave the way they would from settings.json.
- */
-export function runStatusLine(
-  command: string,
-  payload: unknown,
-  timeoutMs = 3000,
+// ----------------------------------------------------------------------------
+// Repo
+// ----------------------------------------------------------------------------
+
+export interface RepoInfo {
+  name: string;
+  /** Short SHA when HEAD is detached; absent in a repo with no commits yet. */
+  branch?: string;
+}
+
+/** Runs a git subcommand in `cwd`, resolving undefined on any failure. */
+function runGit(
+  args: string[],
+  cwd: string,
+  timeoutMs = 2000,
 ): Promise<string | undefined> {
   return new Promise((resolveResult) => {
     let child;
     try {
-      child = spawn(command, {
-        shell: true,
+      child = spawn("git", ["-C", cwd, ...args], {
         timeout: timeoutMs,
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "ignore"],
       });
     } catch {
       resolveResult(undefined);
@@ -143,25 +139,25 @@ export function runStatusLine(
       out += chunk.toString();
     });
     child.on("error", () => resolveResult(undefined));
-    child.stdin.on("error", () => {
-      // A spawn failure fires 'error' above; this just stops it also
-      // surfacing as an uncaught 'error' event on the stdin stream.
-    });
-    child.on("close", (code) => {
-      if (code !== 0) {
-        resolveResult(undefined);
-        return;
-      }
-      const line = stripAnsi(out).split("\n")[0]?.trim();
-      resolveResult(line || undefined);
-    });
-    child.stdin.end(JSON.stringify(payload));
+    child.on("close", (code) => resolveResult(code === 0 ? out : undefined));
   });
 }
 
-/** Statusline integration is enabled by default; opt out with EXECUTANT_STATUSLINE=0. */
-export function statusLineEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env["EXECUTANT_STATUSLINE"] !== "0";
+/**
+ * Repo name and branch for `cwd`, in one git call. A detached HEAD reports
+ * "HEAD", which is replaced by the short SHA — the branch name is only useful
+ * here as "where am I", and "HEAD" answers nothing.
+ */
+export async function readRepoInfo(cwd: string): Promise<RepoInfo | undefined> {
+  const out = await runGit(
+    ["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"],
+    cwd,
+  );
+  if (!out) return undefined;
+  const [toplevel, branch] = out.trim().split("\n");
+  if (!toplevel) return undefined;
+  const name = basename(toplevel);
+  if (branch && branch !== "HEAD") return { name, branch };
+  const sha = (await runGit(["rev-parse", "--short", "HEAD"], cwd))?.trim();
+  return sha ? { name, branch: sha } : { name };
 }

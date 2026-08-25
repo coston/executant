@@ -15,6 +15,8 @@ import type {
   Retrospective,
   RunOptions,
   RunReport,
+  Task,
+  TokenUsage,
   Workflow,
 } from "../types.js";
 import { RetrospectivePane } from "./RetrospectivePane.js";
@@ -26,7 +28,9 @@ import { TaskRow } from "./TaskRow.js";
 import { IterationList } from "./IterationRow.js";
 import { LogPane } from "./LogPane.js";
 import { useInterval } from "./useInterval.js";
-import { useStatusLine } from "./useStatusLine.js";
+import { StatusBar } from "./StatusBar.js";
+import { statusLineEnabled } from "../lib/statusline.js";
+import { resolveAgentModel } from "../tasks/agent.js";
 import { useOutputResize } from "./useOutputResize.js";
 import {
   countIterationRows,
@@ -34,9 +38,29 @@ import {
   EXIT_DELAY_MS,
   MIN_OUTPUT_ROWS,
 } from "./utils.js";
-import { formatDuration, formatTokenCount } from "../lib/utils.js";
+import {
+  DEFAULT_MODEL,
+  formatDuration,
+  formatTokenCount,
+} from "../lib/utils.js";
 import { theme } from "./theme.js";
 import { BrandMark } from "./BrandMark.js";
+
+/**
+ * The model a step runs with, resolved exactly the way the agent layer
+ * resolves it (step `model:` → EXECUTANT_MODEL → built-in default). Only a
+ * prompt step can name one; every other step type falls straight through.
+ */
+function stepModel(task: Task | undefined): string {
+  const model = task?.type === "claude" ? task.model : undefined;
+  return resolveAgentModel({ model }) ?? DEFAULT_MODEL;
+}
+
+/** The latest finished invocation's context, and the model that sized it. */
+interface ContextSample {
+  usage: TokenUsage;
+  model: string;
+}
 
 interface Props {
   workflow: Workflow;
@@ -76,9 +100,12 @@ export function App({
   // and the terminal can take input — ReportPrompt then owns the keyboard
   // and decides when to exit, instead of the usual auto-exit-after-delay.
   const [awaitingReportChoice, setAwaitingReportChoice] = useState(false);
-  // Summed independently of the reducer, which intentionally drops cost
-  // events — this is only for the statusline payload, not the task list.
-  const [totalCostUsd, setTotalCostUsd] = useState(0);
+  // Tracked independently of the reducer, which intentionally drops usage
+  // events — this drives the status bar's context gauge, not the task list.
+  // The reporting step's model is captured alongside it: by the time the
+  // gauge renders, currentIndex has already advanced past that step, so
+  // resolving the model later would size the window from the *next* step's.
+  const [context, setContext] = useState<ContextSample | undefined>(undefined);
 
   const { isRawModeSupported } = useStdin();
 
@@ -100,8 +127,14 @@ export function App({
         for await (const event of events) {
           if (!active) break;
           dispatch(event);
-          if (event.type === "output:cost") {
-            setTotalCostUsd((c) => c + event.usd);
+          if (event.type === "output:usage") {
+            // A context window belongs to the invocation that just ended, so
+            // this replaces rather than accumulates — paired with the model
+            // of the step that reported it, which is what sizes the window.
+            setContext({
+              usage: event.usage,
+              model: stepModel(workflow.tasks[event.index]),
+            });
           }
           if (event.type === "step:retrospective" && isRawModeSupported) {
             interactiveRetrospective = true;
@@ -152,7 +185,7 @@ export function App({
         /* already finished */
       });
     };
-  }, [events, exit, isRawModeSupported]);
+  }, [events, exit, isRawModeSupported, workflow]);
 
   const { stdout } = useStdout();
 
@@ -161,7 +194,13 @@ export function App({
     updateCheck.then(setUpdateVersion);
   }, [updateCheck]);
 
-  const statusLine = useStatusLine(workflow, totalCostUsd, state.startTime);
+  // Sized by whichever invocation the gauge is describing: the step that
+  // reported the usage on screen, or — before any has — the running step.
+  const gaugeModel =
+    context?.model ?? stepModel(workflow.tasks[state.currentIndex]);
+  // Resolved once: the bar always occupies its row when enabled, so the
+  // layout below never reflows part-way through a run.
+  const [showStatusBar] = useState(() => statusLineEnabled());
 
   // Tick counter drives spinner animation and live elapsed time in TaskRow.
   // Stops incrementing once the workflow finishes to avoid unnecessary renders.
@@ -191,7 +230,7 @@ export function App({
     12 +
     (updateVersion ? 1 : 0) +
     (isInterjecting ? 1 : 0) +
-    (statusLine ? 1 : 0);
+    (showStatusBar ? 1 : 0);
 
   const taskRowsUsed = state.tasks.length;
 
@@ -228,7 +267,7 @@ export function App({
   const rowsBelowOutputPane =
     3 +
     (updateVersion ? 1 : 0) +
-    (statusLine ? 1 : 0) +
+    (showStatusBar ? 1 : 0) +
     (isInterjecting ? 1 : 0);
 
   const { outputRows, scrollOffset, resetScroll } = useOutputResize({
@@ -250,7 +289,7 @@ export function App({
   const showRetrospective = Boolean(state.retrospective);
   const retrospectiveMaxRows = Math.max(
     RETROSPECTIVE_MIN_ROWS,
-    terminalRows - 8 - (updateVersion ? 1 : 0) - (statusLine ? 1 : 0),
+    terminalRows - 8 - (updateVersion ? 1 : 0) - (showStatusBar ? 1 : 0),
   );
 
   const elapsed = formatHeaderElapsed(state.startTime, state.endTime);
@@ -426,7 +465,9 @@ export function App({
             v{updateVersion} available — run: executant update
           </Text>
         )}
-        {statusLine && <Text dimColor>{statusLine}</Text>}
+        {showStatusBar && (
+          <StatusBar usage={context?.usage} model={gaugeModel} />
+        )}
         <Text dimColor>
           {isInterjecting
             ? "typing interjection…"
