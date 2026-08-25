@@ -14,7 +14,7 @@
 import { z } from "zod";
 import { dump as dumpYaml } from "js-yaml";
 import { runAgentStructured } from "./tasks/agent.js";
-import { fillTemplate, loadPrompt } from "./lib/utils.js";
+import { fillTemplate, getErrorMessage, loadPrompt } from "./lib/utils.js";
 import type { ClaudeTask, Retrospective, Task, Workflow } from "./types.js";
 
 const RETROSPECTIVE_PROMPT = loadPrompt("step-retrospective");
@@ -164,7 +164,10 @@ export function buildRetrospectivePrompt(input: RetrospectiveInput): string {
  * so it can never mutate the project while the run is already failing.
  *
  * Returns null if the analysis itself fails: a broken retrospective must never
- * mask or replace the original step failure the user needs to see.
+ * mask or replace the original step failure the user needs to see. The
+ * failure reason is still logged to stderr (Ink's patched console surfaces it
+ * in the TUI) — silently discarding it left every "Analysis unavailable"
+ * message undiagnosable.
  *
  * The call is time-boxed. It sits between the step failing and the error being
  * rethrown, so an agent CLI that stalls (auth prompt, rate limit, dead network)
@@ -193,7 +196,12 @@ export async function generateRetrospective(
       input.task.name,
       await runAgentStructured(analysis, RetrospectiveSchema),
     );
-  } catch {
+  } catch (err) {
+    if (process.env["NODE_ENV"] !== "test") {
+      console.warn(
+        `[executant] retrospective analysis failed: ${getErrorMessage(err)}`,
+      );
+    }
     return null;
   }
 }

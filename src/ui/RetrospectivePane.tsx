@@ -7,7 +7,7 @@
 // letter). The pane owns keyboard input while it is interactive, so App
 // disables its own KeyboardHandler for the duration.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Retrospective } from "../types.js";
 import { theme } from "./theme.js";
@@ -148,20 +148,27 @@ export function RetrospectivePane({
   // Transient feedback for `c` — cleared on the next keypress so it never
   // goes stale while the user keeps interacting with the pane.
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  // Guards against a slow copyToClipboard() resolving after a later keypress
+  // already moved on — without it, a stale "Copied to clipboard" can resurface
+  // over whatever the user is doing now.
+  const copyRequestId = useRef(0);
 
   useInput(
     (input, key) => {
       if (input.toLowerCase() === "c") {
+        const requestId = ++copyRequestId.current;
         setCopyStatus(null);
-        copyToClipboard(formatRetrospectiveReport(retrospective)).then((ok) =>
+        copyToClipboard(formatRetrospectiveReport(retrospective)).then((ok) => {
+          if (copyRequestId.current !== requestId) return;
           setCopyStatus(
             ok
               ? "Copied to clipboard."
               : "Couldn't copy — no clipboard tool found (install xclip, wl-copy, or xsel).",
-          ),
-        );
+          );
+        });
         return;
       }
+      copyRequestId.current++;
       setCopyStatus(null);
       if (input.toLowerCase() === "o" && outputLines.length > 0) {
         setShowingOutput((v) => !v);

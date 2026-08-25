@@ -59,6 +59,16 @@ function installClipboardStub(succeed: boolean) {
   chmodSync(path, 0o755);
 }
 
+/** A clipboard tool that only exits (resolving copyToClipboard) after delayMs. */
+function installSlowClipboardStub(delayMs: number) {
+  const path = join(binDir, "wl-copy");
+  writeFileSync(
+    path,
+    `#!${process.execPath}\nprocess.stdin.resume();process.stdin.on("end",()=>setTimeout(()=>process.exit(0),${delayMs}));\n`,
+  );
+  chmodSync(path, 0o755);
+}
+
 const RETRO: Retrospective = {
   step: "check-dist",
   summary: "The step failed because dist/ was never created.",
@@ -80,16 +90,18 @@ const RETRO: Retrospective = {
 const settle = () => new Promise((r) => setTimeout(r, 60));
 
 /**
- * Polls until `frame()` matches `pattern` or 2s elapses. Spawning the
+ * Polls until `frame()` matches `pattern` or 8s elapses. Spawning the
  * clipboard stub is a real child process, so its completion time varies with
  * how busy the machine running the suite is — unlike the rest of this file,
- * a fixed settle() is too flaky here.
+ * a fixed settle() is too flaky here. 8s (rather than a tighter budget) is
+ * deliberate: under a fully-loaded test run (hundreds of concurrent worker
+ * processes), even a trivial spawn can take several real seconds.
  */
 async function waitForFrame(
   frame: () => string | undefined,
   pattern: RegExp,
 ): Promise<string> {
-  const deadline = Date.now() + 2000;
+  const deadline = Date.now() + 8000;
   let last = frame() ?? "";
   while (Date.now() < deadline) {
     last = frame() ?? "";
@@ -256,6 +268,19 @@ describe("RetrospectivePane keyboard", () => {
     await waitForFrame(lastFrame, /Copied to clipboard/);
     stdin.write("o");
     await settle();
+    assert.doesNotMatch(lastFrame() ?? "", /Copied to clipboard/);
+  });
+
+  test("a slow copy resolving after a later keypress does not resurrect the status", async () => {
+    installSlowClipboardStub(100);
+    const { stdin, lastFrame } = renderPane();
+    await settle();
+    stdin.write("c");
+    // Move on before the slow copy has resolved.
+    stdin.write("o");
+    // Outlive the stub's delay so its late .then() has a chance to fire,
+    // with the same load-tolerant margin as waitForFrame above.
+    await new Promise((r) => setTimeout(r, 3000));
     assert.doesNotMatch(lastFrame() ?? "", /Copied to clipboard/);
   });
 });

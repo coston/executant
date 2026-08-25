@@ -359,6 +359,19 @@ describe("runner retrospective", () => {
     assert.match(error.message, /exited with code 7/);
     assert.equal(retroEvents(events).length, 0);
   });
+
+  test("a broken analysis logs the reason instead of discarding it", async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
+    installMock("this is not JSON at all");
+    await collectEventsUntilError(failingWorkflow());
+    assert.ok(
+      warn.mock.calls.some((call) =>
+        String(call.arguments[0]).includes(
+          "[executant] retrospective analysis failed:",
+        ),
+      ),
+    );
+  });
 });
 
 // ----------------------------------------------------------------------------
