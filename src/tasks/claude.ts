@@ -135,7 +135,8 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
 
     const code = await waitForExit(proc);
     timeout.check();
-    if (code !== 0) throw buildExitError(code, plainLines);
+    if (code !== 0)
+      throw buildExitError(code, plainLines, parseState.resultError);
   } finally {
     timeout.cancel();
     process.off("SIGTERM", cleanup);
@@ -155,6 +156,12 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
  */
 interface ParseState {
   lastContextMessageId?: string;
+  /**
+   * Human-readable failure detail from an error `result` message. In
+   * stream-json mode this is the only place the CLI explains a failure —
+   * stderr stays silent — so runClaude folds it into the exit error.
+   */
+  resultError?: string;
 }
 
 function* parseClaudeMessage(
@@ -211,6 +218,17 @@ function* parseClaudeMessage(
     if (msg["structured_output"] != null) {
       yield { type: "output:structured", data: msg["structured_output"] };
     }
+    const subtype = getString(msg, "subtype");
+    if (msg["is_error"] === true || subtype?.startsWith("error")) {
+      const detail =
+        getString(msg, "result") ??
+        getString(msg, "error") ??
+        (isObject(msg["error"])
+          ? getString(msg["error"], "message")
+          : undefined);
+      const resultError = [subtype, detail].filter(Boolean).join(": ");
+      if (resultError) state.resultError = resultError;
+    }
   }
 }
 
@@ -235,8 +253,13 @@ function parseUsage(raw: unknown): TokenUsage | undefined {
 // Helpers
 // ----------------------------------------------------------------------------
 
-export function buildExitError(code: number, plainLines: string[]): Error {
-  const detail = plainLines.length > 0 ? `\n${plainLines.join("\n")}` : "";
+export function buildExitError(
+  code: number,
+  plainLines: string[],
+  resultError?: string,
+): Error {
+  const parts = [...(resultError ? [resultError] : []), ...plainLines];
+  const detail = parts.length > 0 ? `\n${parts.join("\n")}` : "";
   return new Error(`claude exited with code ${code}${detail}`);
 }
 

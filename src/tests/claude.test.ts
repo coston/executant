@@ -349,6 +349,101 @@ describe("buildExitError", () => {
     const err = buildExitError(137, []);
     assert.ok(err.message.includes("code 137"));
   });
+
+  test("includes the result error when there are no plain lines", () => {
+    const err = buildExitError(1, [], "error_during_execution: API error");
+    assert.equal(
+      err.message,
+      "claude exited with code 1\nerror_during_execution: API error",
+    );
+  });
+
+  test("puts the result error before plain lines", () => {
+    const err = buildExitError(1, ["stderr noise"], "error_max_turns");
+    assert.equal(
+      err.message,
+      "claude exited with code 1\nerror_max_turns\nstderr noise",
+    );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// error result reporting — the CLI's only failure detail in stream-json mode
+// ----------------------------------------------------------------------------
+
+describe("runClaude — error result reporting", () => {
+  let mockDir: string;
+  let originalPath: string;
+
+  beforeEach(() => {
+    originalPath = process.env["PATH"] ?? "";
+    mockDir = join(tmpdir(), `claude-error-test-${Date.now()}`);
+    mkdirSync(mockDir, { recursive: true });
+    process.env["PATH"] = `${mockDir}:${originalPath}`;
+  });
+
+  afterEach(() => {
+    process.env["PATH"] = originalPath;
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  function installFailingClaude(resultLine: object): void {
+    const script = join(mockDir, "claude");
+    writeFileSync(
+      script,
+      `#!/usr/bin/env bash\necho '${JSON.stringify(resultLine)}'\nexit 1\n`,
+      "utf8",
+    );
+    chmodSync(script, 0o755);
+  }
+
+  async function runToError(): Promise<Error> {
+    const task = { type: "claude" as const, name: "t", prompt: "do it" };
+    try {
+      for await (const _ of runClaude(task)) {
+        /* drain */
+      }
+    } catch (err) {
+      assert.ok(err instanceof Error);
+      return err;
+    }
+    assert.fail("expected runClaude to throw");
+  }
+
+  test("exit error carries the error result's subtype and text", async () => {
+    installFailingClaude({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "Overloaded: retry the request later",
+    });
+    const err = await runToError();
+    assert.equal(
+      err.message,
+      "claude exited with code 1\nerror_during_execution: Overloaded: retry the request later",
+    );
+  });
+
+  test("exit error carries the subtype alone when the result has no text", async () => {
+    installFailingClaude({
+      type: "result",
+      subtype: "error_max_turns",
+      is_error: true,
+    });
+    const err = await runToError();
+    assert.equal(err.message, "claude exited with code 1\nerror_max_turns");
+  });
+
+  test("a success result contributes nothing to the exit error", async () => {
+    installFailingClaude({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "all done",
+    });
+    const err = await runToError();
+    assert.equal(err.message, "claude exited with code 1");
+  });
 });
 
 // ----------------------------------------------------------------------------
