@@ -132,4 +132,40 @@ describe("renderHtmlReport", () => {
     const html = renderHtmlReport([], "all");
     assert.match(html, /No history records yet/);
   });
+
+  test("renders a 10-bin score-distribution strip per eval card", () => {
+    const html = renderHtmlReport(
+      [
+        makeEntry({
+          modelLabel: "claude/haiku",
+          model: "haiku",
+          pct: 1,
+          passCount: 6,
+        }),
+        makeEntry(),
+      ],
+      "all",
+    );
+    assert.equal(html.match(/class="hbar/g)?.length, 10);
+    // pct 4/6 ≈ 0.667 lands in the 60–70% bin; pct 1 in the 90–100% bin.
+    assert.match(html, /title="60–70%: 1 model\(s\)"/);
+    assert.match(html, /title="90–100%: 1 model\(s\)"/);
+    assert.match(html, /title="0–10%: 0 model\(s\)"/);
+  });
+
+  test("histogram bins on the latest run per model, not every record", () => {
+    const html = renderHtmlReport(
+      [
+        makeEntry({
+          runAt: "2026-01-01T00:00:00.000Z",
+          pct: 0.1,
+          passCount: 1,
+        }),
+        makeEntry({ runAt: "2026-01-02T00:00:00.000Z", pct: 1, passCount: 6 }),
+      ],
+      "all",
+    );
+    assert.match(html, /title="90–100%: 1 model\(s\)"/);
+    assert.match(html, /title="10–20%: 0 model\(s\)"/);
+  });
 });
