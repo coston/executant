@@ -362,7 +362,8 @@ describe("runPrompt", () => {
     writeFileSync(templatePath, "Process: {{INPUT}}\n", "utf8");
 
     const result = await runPrompt(templatePath, { INPUT: "test data" });
-    assert.equal(result.trim(), "the output text");
+    assert.equal(result.output.trim(), "the output text");
+    assert.equal(result.costUsd, 0.001);
   });
 
   test("strips prompt header before substitution", async () => {
@@ -699,23 +700,26 @@ test_cases:
     writeFileSync(counterFile, "0", "utf8");
 
     // Responses (in order of claude invocation):
-    // Call 0: runPrompt (iter 0 scoring) → text output
-    // Call 1: judgeOutput (iter 0 scoring) → pass:true (score 1/1, all pass → no refine loop enters)
+    // Call 0: buildProvenance's "claude --version" lookup (plain text, unparsed)
+    // Call 1: runPrompt (iter 0 scoring) → text output
+    // Call 2: judgeOutput (iter 0 scoring) → pass:true (score 1/1, all pass → no refine loop enters)
     // Since iter 0 all pass, the refine loop is skipped entirely.
     //
     // We need the initial run to FAIL so refinement starts.
-    // Call 0: runPrompt → text output
-    // Call 1: judgeOutput → pass:false (score 0/1, enters refine loop)
-    // Call 2: refinePrompt → {template: "Refined template v1"}  (saves to disk)
-    // Call 3: runPrompt (iter 1 re-score) → text output
-    // Call 4: judgeOutput (iter 1 re-score) → pass:true (score 1/1, new best)
-    // Call 5: refinePrompt → {template: "Refined template v2"}  (saves to disk, but iter 2 regresses)
-    // Call 6: runPrompt (iter 2 re-score) → text output
-    // Call 7: judgeOutput (iter 2 re-score) → pass:false (score 0/1, regression)
+    // Call 1: runPrompt → text output
+    // Call 2: judgeOutput → pass:false (score 0/1, enters refine loop)
+    // Call 3: refinePrompt → {template: "Refined template v1"}  (saves to disk)
+    // Call 4: runPrompt (iter 1 re-score) → text output
+    // Call 5: judgeOutput (iter 1 re-score) → pass:true (score 1/1, new best)
+    // Call 6: refinePrompt → {template: "Refined template v2"}  (saves to disk, but iter 2 regresses)
+    // Call 7: runPrompt (iter 2 re-score) → text output
+    // Call 8: judgeOutput (iter 2 re-score) → pass:false (score 0/1, regression)
     // → max-iter=2 exhausted, best was iter 1 → restore "# Header\n\nRefined template v1\n"
 
     const responses = [
-      // Call 0: runPrompt initial
+      // Call 0: buildProvenance's "claude --version" lookup — plain text, never JSON-parsed
+      "2.0.0-mock (Mock Claude)\n",
+      // Call 1: runPrompt initial
       JSON.stringify({
         type: "assistant",
         message: { content: [{ type: "text", text: "initial output" }] },
@@ -723,7 +727,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 1: judgeOutput initial → FAIL
+      // Call 2: judgeOutput initial → FAIL
       JSON.stringify({
         type: "assistant",
         message: {
@@ -738,7 +742,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 2: refinePrompt → template v1
+      // Call 3: refinePrompt → template v1
       JSON.stringify({
         type: "assistant",
         message: {
@@ -753,7 +757,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 3: runPrompt iter 1 re-score
+      // Call 4: runPrompt iter 1 re-score
       JSON.stringify({
         type: "assistant",
         message: { content: [{ type: "text", text: "iter1 output" }] },
@@ -761,7 +765,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 4: judgeOutput iter 1 → PASS (new best: 1/1)
+      // Call 5: judgeOutput iter 1 → PASS (new best: 1/1)
       JSON.stringify({
         type: "assistant",
         message: {
@@ -773,7 +777,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 5: refinePrompt → template v2 (but iter 2 will regress)
+      // Call 6: refinePrompt → template v2 (but iter 2 will regress)
       JSON.stringify({
         type: "assistant",
         message: {
@@ -788,7 +792,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 6: runPrompt iter 2 re-score
+      // Call 7: runPrompt iter 2 re-score
       JSON.stringify({
         type: "assistant",
         message: { content: [{ type: "text", text: "iter2 output" }] },
@@ -796,7 +800,7 @@ test_cases:
         "\n" +
         JSON.stringify({ type: "result", total_cost_usd: 0 }) +
         "\n",
-      // Call 7: judgeOutput iter 2 → FAIL (regression: 0/1)
+      // Call 8: judgeOutput iter 2 → FAIL (regression: 0/1)
       JSON.stringify({
         type: "assistant",
         message: {

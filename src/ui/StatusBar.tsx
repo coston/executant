@@ -15,7 +15,9 @@ import { Box, Text } from "ink";
 import {
   buildGauge,
   contextWindowSize,
+  fitRepoLabel,
   readRepoInfo,
+  GAUGE_WIDTH,
   type GaugeLevel,
   type RepoInfo,
 } from "../lib/statusline.js";
@@ -27,14 +29,21 @@ const LEVEL_COLOR: Record<GaugeLevel, string> = {
   high: theme.error,
 };
 
+// Everything after the repo/branch segment: 2-space gap + the gauge itself +
+// " NNN%" (up to 5 chars) + " NNN.Nk/NNNk" (up to 13 chars, generous for a
+// 7-digit token count against a "1M" window).
+const GAUGE_SEGMENT_WIDTH = 2 + GAUGE_WIDTH + 5 + 13;
+
 interface Props {
   /** Context tokens the running session occupies; 0 before its first turn. */
   tokens: number;
   /** The session's model — sizes the gauge (200k, or 1M for `[1m]`). */
   model: string;
+  /** Terminal width, so a long repo name/branch shrinks instead of wrapping onto a second line. */
+  columns: number;
 }
 
-export function StatusBar({ tokens, model }: Props) {
+export function StatusBar({ tokens, model, columns }: Props) {
   const [repo, setRepo] = useState<RepoInfo | undefined>(undefined);
 
   useEffect(() => {
@@ -51,14 +60,15 @@ export function StatusBar({ tokens, model }: Props) {
 
   const gauge = buildGauge(tokens, contextWindowSize(model));
   const level = LEVEL_COLOR[gauge.level];
+  const fitted = repo && fitRepoLabel(repo, columns - GAUGE_SEGMENT_WIDTH);
 
   return (
     <Box>
-      {repo && <Text color={theme.primary}> {repo.name}</Text>}
-      {repo?.branch && (
+      {fitted && <Text color={theme.primary}> {fitted.name}</Text>}
+      {fitted?.branch && (
         <Text color={theme.primaryLight}>
           {"   "}
-          {repo.branch}
+          {fitted.branch}
         </Text>
       )}
       <Text>{"  "}</Text>

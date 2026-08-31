@@ -29,6 +29,8 @@ import {
   printDiff,
 } from "./report.js";
 import { toJson, toCsv, modelLabel } from "./export.js";
+import { buildProvenance } from "./provenance.js";
+import { appendHistory } from "./history.js";
 import type {
   EvalArgs,
   EvalRun,
@@ -37,6 +39,7 @@ import type {
   FailureContext,
   ModelTarget,
   ModelEvalRun,
+  RunProvenance,
   TestResult,
 } from "./types.js";
 
@@ -101,6 +104,9 @@ export function loadExistingResults(
     const pass = cells[col["pass"]] === "true";
     const reason = cells[col["reason"]] ?? "";
     const durationMs = parseInt(cells[col["duration_ms"]] ?? "0", 10);
+    const costCell = cells[col["cost_usd"]];
+    const costUsd =
+      costCell !== undefined && costCell !== "" ? Number(costCell) : undefined;
 
     if (!byModel.has(label)) byModel.set(label, new Map());
     const byCase = byModel.get(label)!;
@@ -113,6 +119,7 @@ export function loadExistingResults(
         passCount: 0,
         failCount: 0,
         durationMs,
+        costUsd,
       });
     }
     const result = byCase.get(caseId)!;
@@ -198,6 +205,7 @@ export function parseArgs(rawArgs: string[]): EvalArgs {
   let outputJson: string | undefined;
   let outputCsv: string | undefined;
   let caseFilter: string | undefined;
+  let historyPath: string | undefined;
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]!;
@@ -215,6 +223,8 @@ export function parseArgs(rawArgs: string[]): EvalArgs {
       outputCsv = rawArgs[++i];
     } else if (arg === "--cases" && rawArgs[i + 1]) {
       caseFilter = rawArgs[++i];
+    } else if (arg === "--history" && rawArgs[i + 1]) {
+      historyPath = rawArgs[++i];
     } else if (!arg.startsWith("-")) {
       evalFiles.push(arg);
     }
@@ -232,6 +242,7 @@ export function parseArgs(rawArgs: string[]): EvalArgs {
         "  --cases <filter>      Run a subset of cases: IDs or index ranges, e.g. simple,1-3",
         "  --output-json <path>  Write comparison JSON to file",
         "  --output-csv <path>   Write comparison CSV to file (supports resume)",
+        "  --history <path>      Append a JSONL history record for trend tracking (see `npm run eval:trend`)",
       ].join("\n"),
     );
     process.exit(0);
@@ -251,6 +262,7 @@ export function parseArgs(rawArgs: string[]): EvalArgs {
     models,
     outputJson,
     outputCsv,
+    historyPath,
   };
 }
 
@@ -281,8 +293,9 @@ async function runEval(
     process.stdout.write(`  running ${tc.id}…`);
     const start = performance.now();
     let output: string;
+    let costUsd: number | undefined;
     try {
-      output = await runPrompt(path, tc.vars, model);
+      ({ output, costUsd } = await runPrompt(path, tc.vars, model));
     } catch (err) {
       const durationMs = Math.round(performance.now() - start);
       const msg = `run error: ${err instanceof Error ? err.message : String(err)}`;
@@ -313,12 +326,18 @@ async function runEval(
       passCount,
       failCount,
       durationMs,
+      costUsd,
     });
     process.stdout.write(` ${passCount}/${criteria.length}\n`);
   }
 
   const totalPass = results.reduce((s, r) => s + r.passCount, 0);
   const totalCriteria = results.reduce((s, r) => s + r.criteria.length, 0);
+  const costs = results
+    .map((r) => r.costUsd)
+    .filter((c): c is number => typeof c === "number");
+  const totalCostUsd =
+    costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : undefined;
 
   return {
     evalName: evalFile.name,
@@ -326,6 +345,7 @@ async function runEval(
     results,
     totalPass,
     totalCriteria,
+    totalCostUsd,
   };
 }
 
@@ -380,6 +400,7 @@ function buildComparisonTable(
 async function runMultiModelEval(
   evalFile: ReturnType<typeof loadEvalFile>,
   models: ModelTarget[],
+  provenance: RunProvenance,
   existingCsv?: string,
   caseFilter?: string,
 ): Promise<EvalComparison> {
@@ -405,6 +426,7 @@ async function runMultiModelEval(
     models,
     runs,
     comparisonTable: buildComparisonTable(runs),
+    provenance,
   };
 }
 
@@ -463,6 +485,8 @@ async function runEvalFile(
       ? deriveOutputPath(args.outputJson, evalFile.name)
       : args.outputJson;
 
+  const provenance = buildProvenance(evalFile);
+
   // Multi-model comparison mode
   if (args.models.length > 1) {
     if (args.refine) {
@@ -473,6 +497,7 @@ async function runEvalFile(
     const comparison = await runMultiModelEval(
       evalFile,
       args.models,
+      provenance,
       outputCsv,
       args.caseFilter,
     );
@@ -480,6 +505,7 @@ async function runEvalFile(
 
     if (outputJson) writeOutputFile(outputJson, toJson(comparison));
     if (outputCsv) writeOutputFile(outputCsv, toCsv(comparison));
+    if (args.historyPath) appendHistory(comparison, args.historyPath);
     return;
   }
 
@@ -497,7 +523,7 @@ async function runEvalFile(
   printRun(run);
 
   // Write output files (wraps single-model run in a minimal comparison)
-  if (outputJson || outputCsv) {
+  if (outputJson || outputCsv || args.historyPath) {
     const model = singleModel ?? {
       provider: "claude" as const,
       model: "sonnet",
@@ -508,9 +534,11 @@ async function runEvalFile(
       models: [model],
       runs: [{ ...run, model }],
       comparisonTable: buildComparisonTable([{ ...run, model }]),
+      provenance,
     };
     if (outputJson) writeOutputFile(outputJson, toJson(comparison));
     if (outputCsv) writeOutputFile(outputCsv, toCsv(comparison));
+    if (args.historyPath) appendHistory(comparison, args.historyPath);
   }
 
   if (!args.refine || run.totalPass === run.totalCriteria) return;

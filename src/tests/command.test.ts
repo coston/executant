@@ -5,6 +5,9 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { runCommand } from "../tasks/command.js";
 import type {
@@ -131,6 +134,38 @@ describe("runCommand — timeout_seconds", () => {
     );
     assert.ok(error.message.includes("slow"));
     assert.equal((error as TimeoutError).exitCode, 3);
+  });
+
+  test("kills the whole process group on timeout, not just the sh wrapper", async () => {
+    // Regression: `sh -c "<command>"` forks a real child for the command
+    // itself on shells like dash whenever it isn't the single tail-callable
+    // command in the script. Killing only the `sh` PID used to leave that
+    // child (here, `sleep`) running and holding stdout open, so the reader
+    // never saw EOF and the step hung until the outer test-runner timeout
+    // rather than throwing TimeoutError.
+    const pidFile = join(
+      tmpdir(),
+      `executant-cmd-timeout-test-${process.pid}-${Date.now()}.pid`,
+    );
+    const task: CommandTask = {
+      type: "command",
+      name: "nested-sleep",
+      command: `sleep 60 & echo $! > ${pidFile}; wait`,
+      timeoutSeconds: 0.1,
+    };
+    try {
+      const { error } = await collectEventsExpectingError(task);
+      assert.ok(error instanceof TimeoutError);
+
+      const grandchildPid = Number(readFileSync(pidFile, "utf8").trim());
+      assert.throws(
+        () => process.kill(grandchildPid, 0),
+        /ESRCH/,
+        "the sleep grandchild should have been killed, not left orphaned",
+      );
+    } finally {
+      rmSync(pidFile, { force: true });
+    }
   });
 
   test("does not throw TimeoutError when command completes before timeout", async () => {

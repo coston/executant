@@ -1,6 +1,8 @@
 import type { EvalComparison, EvalRun, TestResult } from "./types.js";
+import type { TrendGroup } from "./history.js";
 import { modelLabel } from "./export.js";
 import { theme } from "../ui/theme.js";
+import { formatDuration } from "../lib/utils.js";
 
 const USE_COLOR = Boolean(process.stdout.isTTY) && !process.env["NO_COLOR"];
 
@@ -158,4 +160,41 @@ export function printComparison(comparison: EvalComparison): void {
     return colorFn(score).padEnd(colWidth + (USE_COLOR ? 20 : 0));
   });
   console.log(`  ${"TOTAL".padEnd(caseColWidth)}  ${totalCells.join("")}\n`);
+}
+
+/**
+ * Prints time-series trend lines for `npm run eval:trend` — one section per
+ * eval+model group, oldest run first, with a marker row wherever the judge
+ * model/version, judge prompt, or eval spec changed since the previous run
+ * (so score jumps caused by a regime change read as a regime change, not a
+ * mysterious improvement or regression).
+ */
+export function printTrends(groups: TrendGroup[]): void {
+  for (const group of groups) {
+    console.log(
+      `\n${accent(group.evalName)} — ${dim(group.modelLabel)} (${group.points.length} run(s))\n`,
+    );
+    for (const point of group.points) {
+      if (point.regimeChange) {
+        console.log(
+          warning(
+            "  ─── regime change: judge/prompt/eval fingerprint differs from previous run ───",
+          ),
+        );
+      }
+      const pctInt = Math.round(point.pct * 100);
+      const colorFn =
+        point.pct === 1 ? pass : point.pct >= 0.5 ? warning : fail;
+      const score = colorFn(
+        `${point.passCount}/${point.totalCriteria}  ${pctInt}%`,
+      );
+      const cost =
+        point.costUsd !== undefined ? `$${point.costUsd.toFixed(4)}` : "n/a";
+      const sha = point.gitSha ? point.gitSha.slice(0, 7) : "unknown";
+      console.log(
+        `  ${dim(point.runAt)}  ${accent(sha)}  ${score}  ${dim(cost)}  ${dim(formatDuration(point.durationMs))}`,
+      );
+    }
+  }
+  console.log();
 }

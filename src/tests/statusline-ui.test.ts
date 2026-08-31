@@ -96,12 +96,16 @@ describe("App status bar", () => {
   });
 
   test("names the repo and branch it is running in", async () => {
-    // The suite runs inside executant's own checkout.
+    // Asserts a repo-name/branch segment renders before the gauge, without
+    // hardcoding either value — the checkout directory name and branch vary
+    // by environment (e.g. a CI runner or sandboxed workspace won't
+    // necessarily be named after the repo), and a long value legitimately
+    // shrinks to fit rather than appearing verbatim.
     await withApp(RUNNING_EVENTS, async ({ lastFrame }) => {
-      const frame = await waitForFrame(lastFrame, /executant\s+\S+\s+━{10}/, {
+      const frame = await waitForFrame(lastFrame, /\S+\s+\S+\s+━{10}/, {
         describe: "the repo and branch segment",
       });
-      assert.match(frame, /executant\s+\S+\s+━{10}/);
+      assert.match(frame, /\S+\s+\S+\s+━{10}/);
     });
   });
 

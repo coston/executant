@@ -22,12 +22,13 @@
     "test": "env -u NODE_TEST_CONTEXT -u EXECUTANT_PROVIDER -u EXECUTANT_MODEL -u EXECUTANT_AGENT -u EXECUTANT_REPORT_SUGGESTION -u OTEL_EXPORTER_OTLP_ENDPOINT -u OTEL_EXPORTER_OTLP_TRACES_ENDPOINT -u OTEL_EXPORTER_OTLP_METRICS_ENDPOINT -u TRACEPARENT EXECUTANT_RETROSPECTIVE=0 EXECUTANT_STATUSLINE=0 node --import tsx/esm --test --test-timeout=60000 src/tests/*.test.ts",
     "eval": "tsx src/eval/index.ts",
     "eval:workflow": "tsx src/eval/workflow-index.ts",
+    "eval:trend": "tsx src/eval/trend-index.ts",
     "setup": "tsx src/setup.ts",
     "models:download": "tsx src/native-models.ts",
     "models:start": "tsx src/model-server.ts start",
     "models:stop": "tsx src/model-server.ts stop",
     "models:status": "tsx src/model-server.ts status",
-    "eval:compare": "for f in evals/*.eval.yaml; do npm run eval -- --models claude/opus,claude/sonnet,claude/haiku,opencode/llama-qwen7b/qwen2.5-coder-7b,opencode/llama-qwen14b/qwen2.5-coder-14b,opencode/llama-llama8b/llama-3.1-8b --output-csv \"results/$(basename $f .eval.yaml).csv\" \"$f\"; done && npm run eval:compare:report",
+    "eval:compare": "for f in evals/*.eval.yaml; do npm run eval -- --models claude/opus,claude/sonnet,claude/haiku,opencode/llama-qwen7b/qwen2.5-coder-7b,opencode/llama-qwen14b/qwen2.5-coder-14b,opencode/llama-llama8b/llama-3.1-8b --output-csv \"results/$(basename $f .eval.yaml).csv\" --history results/eval-history.jsonl \"$f\"; done && npm run eval:compare:report",
     "eval:compare:report": "tsx src/eval/report-gen.ts",
     "lint": "eslint src",
     "knip": "knip"
@@ -116,7 +117,8 @@
       "src/model-server.ts",
       "src/eval/index.ts",
       "src/eval/workflow-index.ts",
-      "src/eval/report-gen.ts"
+      "src/eval/report-gen.ts",
+      "src/eval/trend-index.ts"
     ],
     "project": [
       "src/**/*.ts",

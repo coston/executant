@@ -477,7 +477,11 @@ export function App({
           </Text>
         )}
         {showStatusBar && (
-          <StatusBar tokens={context?.tokens ?? 0} model={gaugeModel} />
+          <StatusBar
+            tokens={context?.tokens ?? 0}
+            model={gaugeModel}
+            columns={stdout?.columns ?? 80}
+          />
         )}
         <Text dimColor>
           {isInterjecting

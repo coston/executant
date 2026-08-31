@@ -17,6 +17,7 @@ import {
   buildGauge,
   contextTokens,
   contextWindowSize,
+  fitRepoLabel,
   readRepoInfo,
   statusLineEnabled,
   DEFAULT_CONTEXT_WINDOW,
@@ -130,6 +131,51 @@ describe("buildGauge", () => {
     assert.equal(buildGauge(138_000, DEFAULT_CONTEXT_WINDOW).level, "ok");
     assert.equal(buildGauge(140_000, DEFAULT_CONTEXT_WINDOW).level, "warn");
     assert.equal(buildGauge(180_000, DEFAULT_CONTEXT_WINDOW).level, "high");
+  });
+});
+
+// ----------------------------------------------------------------------------
+// fitRepoLabel
+// ----------------------------------------------------------------------------
+
+describe("fitRepoLabel", () => {
+  test("returns the repo unchanged when it already fits", () => {
+    const repo = { name: "executant", branch: "main" };
+    assert.deepEqual(fitRepoLabel(repo, 40), repo);
+  });
+
+  test("truncates the name when there is no branch", () => {
+    assert.deepEqual(fitRepoLabel({ name: "executant" }, 5), {
+      name: "exec…",
+    });
+  });
+
+  test("shrinks a long branch while keeping a short name intact", () => {
+    const repo = {
+      name: "executant",
+      branch: "operator/4-enhancement-eval-history-observability-w",
+    };
+    const fitted = fitRepoLabel(repo, 30);
+    assert.equal(fitted.name, "executant");
+    assert.ok(fitted.branch!.length <= 30 - 9 - 3);
+    assert.ok(fitted.branch!.endsWith("…"));
+  });
+
+  test("shrinks both name and branch when both are long", () => {
+    const repo = {
+      name: "operator-job-9d914c84-85ec-410e-a24c-2ea43be588a0",
+      branch: "operator/4-enhancement-eval-history-observability-w",
+    };
+    const fitted = fitRepoLabel(repo, 40);
+    assert.ok(fitted.name.length + 3 + fitted.branch!.length <= 40);
+    assert.ok(fitted.name.endsWith("…"));
+    assert.ok(fitted.branch!.endsWith("…"));
+  });
+
+  test("never produces a negative-width slice", () => {
+    const repo = { name: "a-very-long-repo-name-indeed", branch: "main" };
+    const fitted = fitRepoLabel(repo, 1);
+    assert.equal(fitted.name, "…");
   });
 });
 
