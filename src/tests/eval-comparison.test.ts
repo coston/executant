@@ -20,6 +20,7 @@ import type {
   EvalComparison,
   ModelEvalRun,
   ModelTarget,
+  RunProvenance,
 } from "../eval/types.js";
 
 // ----------------------------------------------------------------------------
@@ -121,6 +122,20 @@ describe("parseArgs — models / output flags", () => {
     assert.equal(args.outputCsv, undefined);
   });
 
+  test("--history is parsed", () => {
+    const args = parseArgs([
+      "--history",
+      "results/eval-history.jsonl",
+      "evals/test.yaml",
+    ]);
+    assert.equal(args.historyPath, "results/eval-history.jsonl");
+  });
+
+  test("historyPath is undefined by default", () => {
+    const args = parseArgs(["evals/test.yaml"]);
+    assert.equal(args.historyPath, undefined);
+  });
+
   test("all new flags coexist with existing flags", () => {
     const args = parseArgs([
       "--refine",
@@ -174,6 +189,20 @@ describe("modelLabel", () => {
 // ----------------------------------------------------------------------------
 // Fixture helpers
 // ----------------------------------------------------------------------------
+
+function makeProvenance(): RunProvenance {
+  return {
+    runAt: "2026-01-01T00:00:00.000Z",
+    repo: "coston/executant",
+    gitSha: "abc123def456abc123def456abc123def456abc",
+    judgeProvider: "claude",
+    judgeModel: "sonnet",
+    judgeVersion: "2.1.251",
+    judgePromptHash: "hash-prompt-1",
+    evalHash: "hash-eval-1",
+    comparisonFingerprint: "hash-fingerprint-1",
+  };
+}
 
 function makeComparison(): EvalComparison {
   const claudeModel: ModelTarget = { provider: "claude", model: "sonnet" };
@@ -277,6 +306,7 @@ function makeComparison(): EvalComparison {
         },
       },
     ],
+    provenance: makeProvenance(),
   };
 }
 
@@ -322,7 +352,7 @@ describe("toCsv", () => {
     const lines = csv.trim().split("\n");
     assert.equal(
       lines[0],
-      "eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason,duration_ms",
+      "eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason,duration_ms,cost_usd,run_at,repo,git_sha,judge_provider,judge_model,judge_version,judge_prompt_hash,eval_hash,comparison_fingerprint",
     );
   });
 
@@ -355,6 +385,31 @@ describe("toCsv", () => {
     const csv = toCsv(c);
     assert.ok(csv.includes('"failed, ""badly"""'));
   });
+
+  test("rows carry the comparison's provenance columns", () => {
+    const c = makeComparison();
+    const csv = toCsv(c);
+    assert.ok(csv.includes('"coston/executant"'));
+    assert.ok(csv.includes('"abc123def456abc123def456abc123def456abc"'));
+    assert.ok(csv.includes('"hash-fingerprint-1"'));
+  });
+
+  test("cost_usd is empty when a result has no cost", () => {
+    const c = makeComparison();
+    const csv = toCsv(c);
+    const lines = csv.trim().split("\n");
+    // header: ...,duration_ms,cost_usd,run_at,...
+    const costIdx = lines[0]!.split(",").indexOf("cost_usd");
+    const firstDataRow = lines[1]!.split(",");
+    assert.equal(firstDataRow[costIdx], "");
+  });
+
+  test("cost_usd is serialized when a result reports a cost", () => {
+    const c = makeComparison();
+    c.runs[0]!.results[0]!.costUsd = 0.0123;
+    const csv = toCsv(c);
+    assert.ok(csv.includes(",0.0123,"));
+  });
 });
 
 // ----------------------------------------------------------------------------
@@ -369,6 +424,7 @@ describe("loadExistingResults", () => {
 
   test("round-trips toCsv output back into TestResult objects", async () => {
     const c = makeComparison();
+    c.runs[0]!.results[0]!.costUsd = 0.05;
     const csv = toCsv(c);
 
     // Write to a temp file
@@ -392,6 +448,7 @@ describe("loadExistingResults", () => {
       assert.equal(caseA.passCount, 1);
       assert.equal(caseA.failCount, 1);
       assert.equal(caseA.durationMs, 1200);
+      assert.equal(caseA.costUsd, 0.05);
 
       // Check opencode model case-b
       const ocResults = byModel.get("opencode/llama-qwen7b/qwen2.5-coder-7b");

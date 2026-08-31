@@ -18,16 +18,23 @@ export function substituteVars(
   );
 }
 
+/** Result of running a prompt template through a model. */
+interface PromptRunResult {
+  output: string;
+  /** API cost in USD, when the provider reports it (Claude only — OpenCode/local models don't). */
+  costUsd?: number;
+}
+
 /**
  * Runs a prompt template with substituted vars through the specified model (no tools).
  * Defaults to Claude/sonnet when no model target is provided.
- * Returns the full text output as a string.
+ * Returns the full text output plus cost, when the provider reports one.
  */
 export async function runPrompt(
   templatePath: string,
   vars: Record<string, string>,
   model?: ModelTarget,
-): Promise<string> {
+): Promise<PromptRunResult> {
   const template = stripPromptHeader(readFileSync(templatePath, "utf8"));
   const prompt = substituteVars(template, vars);
 
@@ -35,6 +42,7 @@ export async function runPrompt(
   const isOpenCode = provider === "opencode";
 
   const lines: string[] = [];
+  let costUsd: number | undefined;
   for await (const event of runAgent({
     type: "claude",
     name: `eval:${basename(templatePath, ".txt")}`,
@@ -52,7 +60,8 @@ export async function runPrompt(
     ...(!isOpenCode ? { appendSystemPrompt: METHODOLOGY } : {}),
   })) {
     if (event.type === "output:text") lines.push(event.text);
+    else if (event.type === "output:cost") costUsd = event.usd;
   }
 
-  return lines.join("");
+  return { output: lines.join(""), costUsd };
 }

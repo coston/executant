@@ -580,7 +580,7 @@ npm run eval -- \
 npm run eval -- evals/plan-decompose.eval.yaml evals/judge-evaluation.eval.yaml
 ```
 
-The `--output-csv` file is denormalized (one row per criterion judgment per model) — ready for pivot tables and charts. See [docs/eval-comparison.md](docs/eval-comparison.md) for column definitions and interpretation guidance.
+The `--output-csv` file is denormalized (one row per criterion judgment per model) — ready for pivot tables and charts. Every run also carries provenance (repo, git SHA, judge model/prompt, eval spec hash) and per-case cost. Pass `--history results/eval-history.jsonl` to accumulate a time series, then `npm run eval:trend` to view it, with markers wherever the judge/prompt/eval config changed. See [docs/eval-comparison.md](docs/eval-comparison.md) for column definitions and interpretation guidance.
 
 ### Workflow evals (end-to-end agentic testing)
 

@@ -125,6 +125,39 @@ export interface RepoInfo {
   branch?: string;
 }
 
+/** Truncates to fit, appending an ellipsis rather than silently cutting off. */
+function truncateText(s: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (s.length <= maxWidth) return s;
+  if (maxWidth === 1) return "…";
+  return s.slice(0, maxWidth - 1) + "…";
+}
+
+/** Width of the 3-space gap StatusBar renders between the repo name and branch. */
+const REPO_BRANCH_GAP = 3;
+
+/**
+ * Shrinks repo name and branch to fit within `maxWidth` combined, so a long
+ * branch name (or, in an unusually-named checkout, a long directory name)
+ * never wraps the status bar onto a second line. A short name keeps its full
+ * length and any width it doesn't use is handed to the branch.
+ */
+export function fitRepoLabel(repo: RepoInfo, maxWidth: number): RepoInfo {
+  if (!repo.branch) return { name: truncateText(repo.name, maxWidth) };
+
+  const available = maxWidth - REPO_BRANCH_GAP;
+  if (repo.name.length + repo.branch.length <= available) return repo;
+  if (available <= 0) return { name: truncateText(repo.name, maxWidth) };
+
+  const half = Math.floor(available / 2);
+  const nameWidth = Math.min(repo.name.length, half);
+  const branchWidth = Math.max(1, available - nameWidth);
+  return {
+    name: truncateText(repo.name, nameWidth),
+    branch: truncateText(repo.branch, branchWidth),
+  };
+}
+
 /** Runs a git subcommand in `cwd`, resolving undefined on any failure. */
 function runGit(
   args: string[],

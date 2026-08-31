@@ -159,19 +159,25 @@ Large text passed to Claude lives in `src/prompts/*.txt`. They use `{{PLACEHOLDE
 
 The eval system tests and iteratively refines the prompt templates in `src/prompts/`. It is not user-facing — run via `npm run eval` during development.
 
-**`src/eval/index.ts`** — CLI entry point. Parses `--refine`, `--max-iter`, `--models`, `--cases`, `--output-json`, and `--output-csv` flags. Accepts one or more eval file paths as positional arguments. `--cases` accepts comma-separated case IDs or 1-based index ranges (e.g. `simple,1-3`) to run a subset without editing YAML. Single-model mode: loads existing CSV results for resume (skips already-scored cases), runs remaining cases, optional refine loop. Multi-model mode (2+ models via `--models`): runs each model independently, builds an `EvalComparison`, prints a side-by-side table. When multiple files are passed, output paths are auto-suffixed per eval name.
+**`src/eval/index.ts`** — CLI entry point. Parses `--refine`, `--max-iter`, `--models`, `--cases`, `--output-json`, `--output-csv`, and `--history` flags. Accepts one or more eval file paths as positional arguments. `--cases` accepts comma-separated case IDs or 1-based index ranges (e.g. `simple,1-3`) to run a subset without editing YAML. Single-model mode: loads existing CSV results for resume (skips already-scored cases), runs remaining cases, optional refine loop. Multi-model mode (2+ models via `--models`): runs each model independently, builds an `EvalComparison`, prints a side-by-side table. When multiple files are passed, output paths are auto-suffixed per eval name. Every `EvalComparison` carries a `provenance` record (see `src/eval/provenance.ts`); `--history <path>` appends it (plus score/cost/duration) to a JSONL log for `npm run eval:trend`.
 
 **`src/eval/load.ts`** — Parses `evals/*.eval.yaml` via Zod. Resolves fixture paths (values in `vars` that end in `.md` / `.txt` are read and substituted with file contents).
 
-**`src/eval/runner.ts`** — `runPrompt(templatePath, vars, model?)`: substitutes `{{PLACEHOLDER}}` vars, runs the prompt through the specified model via `runAgent`, and returns the raw text output. Claude receives `METHODOLOGY` as `appendSystemPrompt`; OpenCode does not (flag not supported).
+**`src/eval/runner.ts`** — `runPrompt(templatePath, vars, model?)`: substitutes `{{PLACEHOLDER}}` vars, runs the prompt through the specified model via `runAgent`, and returns `{ output, costUsd? }` — the raw text output plus API cost when the provider reports one (Claude only). Claude receives `METHODOLOGY` as `appendSystemPrompt`; OpenCode does not (flag not supported).
 
 **`src/eval/judge.ts`** — `judgeOutput()`: takes a single output string and a criterion string, always uses Claude for judgment (the authoritative judge), and returns `{ pass: boolean, reason: string }`.
 
 **`src/eval/refine.ts`** — `refinePrompt()`: given the current template and a list of failures, calls Claude with the prompt-refiner prompt and returns a rewritten template.
 
-**`src/eval/report.ts`** — Terminal output: `printRun()` for single-model pass/fail table; `printComparison()` for multi-model side-by-side comparison table.
+**`src/eval/provenance.ts`** — `buildProvenance(evalFile)`: captures `RunProvenance` for a comparison run — `git rev-parse HEAD` / origin remote for repo+SHA, `claude --version` for judge version, and sha256 hashes (truncated to 12 hex chars) of the judge prompt template and the resolved eval spec. `comparisonFingerprint` combines judge provider+model+prompt hash+eval hash into the key that decides whether two runs are strictly comparable.
 
-**`src/eval/export.ts`** — `toJson(comparison)` and `toCsv(comparison)`: serialize `EvalComparison` for benchmark analysis. CSV is denormalized (one row per criterion judgment per model) with columns `eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason, duration_ms`.
+**`src/eval/history.ts`** — `appendHistory`/`loadHistory`: persist one JSONL record per model/eval per run (score, cost, duration, provenance) to a history log. `buildTrends(entries, mode)`: groups records by eval+model into time-ordered series; `"strict"` keeps only runs matching the group's latest `comparisonFingerprint`, `"all"` keeps every run and flags the points where the fingerprint changed (`regimeChange`).
+
+**`src/eval/trend-index.ts`** — `npm run eval:trend` CLI. Reads a history JSONL file, filters by `--eval`, builds trends in `--mode strict|all`, and renders them via `printTrends`.
+
+**`src/eval/report.ts`** — Terminal output: `printRun()` for single-model pass/fail table; `printComparison()` for multi-model side-by-side comparison table; `printTrends()` for the `eval:trend` time-series view, with a marker line at each regime-change point.
+
+**`src/eval/export.ts`** — `toJson(comparison)` and `toCsv(comparison)`: serialize `EvalComparison` for benchmark analysis. CSV is denormalized (one row per criterion judgment per model) with columns `eval_name, template_path, case_id, criterion, model_label, provider, model, pass, reason, duration_ms, cost_usd, run_at, repo, git_sha, judge_provider, judge_model, judge_version, judge_prompt_hash, eval_hash, comparison_fingerprint`.
 
 **`src/eval/prompts/`** — Eval-specific prompts (`criterion-judge.txt`, `prompt-refiner.txt`). Same `{{PLACEHOLDER}}` convention as `src/prompts/`.
 

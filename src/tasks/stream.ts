@@ -103,16 +103,23 @@ export function waitForExit(proc: ReturnType<typeof spawn>): Promise<number> {
  * Arms a kill-on-timeout guard for a child process.
  * Call check() after waitForExit() to throw TimeoutError if the timer fired.
  * Call cancel() in a finally block to disarm the timer on normal completion.
+ * `onTimeout`, when given, replaces the default `proc.kill()` — e.g. to kill
+ * a whole process group instead of just the immediate child (see command.ts).
  */
 export function startTimeout(
   proc: ReturnType<typeof spawn>,
   taskName: string,
   timeoutSeconds: number | undefined,
+  onTimeout?: () => void,
 ): { check: () => void; cancel: () => void } {
   if (timeoutSeconds == null) return { check: () => {}, cancel: () => {} };
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
+    if (onTimeout) {
+      onTimeout();
+      return;
+    }
     try {
       proc.kill();
     } catch {

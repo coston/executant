@@ -32,9 +32,32 @@ export async function* runCommand(task: CommandTask): AsyncGenerator<Event> {
   const proc = spawn("sh", ["-c", task.command], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...traceparentEnv() },
+    // `sh -c "<command>"` forks a real child for the command on shells like
+    // dash whenever it isn't the single tail-callable command in the script
+    // — killing just the sh PID then leaves that child running and holding
+    // stdout/stderr open, so a reader waiting on EOF never sees one (this is
+    // why a timed-out step used to hang instead of stopping). Detached makes
+    // proc.pid the leader of its own process group, so signalling -proc.pid
+    // reaches sh and every process it forked.
+    detached: true,
   });
 
-  const timeout = startTimeout(proc, task.name, task.timeoutSeconds);
+  // Detaching moves the child out of executant's own process group, so it no
+  // longer receives a terminal's Ctrl+C (SIGINT) for free the way a
+  // non-detached child would — these mirror that by killing the group
+  // explicitly whenever executant itself is being torn down.
+  const killGroup = (): void => {
+    try {
+      process.kill(-proc.pid!, "SIGTERM");
+    } catch {
+      /* already dead, or never got a pid */
+    }
+  };
+  process.once("SIGINT", killGroup);
+  process.once("SIGTERM", killGroup);
+  process.once("SIGHUP", killGroup);
+
+  const timeout = startTimeout(proc, task.name, task.timeoutSeconds, killGroup);
 
   try {
     for await (const line of mergeStreamsToLines(proc.stdout!, proc.stderr!)) {
@@ -53,5 +76,8 @@ export async function* runCommand(task: CommandTask): AsyncGenerator<Event> {
     }
   } finally {
     timeout.cancel();
+    process.off("SIGINT", killGroup);
+    process.off("SIGTERM", killGroup);
+    process.off("SIGHUP", killGroup);
   }
 }

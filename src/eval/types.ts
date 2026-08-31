@@ -24,6 +24,8 @@ export interface TestResult {
   passCount: number;
   failCount: number;
   durationMs: number;
+  /** API cost in USD for generating this case's output. Undefined when the provider doesn't report cost (e.g. OpenCode/local models). */
+  costUsd?: number;
 }
 
 export interface EvalRun {
@@ -32,6 +34,8 @@ export interface EvalRun {
   results: TestResult[];
   totalPass: number;
   totalCriteria: number;
+  /** Sum of results[].costUsd. Undefined when no result reported a cost. */
+  totalCostUsd?: number;
 }
 
 export interface FailureContext {
@@ -60,6 +64,25 @@ export interface ComparisonRow {
   scores: Record<string, { pass: number; total: number; pct: number }>;
 }
 
+/**
+ * Provenance metadata for a single eval-comparison run, captured so historical
+ * trends stay interpretable: which repo/commit was evaluated, which judge
+ * (model + prompt) scored it, and which eval spec was run. `comparisonFingerprint`
+ * is a stable hash of judge+prompt+eval config — two runs only belong on the
+ * same "strict comparable" trend line when it matches.
+ */
+export interface RunProvenance {
+  runAt: string; // ISO timestamp
+  repo?: string; // "owner/repo", when a GitHub remote is configured
+  gitSha?: string; // commit evaluated
+  judgeProvider: string;
+  judgeModel: string;
+  judgeVersion?: string; // judge CLI version, when it can be determined
+  judgePromptHash: string;
+  evalHash: string; // hash of the resolved eval spec (test cases + criteria)
+  comparisonFingerprint: string; // hash of judgeProvider+judgeModel+judgePromptHash+evalHash
+}
+
 /** Full multi-model comparison result for a single eval file. */
 export interface EvalComparison {
   evalName: string;
@@ -67,6 +90,7 @@ export interface EvalComparison {
   models: ModelTarget[];
   runs: ModelEvalRun[];
   comparisonTable: ComparisonRow[];
+  provenance: RunProvenance;
 }
 
 export interface EvalArgs {
@@ -82,6 +106,8 @@ export interface EvalArgs {
   outputJson?: string;
   /** File path to write comparison CSV to (optional). */
   outputCsv?: string;
+  /** File path to append a JSONL history record to, for trend tracking (optional). */
+  historyPath?: string;
 }
 
 // ---------------------------------------------------------------------------

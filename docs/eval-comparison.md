@@ -63,14 +63,47 @@ judge-evaluation — 2 models compared
   TOTAL                7/9   78%        8/9   89%
 ```
 
+## Run provenance and cost
+
+Every comparison run captures a `provenance` record so historical trends stay
+interpretable — a score change can come from the model under test, or from a
+change in the judge/eval regime itself, and the two should never be confused:
+
+| Field | Description |
+|---|---|
+| `runAt` | ISO timestamp of the run |
+| `repo` | `owner/repo`, parsed from the `origin` git remote (GitHub only) |
+| `gitSha` | Commit evaluated (`git rev-parse HEAD`) |
+| `judgeProvider` / `judgeModel` | The judge is always Claude — this records which model |
+| `judgeVersion` | `claude --version`, when it can be read |
+| `judgePromptHash` | Hash of `src/eval/prompts/criterion-judge.txt` |
+| `evalHash` | Hash of the resolved eval spec (test cases, vars, criteria) |
+| `comparisonFingerprint` | Hash of judge provider+model+prompt hash+eval hash — the strict-comparability key |
+
+Each case's API cost (USD, Claude only — OpenCode/local models don't report
+cost) is captured alongside its score and duration on every `TestResult`, and
+rolled up into `EvalRun.totalCostUsd`.
+
 ## JSON output format
 
-The `--output-json` file contains the full `EvalComparison` object:
+The `--output-json` file contains the full `EvalComparison` object, including
+`provenance`:
 
 ```json
 {
   "evalName": "judge-evaluation",
   "templatePath": "evals/judge-evaluation.eval.yaml",
+  "provenance": {
+    "runAt": "2026-08-31T12:00:00.000Z",
+    "repo": "coston/executant",
+    "gitSha": "4c7875ebb732337aba1737e357f2b7ba51f064e2",
+    "judgeProvider": "claude",
+    "judgeModel": "sonnet",
+    "judgeVersion": "2.1.251",
+    "judgePromptHash": "a1b2c3d4e5f6",
+    "evalHash": "f6e5d4c3b2a1",
+    "comparisonFingerprint": "0011223344aa"
+  },
   "models": [
     { "provider": "claude", "model": "sonnet" },
     { "provider": "opencode", "model": "llama-qwen7b/qwen2.5-coder-7b" }
@@ -123,13 +156,20 @@ The `--output-csv` file is **denormalized** — one row per criterion judgment p
 | `model` | Model name as passed to the CLI |
 | `pass` | `true` or `false` |
 | `reason` | Judge's reasoning for the pass/fail verdict |
+| `duration_ms` | Wall-clock time for the case |
+| `cost_usd` | API cost for the case (Claude only; empty for OpenCode/local models) |
+| `run_at`, `repo`, `git_sha`, `judge_provider`, `judge_model`, `judge_version`, `judge_prompt_hash`, `eval_hash`, `comparison_fingerprint` | Run provenance — see [Run provenance and cost](#run-provenance-and-cost) |
+
+Provenance and cost values repeat across every row of a run, the same way
+`duration_ms` already does — the CSV is denormalized for pivot tables, not
+optimized for storage.
 
 ### Example rows
 
 ```csv
-eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason
-"judge-evaluation","evals/judge-evaluation.eval.yaml","clear-pass","Output is valid JSON","claude/sonnet","claude","sonnet","true","Response is well-formed JSON"
-"judge-evaluation","evals/judge-evaluation.eval.yaml","clear-pass","Output is valid JSON","opencode/llama-qwen7b/qwen2.5-coder-7b","opencode","llama-qwen7b/qwen2.5-coder-7b","true","JSON parses without error"
+eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason,duration_ms,cost_usd,run_at,repo,git_sha,judge_provider,judge_model,judge_version,judge_prompt_hash,eval_hash,comparison_fingerprint
+"judge-evaluation","evals/judge-evaluation.eval.yaml","clear-pass","Output is valid JSON","claude/sonnet","claude","sonnet","true","Response is well-formed JSON",1820,0.0042,"2026-08-31T12:00:00.000Z","coston/executant","4c7875ebb732337aba1737e357f2b7ba51f064e2","claude","sonnet","2.1.251","a1b2c3d4e5f6","f6e5d4c3b2a1","0011223344aa"
+"judge-evaluation","evals/judge-evaluation.eval.yaml","clear-pass","Output is valid JSON","opencode/llama-qwen7b/qwen2.5-coder-7b","opencode","llama-qwen7b/qwen2.5-coder-7b","true","JSON parses without error",4310,"","2026-08-31T12:00:00.000Z","coston/executant","4c7875ebb732337aba1737e357f2b7ba51f064e2","claude","sonnet","2.1.251","a1b2c3d4e5f6","f6e5d4c3b2a1","0011223344aa"
 ```
 
 ### Pivot table recipe (Excel / Google Sheets)
@@ -141,6 +181,43 @@ eval_name,template_path,case_id,criterion,model_label,provider,model,pass,reason
 ### Chart recipe
 
 Plot `model_label` on X axis, `pct = pass / total_per_model` on Y axis, grouped by `eval_name`. This gives a quick overview of relative model performance across prompt templates.
+
+## Historical trend reporting
+
+Pass `--history <path>` to append one JSONL record per model/eval to a history
+log every time you run an eval — score, cost, duration, and the provenance
+above (this is what `eval:compare` does automatically, into
+`results/eval-history.jsonl`):
+
+```bash
+npm run eval -- --models claude/sonnet,claude/haiku \
+  --history results/eval-history.jsonl \
+  evals/judge-evaluation.eval.yaml
+```
+
+Then view the trend for each eval+model series:
+
+```bash
+npm run eval:trend                                  # all history, all runs
+npm run eval:trend -- --eval judge-evaluation        # filter to one eval
+npm run eval:trend -- --mode strict                  # only strictly-comparable runs
+npm run eval:trend -- --history results/other.jsonl  # a different history file
+```
+
+Two modes:
+
+- **`all`** (default) — every historical run is shown, so no data is ever lost. A
+  `─── regime change ───` marker line is printed wherever the judge model/version,
+  judge prompt, or eval spec (`comparison_fingerprint`) changed since the
+  previous run in that series, so a score jump reads as a regime change rather
+  than a mysterious improvement or regression.
+- **`strict`** — only runs whose `comparison_fingerprint` matches the most
+  recent run are shown. This is the safe default for "is the model actually
+  getting better/worse" questions, at the cost of dropping older runs made
+  under a different judge/prompt/eval config.
+
+Each trend point can always be traced back to its `run_at`, `git_sha`, and
+full judge config via the underlying history record.
 
 ## Adding a new model
 
