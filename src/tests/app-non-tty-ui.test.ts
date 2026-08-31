@@ -23,6 +23,7 @@
 // followed by workflow:complete) gets batched by React into too few commits
 // to ever land on the vulnerable "step running on a non-TTY" render at all.
 
+import "./force-non-ci.js"; // must evaluate before any ink import — see its header
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
