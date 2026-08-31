@@ -16,7 +16,7 @@ import { dirname } from "node:path";
 import { modelLabel } from "./export.js";
 import type { EvalComparison } from "./types.js";
 
-interface HistoryEntry {
+export interface HistoryEntry {
   runAt: string;
   repo?: string;
   gitSha?: string;

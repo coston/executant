@@ -202,6 +202,7 @@ npm run eval:trend                                  # all history, all runs
 npm run eval:trend -- --eval judge-evaluation        # filter to one eval
 npm run eval:trend -- --mode strict                  # only strictly-comparable runs
 npm run eval:trend -- --history results/other.jsonl  # a different history file
+npm run eval:trend -- --html results/bench.html      # also write a single-file HTML report
 ```
 
 Two modes:
@@ -215,6 +216,12 @@ Two modes:
   recent run are shown. This is the safe default for "is the model actually
   getting better/worse" questions, at the cost of dropping older runs made
   under a different judge/prompt/eval config.
+
+`--html <path>` additionally writes the same data as a single self-contained
+HTML file — leaderboards per eval (latest run per model) with expandable run
+histories and regime markers, themed with the `@coston/design-tokens`
+purple-dark theme the TUI uses. No build step and no external assets: the
+file works offline and can be attached to a PR or CI artifact as-is.
 
 Each trend point can always be traced back to its `run_at`, `git_sha`, and
 full judge config via the underlying history record. To keep that guarantee,
