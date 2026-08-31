@@ -12,8 +12,11 @@
 // and prints per eval+model time series with regime-change markers wherever
 // the judge model/version, judge prompt, or eval spec changed between runs.
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadHistory, buildTrends } from "./history.js";
+import { renderHtmlReport } from "./html-report.js";
 import { printTrends } from "./report.js";
 import type { TrendMode } from "./history.js";
 
@@ -23,6 +26,7 @@ interface TrendArgs {
   historyPath: string;
   mode: TrendMode;
   evalFilter?: string;
+  htmlPath?: string;
 }
 
 /**
@@ -43,6 +47,7 @@ export function parseTrendArgs(rawArgs: string[]): TrendArgs {
   let historyPath = DEFAULT_HISTORY_PATH;
   let mode: TrendMode = "all";
   let evalFilter: string | undefined;
+  let htmlPath: string | undefined;
 
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i]!;
@@ -56,6 +61,7 @@ export function parseTrendArgs(rawArgs: string[]): TrendArgs {
           "  --mode strict|all  strict: only runs comparable to the latest judge/prompt/eval config",
           "                     all (default): every run, with regime-change markers",
           "  --eval <name>      Filter to a single eval_name",
+          "  --html <path>      Also write the report as a single self-contained HTML file",
         ].join("\n"),
       );
       process.exit(0);
@@ -71,10 +77,12 @@ export function parseTrendArgs(rawArgs: string[]): TrendArgs {
       mode = value;
     } else if (arg === "--eval") {
       evalFilter = takeValue(rawArgs, ++i, "--eval");
+    } else if (arg === "--html") {
+      htmlPath = takeValue(rawArgs, ++i, "--html");
     }
   }
 
-  return { historyPath, mode, evalFilter };
+  return { historyPath, mode, evalFilter, htmlPath };
 }
 
 export async function main(): Promise<void> {
@@ -102,6 +110,12 @@ export async function main(): Promise<void> {
     `\nTrend report (${args.mode === "strict" ? "strict-comparable" : "all runs"} mode) — ${groups.length} eval+model series\n`,
   );
   printTrends(groups);
+
+  if (args.htmlPath) {
+    mkdirSync(dirname(args.htmlPath), { recursive: true });
+    writeFileSync(args.htmlPath, renderHtmlReport(entries, args.mode), "utf8");
+    console.log(`Wrote ${args.htmlPath}`);
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

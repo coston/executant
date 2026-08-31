@@ -39,6 +39,12 @@ describe("parseTrendArgs", () => {
     assert.throws(() => parseTrendArgs(["--mode", "bogus"]), /Invalid --mode/);
   });
 
+  test("--html captures the output path", () => {
+    const args = parseTrendArgs(["--html", "results/bench.html"]);
+    assert.equal(args.htmlPath, "results/bench.html");
+    assert.equal(parseTrendArgs([]).htmlPath, undefined);
+  });
+
   test("throws when a flag is missing its value instead of silently ignoring it", () => {
     // `--mode` silently falling back to "all" would hand the user
     // non-comparable data while they believe it's strict.

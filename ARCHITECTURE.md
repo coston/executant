@@ -173,7 +173,9 @@ The eval system tests and iteratively refines the prompt templates in `src/promp
 
 **`src/eval/history.ts`** — `appendHistory`/`loadHistory`: persist one JSONL record per model/eval per run (score, cost, duration, provenance) to a history log. `buildTrends(entries, mode)`: groups records by eval+model into time-ordered series; `"strict"` keeps only runs matching the group's latest `comparisonFingerprint`, `"all"` keeps every run and flags the points where the fingerprint changed (`regimeChange`).
 
-**`src/eval/trend-index.ts`** — `npm run eval:trend` CLI. Reads a history JSONL file, filters by `--eval`, builds trends in `--mode strict|all`, and renders them via `printTrends`.
+**`src/eval/trend-index.ts`** — `npm run eval:trend` CLI. Reads a history JSONL file, filters by `--eval`, builds trends in `--mode strict|all`, renders them via `printTrends`, and with `--html <path>` also writes the report as a single self-contained HTML file (`html-report.ts`).
+
+**`src/eval/html-report.ts`** — `renderHtmlReport(entries, mode)`: pure entries-in/HTML-out renderer for `--html`. One leaderboard card per eval (latest run per model, ranked) with expandable per-model run histories and regime-change markers, themed inline with the `@coston/design-tokens` purple-dark theme the TUI uses — no build step, script, or external asset.
 
 **`src/eval/report.ts`** — Terminal output: `printRun()` for single-model pass/fail table; `printComparison()` for multi-model side-by-side comparison table; `printTrends()` for the `eval:trend` time-series view, with a marker line at each regime-change point.
 
