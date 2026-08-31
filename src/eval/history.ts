@@ -74,13 +74,27 @@ export function appendHistory(
   appendFileSync(historyPath, lines, "utf8");
 }
 
-/** Reads all history records from a JSONL file. Returns [] if the file doesn't exist. */
+/**
+ * Reads all history records from a JSONL file. Returns [] if the file doesn't
+ * exist. A line that fails to parse (e.g. a half-written trailing line from an
+ * interrupted append) is skipped with a warning naming the file and line —
+ * one corrupt line must never make months of accumulated history unreadable.
+ */
 export function loadHistory(historyPath: string): HistoryEntry[] {
   if (!existsSync(historyPath)) return [];
   return readFileSync(historyPath, "utf8")
     .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as HistoryEntry);
+    .flatMap((line, i) => {
+      if (!line.trim()) return [];
+      try {
+        return [JSON.parse(line) as HistoryEntry];
+      } catch (err) {
+        process.stderr.write(
+          `[eval:trend] warning: skipping corrupt line ${i + 1} of ${historyPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return [];
+      }
+    });
 }
 
 export type TrendMode = "strict" | "all";
@@ -115,8 +129,11 @@ export function buildTrends(
   }
 
   const groups: TrendGroup[] = [];
-  for (const [key, groupEntries] of byGroup) {
-    const [evalName, label] = key.split("::") as [string, string];
+  for (const groupEntries of byGroup.values()) {
+    // Identity comes from the entries themselves, not from re-splitting the
+    // map key — a label that ever contained the delimiter would round-trip
+    // truncated.
+    const { evalName, modelLabel: label } = groupEntries[0]!;
     const sorted = [...groupEntries].sort((a, b) =>
       a.runAt.localeCompare(b.runAt),
     );

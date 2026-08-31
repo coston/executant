@@ -6,7 +6,7 @@
 
 import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ import {
   loadHistory,
   buildTrends,
 } from "../eval/history.js";
+import { recordHistory } from "../eval/index.js";
 import type { EvalComparison, RunProvenance } from "../eval/types.js";
 
 const _cleanupDirs: string[] = [];
@@ -141,6 +142,35 @@ describe("appendHistory / loadHistory", () => {
     const historyPath = join(dir, "nested", "dir", "history.jsonl");
     appendHistory(makeComparison(), historyPath);
     assert.equal(loadHistory(historyPath).length, 1);
+  });
+
+  test("recordHistory refuses to append when any result was resumed from a CSV", () => {
+    // A cached score was produced under the *previous* run's provenance;
+    // stamping it with today's runAt/gitSha/fingerprint fabricates a trend
+    // point that never happened.
+    const dir = tmpDir();
+    const historyPath = join(dir, "history.jsonl");
+
+    const cached = makeComparison();
+    cached.runs = [{ ...cached.runs[0]!, cachedCount: 1 }];
+    recordHistory(cached, historyPath);
+    assert.deepEqual(loadHistory(historyPath), []);
+
+    recordHistory(makeComparison(), historyPath);
+    assert.equal(loadHistory(historyPath).length, 1);
+  });
+
+  test("skips a corrupt line instead of losing the whole log", () => {
+    // A half-written trailing line is what an interrupted append leaves
+    // behind; it must cost one warning, not the entire history.
+    const dir = tmpDir();
+    const historyPath = join(dir, "history.jsonl");
+    appendHistory(makeComparison(), historyPath);
+    appendFileSync(historyPath, '{"runAt":"2026-01-02T00:0', "utf8");
+
+    const loaded = loadHistory(historyPath);
+    assert.equal(loaded.length, 1);
+    assert.equal(loaded[0]!.evalName, "sample-eval");
   });
 });
 

@@ -38,6 +38,17 @@ describe("parseTrendArgs", () => {
   test("throws on an invalid --mode value", () => {
     assert.throws(() => parseTrendArgs(["--mode", "bogus"]), /Invalid --mode/);
   });
+
+  test("throws when a flag is missing its value instead of silently ignoring it", () => {
+    // `--mode` silently falling back to "all" would hand the user
+    // non-comparable data while they believe it's strict.
+    assert.throws(() => parseTrendArgs(["--mode"]), /Missing value for --mode/);
+    assert.throws(
+      () => parseTrendArgs(["--history", "--mode", "strict"]),
+      /Missing value for --history/,
+    );
+    assert.throws(() => parseTrendArgs(["--eval"]), /Missing value for --eval/);
+  });
 });
 
 describe("printTrends", () => {

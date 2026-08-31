@@ -7,14 +7,19 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import {
   getGitSha,
   getRepoSlug,
   hashContent,
   getEvalHash,
+  getJudgePromptHash,
   computeComparisonFingerprint,
   buildProvenance,
 } from "../eval/provenance.js";
+import { stripPromptHeader } from "../lib/utils.js";
 import type { EvalFile } from "../eval/types.js";
 
 function makeEvalFile(overrides: Partial<EvalFile> = {}): EvalFile {
@@ -67,6 +72,18 @@ describe("getEvalHash", () => {
     assert.equal(getEvalHash(a), getEvalHash(b));
   });
 
+  test("is insensitive to var key ordering within a test case", () => {
+    const a = makeEvalFile({
+      placeholders: ["A", "B"],
+      testCases: [{ id: "case-1", vars: { A: "x", B: "y" }, criteria: ["C1"] }],
+    });
+    const b = makeEvalFile({
+      placeholders: ["A", "B"],
+      testCases: [{ id: "case-1", vars: { B: "y", A: "x" }, criteria: ["C1"] }],
+    });
+    assert.equal(getEvalHash(a), getEvalHash(b));
+  });
+
   test("changes when a criterion changes", () => {
     const a = makeEvalFile();
     const b = makeEvalFile({
@@ -94,26 +111,110 @@ describe("getEvalHash", () => {
 
 describe("computeComparisonFingerprint", () => {
   test("is deterministic", () => {
-    const fp1 = computeComparisonFingerprint("claude", "sonnet", "ph1", "eh1");
-    const fp2 = computeComparisonFingerprint("claude", "sonnet", "ph1", "eh1");
+    const fp1 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph1",
+      "eh1",
+    );
+    const fp2 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph1",
+      "eh1",
+    );
     assert.equal(fp1, fp2);
   });
 
   test("changes when the judge model changes", () => {
-    const fp1 = computeComparisonFingerprint("claude", "sonnet", "ph1", "eh1");
-    const fp2 = computeComparisonFingerprint("claude", "opus", "ph1", "eh1");
+    const fp1 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph1",
+      "eh1",
+    );
+    const fp2 = computeComparisonFingerprint(
+      "claude",
+      "opus",
+      "v1",
+      "ph1",
+      "eh1",
+    );
     assert.notEqual(fp1, fp2);
   });
 
   test("changes when the judge prompt hash changes", () => {
-    const fp1 = computeComparisonFingerprint("claude", "sonnet", "ph1", "eh1");
-    const fp2 = computeComparisonFingerprint("claude", "sonnet", "ph2", "eh1");
+    const fp1 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph1",
+      "eh1",
+    );
+    const fp2 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph2",
+      "eh1",
+    );
     assert.notEqual(fp1, fp2);
   });
 
+  test("changes when the judge CLI version changes — an upgrade is a regime change", () => {
+    const fp1 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "2.1.250",
+      "ph1",
+      "eh1",
+    );
+    const fp2 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "2.1.251",
+      "ph1",
+      "eh1",
+    );
+    assert.notEqual(fp1, fp2);
+  });
+
+  test("an unknown judge version is deterministic, not random", () => {
+    const fp1 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      undefined,
+      "ph1",
+      "eh1",
+    );
+    const fp2 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      undefined,
+      "ph1",
+      "eh1",
+    );
+    assert.equal(fp1, fp2);
+  });
+
   test("changes when the eval hash changes", () => {
-    const fp1 = computeComparisonFingerprint("claude", "sonnet", "ph1", "eh1");
-    const fp2 = computeComparisonFingerprint("claude", "sonnet", "ph1", "eh2");
+    const fp1 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph1",
+      "eh1",
+    );
+    const fp2 = computeComparisonFingerprint(
+      "claude",
+      "sonnet",
+      "v1",
+      "ph1",
+      "eh2",
+    );
     assert.notEqual(fp1, fp2);
   });
 });
@@ -127,6 +228,17 @@ describe("getGitSha / getRepoSlug", () => {
   test("getRepoSlug returns an owner/repo string or undefined", () => {
     const slug = getRepoSlug();
     assert.ok(slug === undefined || /^[^/]+\/[^/]+$/.test(slug));
+  });
+});
+
+describe("getJudgePromptHash", () => {
+  test("hashes the header-stripped prompt — what the judge actually sends", () => {
+    const raw = readFileSync(
+      join("src", "eval", "prompts", "criterion-judge.txt"),
+      "utf8",
+    );
+    assert.equal(getJudgePromptHash(), hashContent(stripPromptHeader(raw)));
+    assert.notEqual(getJudgePromptHash(), hashContent(raw));
   });
 });
 
@@ -146,6 +258,7 @@ describe("buildProvenance", () => {
     const recomputed = computeComparisonFingerprint(
       p.judgeProvider,
       p.judgeModel,
+      p.judgeVersion,
       p.judgePromptHash,
       p.evalHash,
     );

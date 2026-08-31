@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { runClaudeStructured } from "../tasks/claude.js";
 import { stripPromptHeader } from "../lib/utils.js";
+import { resolveJudgeModel } from "./provenance.js";
 import type { CriterionResult } from "./types.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,11 @@ export async function judgeOutput(
       type: "claude",
       name: "eval:criterion-judge",
       prompt,
+      // Pinned so the judge that runs is the judge provenance records —
+      // without this the CLI falls back to the user's configured default
+      // model, and two machines with different defaults would share a
+      // "strictly comparable" fingerprint for genuinely different judges.
+      model: resolveJudgeModel(),
       allowedTools: [],
       permissionMode: "default",
     },

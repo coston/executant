@@ -25,6 +25,20 @@ interface TrendArgs {
   evalFilter?: string;
 }
 
+/**
+ * Returns the value at `i`, or throws when the flag has none (end of args, or
+ * the next token is another flag). A silently-ignored `--mode strict` would
+ * hand the user non-comparable data while they believe it's strict — the one
+ * silent failure this tool exists to prevent.
+ */
+function takeValue(rawArgs: string[], i: number, flag: string): string {
+  const value = rawArgs[i];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
+}
+
 export function parseTrendArgs(rawArgs: string[]): TrendArgs {
   let historyPath = DEFAULT_HISTORY_PATH;
   let mode: TrendMode = "all";
@@ -45,18 +59,18 @@ export function parseTrendArgs(rawArgs: string[]): TrendArgs {
         ].join("\n"),
       );
       process.exit(0);
-    } else if (arg === "--history" && rawArgs[i + 1]) {
-      historyPath = rawArgs[++i]!;
-    } else if (arg === "--mode" && rawArgs[i + 1]) {
-      const value = rawArgs[++i]!;
+    } else if (arg === "--history") {
+      historyPath = takeValue(rawArgs, ++i, "--history");
+    } else if (arg === "--mode") {
+      const value = takeValue(rawArgs, ++i, "--mode");
       if (value !== "strict" && value !== "all") {
         throw new Error(
           `Invalid --mode "${value}": expected "strict" or "all"`,
         );
       }
       mode = value;
-    } else if (arg === "--eval" && rawArgs[i + 1]) {
-      evalFilter = rawArgs[++i];
+    } else if (arg === "--eval") {
+      evalFilter = takeValue(rawArgs, ++i, "--eval");
     }
   }
 
@@ -65,13 +79,20 @@ export function parseTrendArgs(rawArgs: string[]): TrendArgs {
 
 export async function main(): Promise<void> {
   const args = parseTrendArgs(process.argv.slice(2));
-  const entries = loadHistory(args.historyPath).filter(
+  const allEntries = loadHistory(args.historyPath);
+  const entries = allEntries.filter(
     (e) => !args.evalFilter || e.evalName === args.evalFilter,
   );
 
-  if (entries.length === 0) {
+  if (allEntries.length === 0) {
     console.log(
       `No history found at ${args.historyPath}. Run evals with "--history ${args.historyPath}" to start tracking trends.`,
+    );
+    return;
+  }
+  if (entries.length === 0) {
+    console.log(
+      `No records match --eval "${args.evalFilter}" in ${args.historyPath} (${allEntries.length} record(s) for: ${[...new Set(allEntries.map((e) => e.evalName))].join(", ")}).`,
     );
     return;
   }
