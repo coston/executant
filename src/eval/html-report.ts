@@ -106,6 +106,35 @@ function historyRows(group: TrendGroup): string {
     .join("\n");
 }
 
+/**
+ * A 10-bin score-distribution strip over each model's latest run — shows at a
+ * glance whether the eval separates models or everyone clusters at a ceiling.
+ * Pure CSS bars (no script) to keep the file self-contained; per-bin counts
+ * live in title tooltips and every score is also in the table, so the strip
+ * is a summary, never the sole carrier.
+ */
+function scoreHistogram(groups: TrendGroup[]): string {
+  const latest = groups.map((g) => g.points.at(-1)!.pct);
+  const bins = Array.from(
+    { length: 10 },
+    (_, i) =>
+      latest.filter((p) => p >= i / 10 && (i === 9 ? p <= 1 : p < (i + 1) / 10))
+        .length,
+  );
+  const max = Math.max(...bins, 1);
+  const bars = bins
+    .map((count, i) => {
+      const h = count === 0 ? 0 : Math.max(18, (count / max) * 100);
+      const label = `${i * 10}–${i * 10 + 10}%: ${count} model(s)`;
+      return `<span class="hbar${count === 0 ? " empty" : ""}" style="--h:${h.toFixed(0)}%" title="${label}"></span>`;
+    })
+    .join("");
+  return `      <div class="dist" role="img" aria-label="Distribution of latest model scores">
+        <span class="muted label">score distribution</span>
+        <div class="hist">${bars}</div>
+      </div>`;
+}
+
 function evalSection(evalName: string, groups: TrendGroup[]): string {
   const runCount = groups.reduce((s, g) => s + g.points.length, 0);
   const series = groups
@@ -120,9 +149,12 @@ ${historyRows(g)}
     .join("\n");
 
   return `  <section class="card">
-    <header>
-      <h2>${esc(evalName)}</h2>
-      <p class="muted">${groups.length} model(s) · ${runCount} recorded run(s). Ranked by the latest run per model; expand a series for its full history.</p>
+    <header class="split">
+      <div>
+        <h2>${esc(evalName)}</h2>
+        <p class="muted">${groups.length} model(s) · ${runCount} recorded run(s). Ranked by the latest run per model; expand a series for its full history.</p>
+      </div>
+${scoreHistogram(groups)}
     </header>
     <div class="scroll">
       <table>
@@ -191,6 +223,12 @@ h2 { font-size: 1.15rem; margin: 0; }
   padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;
 }
 .card header p { margin: 0.3rem 0 0; font-size: 0.85rem; }
+header.split { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; flex-wrap: wrap; }
+.dist { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-end; }
+.dist .label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.hist { display: flex; align-items: flex-end; gap: 2px; height: 26px; width: 9rem; }
+.hbar { flex: 1; border-radius: 1px 1px 0 0; background: var(--muted-foreground); opacity: 0.6; height: var(--h); }
+.hbar.empty { height: 2px; opacity: 0.25; }
 .scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 th { text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); font-weight: 600; padding: 0 0.75rem 0.5rem 0; }
