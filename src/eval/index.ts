@@ -29,6 +29,7 @@ import {
   printDiff,
 } from "./report.js";
 import { toJson, toCsv, modelLabel } from "./export.js";
+import { DEFAULT_MODEL } from "../lib/utils.js";
 import { buildProvenance } from "./provenance.js";
 import { appendHistory } from "./history.js";
 import type {
@@ -282,12 +283,14 @@ async function runEval(
     ? applyCaseFilter(evalFile.testCases, caseFilter)
     : evalFile.testCases;
   const results: TestResult[] = [];
+  let cachedCount = 0;
 
   for (const tc of cases) {
     const hit = cached?.get(tc.id);
     if (hit) {
       process.stdout.write(`  skipping ${tc.id} (cached)\n`);
       results.push(hit);
+      cachedCount++;
       continue;
     }
     process.stdout.write(`  running ${tc.id}…`);
@@ -346,7 +349,31 @@ async function runEval(
     totalPass,
     totalCriteria,
     totalCostUsd,
+    cachedCount,
   };
+}
+
+/**
+ * Appends to the history log only when every result in the comparison was
+ * freshly executed. A resumed run reuses scores produced under the previous
+ * run's provenance (different time, commit, possibly a different judge), so
+ * appending them under today's provenance would fabricate a trend point.
+ */
+export function recordHistory(
+  comparison: EvalComparison,
+  historyPath: string,
+): void {
+  const cachedTotal = comparison.runs.reduce(
+    (sum, run) => sum + (run.cachedCount ?? 0),
+    0,
+  );
+  if (cachedTotal > 0) {
+    console.log(
+      `  Skipping history append: ${cachedTotal} case result(s) were reused from the output CSV, so this run's provenance does not describe them. Delete the CSV to re-run and record.`,
+    );
+    return;
+  }
+  appendHistory(comparison, historyPath);
 }
 
 export function collectFailures(
@@ -505,29 +532,31 @@ async function runEvalFile(
 
     if (outputJson) writeOutputFile(outputJson, toJson(comparison));
     if (outputCsv) writeOutputFile(outputCsv, toCsv(comparison));
-    if (args.historyPath) appendHistory(comparison, args.historyPath);
+    if (args.historyPath) recordHistory(comparison, args.historyPath);
     return;
   }
 
-  // Single-model mode — load cached results for resume support
-  const singleModel = args.models[0];
+  // Single-model mode — load cached results for resume support. When no
+  // --models was given, resolve the same default runPrompt will actually use
+  // (EXECUTANT_MODEL, then sonnet) and pass it explicitly, so the recorded
+  // model label always names the model that ran — previously
+  // `EXECUTANT_MODEL=haiku` runs were filed under "claude/sonnet".
+  const model = args.models[0] ?? {
+    provider: "claude" as const,
+    model: process.env["EXECUTANT_MODEL"] ?? DEFAULT_MODEL,
+  };
   const existing = outputCsv ? loadExistingResults(outputCsv) : new Map();
-  const label = singleModel ? modelLabel(singleModel) : "claude/sonnet";
   let run = await runEval(
     evalFile,
     undefined,
-    singleModel,
-    existing.get(label),
+    model,
+    existing.get(modelLabel(model)),
     args.caseFilter,
   );
   printRun(run);
 
   // Write output files (wraps single-model run in a minimal comparison)
   if (outputJson || outputCsv || args.historyPath) {
-    const model = singleModel ?? {
-      provider: "claude" as const,
-      model: "sonnet",
-    };
     const comparison: EvalComparison = {
       evalName: evalFile.name,
       templatePath: evalFile.prompt,
@@ -538,7 +567,7 @@ async function runEvalFile(
     };
     if (outputJson) writeOutputFile(outputJson, toJson(comparison));
     if (outputCsv) writeOutputFile(outputCsv, toCsv(comparison));
-    if (args.historyPath) appendHistory(comparison, args.historyPath);
+    if (args.historyPath) recordHistory(comparison, args.historyPath);
   }
 
   if (!args.refine || run.totalPass === run.totalCriteria) return;
@@ -556,13 +585,7 @@ async function runEvalFile(
     saveRefinedTemplate(evalFile.prompt, improved);
 
     printRefinementHeader(iter, args.maxIter);
-    run = await runEval(
-      evalFile,
-      undefined,
-      singleModel,
-      undefined,
-      args.caseFilter,
-    );
+    run = await runEval(evalFile, undefined, model, undefined, args.caseFilter);
     printRun(run);
 
     if (run.totalPass > bestRun.totalPass) {

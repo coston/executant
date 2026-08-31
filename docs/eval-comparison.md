@@ -74,11 +74,11 @@ change in the judge/eval regime itself, and the two should never be confused:
 | `runAt` | ISO timestamp of the run |
 | `repo` | `owner/repo`, parsed from the `origin` git remote (GitHub only) |
 | `gitSha` | Commit evaluated (`git rev-parse HEAD`) |
-| `judgeProvider` / `judgeModel` | The judge is always Claude — this records which model |
+| `judgeProvider` / `judgeModel` | The judge is always Claude — this records which model. The judge is pinned to `EXECUTANT_MODEL` (default `sonnet`), never the CLI's configured default, so the recorded model is the one that actually judged |
 | `judgeVersion` | `claude --version`, when it can be read |
-| `judgePromptHash` | Hash of `src/eval/prompts/criterion-judge.txt` |
+| `judgePromptHash` | Hash of `src/eval/prompts/criterion-judge.txt` (header-stripped — the text the judge actually receives) |
 | `evalHash` | Hash of the resolved eval spec (test cases, vars, criteria) |
-| `comparisonFingerprint` | Hash of judge provider+model+prompt hash+eval hash — the strict-comparability key |
+| `comparisonFingerprint` | Hash of judge provider+model+version+prompt hash+eval hash — the strict-comparability key |
 
 Each case's API cost (USD, Claude only — OpenCode/local models don't report
 cost) is captured alongside its score and duration on every `TestResult`, and
@@ -217,7 +217,12 @@ Two modes:
   under a different judge/prompt/eval config.
 
 Each trend point can always be traced back to its `run_at`, `git_sha`, and
-full judge config via the underlying history record.
+full judge config via the underlying history record. To keep that guarantee,
+a run that reuses any cached case result from an existing `--output-csv`
+skips the history append entirely (the cached scores were produced under the
+previous run's provenance) — delete the CSV to re-run and record. A corrupt
+line in the history file (e.g. from an interrupted append) is skipped with a
+warning rather than aborting the report.
 
 ## Adding a new model
 

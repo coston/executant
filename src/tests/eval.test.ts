@@ -464,6 +464,26 @@ describe("judgeOutput", () => {
       criteria,
     );
   });
+
+  test("pins the judge model the provenance records, never the CLI default", async () => {
+    const { judgeOutput } = await import("../eval/judge.js");
+    const { resolveJudgeModel } = await import("../eval/provenance.js");
+    const { mockDir } = installMockClaude('{"pass": true, "reason": "ok"}');
+
+    // Extend the mock to record its argv, so we can see the --model flag.
+    const argsFile = join(mockDir, "args.txt");
+    const responseFile = join(mockDir, "response.ndjson");
+    writeFileSync(
+      join(mockDir, "claude"),
+      `#!/usr/bin/env bash\necho "$@" > "${argsFile}"\ncat "${responseFile}"\nexit 0\n`,
+      "utf8",
+    );
+
+    await judgeOutput("output", "criterion");
+
+    const argv = readFileSync(argsFile, "utf8");
+    assert.match(argv, new RegExp(`--model ${resolveJudgeModel()}`));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -859,5 +879,66 @@ test_cases:
       !finalTemplate.includes("Refined template v2"),
       "v2 should not be on disk after restoration",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// single-model identity
+// ---------------------------------------------------------------------------
+
+describe("single-model identity", () => {
+  let originalArgv: string[];
+  let originalPath: string;
+  let originalModel: string | undefined;
+
+  beforeEach(() => {
+    originalArgv = process.argv.slice();
+    originalPath = process.env["PATH"] ?? "";
+    originalModel = process.env["EXECUTANT_MODEL"];
+  });
+  afterEach(() => {
+    process.argv.length = 0;
+    for (const a of originalArgv) process.argv.push(a);
+    process.env["PATH"] = originalPath;
+    if (originalModel === undefined) delete process.env["EXECUTANT_MODEL"];
+    else process.env["EXECUTANT_MODEL"] = originalModel;
+  });
+
+  test("records EXECUTANT_MODEL as the run's model when no --models is given", async () => {
+    // Regression: the bare path hard-coded "claude/sonnet", filing an
+    // EXECUTANT_MODEL=haiku run's scores under the sonnet trend series.
+    const { main } = await import("../eval/index.js");
+
+    const dir = tmpDir();
+    const templatePath = join(dir, "template.txt");
+    writeFileSync(templatePath, "Template {{INPUT}}\n", "utf8");
+    const evalYaml = `
+name: identity-test
+prompt: ${templatePath}
+placeholders:
+  - INPUT
+test_cases:
+  - id: case-one
+    vars:
+      INPUT: hello
+    criteria:
+      - "Output is non-empty"
+`;
+    const evalFilePath = join(dir, "test.eval.yaml");
+    writeFileSync(evalFilePath, evalYaml, "utf8");
+    const outputJson = join(dir, "out.json");
+
+    installMockClaude('{"pass": true, "reason": "ok"}');
+    process.env["EXECUTANT_MODEL"] = "haiku";
+
+    process.argv.length = 0;
+    for (const a of ["node", "eval", "--output-json", outputJson, evalFilePath])
+      process.argv.push(a);
+    await main();
+
+    const written = JSON.parse(readFileSync(outputJson, "utf8"));
+    assert.equal(written.models[0].model, "haiku");
+    assert.equal(written.runs[0].model.model, "haiku");
+    assert.equal(written.provenance.judgeModel, "haiku");
   });
 });

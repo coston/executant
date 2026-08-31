@@ -36,6 +36,13 @@ export interface EvalRun {
   totalCriteria: number;
   /** Sum of results[].costUsd. Undefined when no result reported a cost. */
   totalCostUsd?: number;
+  /**
+   * How many results came from a resumed --output-csv rather than running.
+   * Non-zero blocks history appends: a cached score was produced under the
+   * *old* run's provenance, so stamping it with a fresh one would fabricate
+   * a trend point.
+   */
+  cachedCount?: number;
 }
 
 export interface FailureContext {
