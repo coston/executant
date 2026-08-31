@@ -5,6 +5,7 @@
 // it starts empty, moves as per-call output:context events land, ignores the
 // cumulative output:usage totals, and disappears under EXECUTANT_STATUSLINE=0.
 
+import "./force-non-ci.js"; // must evaluate before any ink import — see its header
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";

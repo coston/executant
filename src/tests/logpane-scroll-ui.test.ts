@@ -5,6 +5,7 @@
 // with ink-testing-library rather than going through the full App — no event
 // stream or reducer needed to verify the scroll-offset windowing math.
 
+import "./force-non-ci.js"; // must evaluate before any ink import — see its header
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import React from "react";

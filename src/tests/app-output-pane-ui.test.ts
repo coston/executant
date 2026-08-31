@@ -11,6 +11,7 @@
 // channel that hook listens on, but asserting exact on-screen row positions
 // from a text frame is what the pure math tests already cover directly.
 
+import "./force-non-ci.js"; // must evaluate before any ink import — see its header
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";

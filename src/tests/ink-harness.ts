@@ -14,6 +14,11 @@
 // missed its deadline and the run wedged for as long as it was allowed to.
 //
 // withInk() makes the unmount unconditional, so a failure stays a failure.
+//
+// NOTE: every test file that renders Ink must have
+// `import "./force-non-ci.js";` as its FIRST import (importing this harness is
+// not enough — a `../ui/*` import listed earlier would load ink first). See
+// force-non-ci.ts for why Ink's CI detection breaks frame assertions.
 
 import { render } from "ink-testing-library";
 import type { ReactElement } from "react";

@@ -47,6 +47,20 @@ async function collectEventsExpectingError(
   }
 }
 
+/** Polls until signal-0 delivery fails with ESRCH (process fully reaped). */
+async function processGone(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
 // ----------------------------------------------------------------------------
 // runCommand
 // ----------------------------------------------------------------------------
@@ -158,9 +172,12 @@ describe("runCommand — timeout_seconds", () => {
       assert.ok(error instanceof TimeoutError);
 
       const grandchildPid = Number(readFileSync(pidFile, "utf8").trim());
-      assert.throws(
-        () => process.kill(grandchildPid, 0),
-        /ESRCH/,
+      // The group SIGTERM has been sent by the time TimeoutError surfaces,
+      // but the grandchild can linger briefly as an unreaped zombie — and
+      // signal 0 still succeeds on a zombie — so poll for it to disappear
+      // rather than asserting on the very first probe.
+      assert.ok(
+        await processGone(grandchildPid, 2000),
         "the sleep grandchild should have been killed, not left orphaned",
       );
     } finally {

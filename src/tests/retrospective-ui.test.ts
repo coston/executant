@@ -11,6 +11,7 @@
 // ink-testing-library's stdin reports isTTY and implements setRawMode, so
 // Ink's useInput is live and `stdin.write("u")` behaves like a real keypress.
 
+import "./force-non-ci.js"; // must evaluate before any ink import — see its header
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
