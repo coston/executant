@@ -9,6 +9,7 @@
 //
 // The --ci flag runs the same event stream in headless mode (NDJSON to stdout)
 // instead of the Ink TUI, showing that the runner and UI are fully decoupled.
+// It also skips the auto-update below, so automated/CI runs stay reproducible.
 
 import React from "react";
 import { render } from "ink";
@@ -23,7 +24,7 @@ import {
 } from "./lib/remote-workflow.js";
 import { resolveWorkflow } from "./resolve-workflow.js";
 import { runWorkflow } from "./runner.js";
-import { checkForUpdate } from "./update.js";
+import { runAutoUpdate } from "./update.js";
 import { App } from "./ui/App.js";
 import { parsePlanArgs, streamPlan } from "./plan.js";
 import { parseRefineArgs, streamRefine } from "./refine.js";
@@ -53,6 +54,26 @@ ignoreBrokenPipe(process.stdout);
 ignoreBrokenPipe(process.stderr);
 
 const rawArgs = process.argv.slice(2);
+
+/**
+ * Blocking auto-update, run before a workflow file executes (see call site
+ * below): checks npm for a newer version and, if found, installs it and
+ * re-execs the current command under the new version. Bounded to a single
+ * hop via EXECUTANT_AUTO_UPDATED so a re-exec that can't actually pick up
+ * the new code (a dev checkout, a global install path npm doesn't target)
+ * falls through to running normally instead of looping. Returns the newer
+ * version string only when an update was found but couldn't be applied (so
+ * the caller can still surface a manual "executant update" banner); null
+ * otherwise. Does not return at all after a successful re-exec.
+ */
+async function autoUpdate(): Promise<string | null> {
+  const { bannerVersion } = await runAutoUpdate({
+    currentVersion: CURRENT_VERSION,
+    alreadyAttempted: process.env["EXECUTANT_AUTO_UPDATED"] === "1",
+    argv: [process.argv[0], process.argv[1] ?? "", ...rawArgs],
+  });
+  return bannerVersion;
+}
 
 // executant plan — generate task YAML from description
 if (rawArgs[0] === "plan") {
@@ -126,7 +147,8 @@ Options:
 Commands:
   plan <description>    Generate a task YAML from a natural language description
   refine <file> <inst>  Refine an existing task YAML with natural language instructions
-  update                Upgrade executant to the latest version
+  update                Upgrade executant to the latest version (also runs automatically
+                        before running a workflow file; use --ci to opt out)
 
 YAML — top-level fields:
   goal    string   (required) Description shown in the TUI header
@@ -302,6 +324,11 @@ for (let i = 0; i < rawArgs.length; i++) {
   }
 }
 
+// Blocking auto-update: running a workflow file always ends up on the latest
+// code before anything else happens. CI mode opts out to stay reproducible;
+// the plan/refine/update/--help commands above have already exited by here.
+const pendingUpdateVersion = ciMode ? null : await autoUpdate();
+
 if (toStep !== undefined && fromStep !== undefined && toStep < fromStep[0]) {
   console.error(
     `--to-step (${toStep}) cannot be before --from-step (${fromStep[0]})`,
@@ -374,11 +401,10 @@ if (telemetry) {
     void telemetry.shutdown().finally(() => process.exit(130));
   });
 }
-// checkForUpdate can keep the event loop alive for up to 5s and its banner is
-// only rendered by the TUI — skip it entirely in CI mode.
-const updateCheck = ciMode
-  ? Promise.resolve<string | null>(null)
-  : checkForUpdate(CURRENT_VERSION);
+// The update check already ran above (autoUpdate): pendingUpdateVersion is
+// only non-null when a newer version exists but the install itself failed,
+// in which case the TUI still surfaces a manual "executant update" banner.
+const updateCheck = Promise.resolve(pendingUpdateVersion);
 
 /**
  * JSON.stringify replacer that serialises Error objects properly.
