@@ -296,6 +296,11 @@ Step-level `provider`, `model`, and `agent` fields take priority over env vars.
   - Omit entirely → all tools available (default)
   - `allowed_tools: []` → text-only mode, no tools
   - `allowed_tools: [Bash, Read, Write]` → only those tools; names are case-insensitive
+- **`append_system_prompt`** — prompt steps only; appended to the CLI's own system prompt
+  via `--append-system-prompt` instead of living inside `prompt:`'s user-turn text. A rule
+  placed here holds up far better than the same words buried in a long prompt — reach for
+  it for anything the model must never trade off against the rest of the instructions
+  (e.g. "never narrate outside the deliverable"). Supports `{{var}}` substitution.
 
 ```yaml
 steps:
@@ -306,6 +311,14 @@ steps:
   - name: summarise
     prompt: Write a one-paragraph summary.
     allowed_tools: [] # no tools — pure text generation
+
+  - name: pr_summary
+    prompt: |
+      Write the pull-request description... deliver it wrapped in <PR_BODY> markers.
+    append_system_prompt: >-
+      You are running non-interactively and unattended. Never emit narration,
+      commentary, or a preamble in your text output — reason and decide silently
+      via tool calls; the only text you output is the exact deliverable requested.
 ```
 
 ```yaml

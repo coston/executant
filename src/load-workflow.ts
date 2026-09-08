@@ -52,6 +52,7 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
     timeout_seconds: z.number().positive().optional(),
     provider: z.enum(["claude", "opencode"]).optional(),
     model: z.string().optional(),
+    append_system_prompt: z.string().optional(),
     agent: z.string().optional(),
     workflow: z.string().optional(),
     vars: z.record(z.string(), z.string()).optional(),
@@ -316,6 +317,14 @@ function convertInnerStep(
         model: step.model ?? DEFAULT_MODEL,
         ...(step.provider && { provider: step.provider }),
         ...(step.agent && { agent: step.agent }),
+        ...(step.append_system_prompt && {
+          appendSystemPrompt: substituteVars(
+            step.append_system_prompt,
+            vars,
+            name,
+            "append_system_prompt",
+          ),
+        }),
         ...(contextFiles.length > 0 && { contextFiles }),
         ...(step.output && {
           output: resolveOutputFile(step.output, vars, name),

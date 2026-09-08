@@ -687,6 +687,8 @@ export type RawStep = {
   provider?: AgentProvider;
   /** Model override for this step. */
   model?: string;
+  /** Appended to the CLI's own system prompt for this step only. */
+  append_system_prompt?: string;
   /** OpenCode agent name. */
   agent?: string;
   /** Local path or URL to another workflow, run as a nested sub-run. */
