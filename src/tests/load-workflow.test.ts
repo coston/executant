@@ -729,6 +729,49 @@ steps:
     assert.equal(task.model, "llama-qwen7b/qwen2.5-coder-7b");
   });
 
+  test("append_system_prompt is passed through to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    append_system_prompt: Never narrate. Reply with only the deliverable.
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(
+      task.appendSystemPrompt,
+      "Never narrate. Reply with only the deliverable.",
+    );
+  });
+
+  test("append_system_prompt is omitted from ClaudeTask when not set", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.appendSystemPrompt, undefined);
+  });
+
+  test("append_system_prompt substitutes vars like prompt does", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  role: reviewer
+steps:
+  - name: implement
+    append_system_prompt: You are acting as a {{role}}.
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.appendSystemPrompt, "You are acting as a reviewer.");
+  });
+
   test("agent field is passed through to ClaudeTask", () => {
     const file = tmpYaml(`
 goal: test
