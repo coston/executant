@@ -290,6 +290,9 @@ Step-level `provider`, `model`, and `agent` fields take priority over env vars.
 ## Quality Controls
 
 - **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
+  - The judge is handed the step's **text output only** — never its tool calls or their results — so it runs with read-only tools (`Read`, `Grep`, `Glob`) and is told to check a claim about the repo before failing a step over it. Without them it had failed steps for "missing" evidence that was sitting on disk.
+  - A retry carries the judge's feedback **and the attempt it rejected**. Attempts start from a clean context, so feedback alone leaves the model rebuilding the deliverable from nothing — and regressing the parts the judge never objected to.
+  - If the judge itself cannot return a verdict (CLI crash, structured output that never validates), the attempt is accepted ungraded with a warning. The step's work is already on disk; losing the run over the grader is worse than shipping it ungraded.
 - **`self_healing: true`** — on script failure, Claude diagnoses and repairs the command, then re-runs it, up to 5×
 - **`timeout_seconds: N`** — kill the step after N seconds and fail with exit code 3. Works for both script and prompt steps.
 - **`allowed_tools`** — restrict which tools a prompt step can use:

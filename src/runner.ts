@@ -1026,21 +1026,32 @@ async function* runCommandWithHealing(
 /**
  * Runs a Claude step and then evaluates its output with a separate judge
  * invocation. If the judge returns FAIL, the step is retried with the judge's
- * feedback appended to the original prompt. Maximum MAX_JUDGE_RETRIES attempts.
+ * feedback — and the attempt that feedback was about — appended to the original
+ * prompt. Maximum MAX_JUDGE_RETRIES attempts.
  * The channel is only passed to the main step invocations, not the judge.
  */
 async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
   let judgeContext = "";
+  let previousOutput = "";
 
   for (let attempt = 0; attempt < MAX_JUDGE_RETRIES; attempt++) {
-    // On retries, append judge feedback so Claude can address it.
+    // On retries, append the judge's feedback AND the attempt it rejected.
+    // Every attempt is a fresh CLI invocation with no memory of the last one,
+    // so feedback alone leaves the model rebuilding the whole deliverable from
+    // scratch — and the parts the judge never objected to regress along the way.
     const prompt =
       attempt === 0
         ? task.prompt
-        : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, { FEEDBACK: judgeContext })}`;
+        : `${task.prompt}\n\n${fillTemplate(JUDGE_RETRY_CONTEXT, {
+            FEEDBACK: judgeContext,
+            PREVIOUS_OUTPUT:
+              previousOutput.trim() ||
+              "(the previous attempt produced no text output)",
+          })}`;
 
     const lines: string[] = [];
     yield* collectLines(runAgent({ ...task, prompt }), lines);
+    previousOutput = lines.join("\n");
 
     // Evaluate output quality.
     yield {
@@ -1048,11 +1059,22 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
       level: "info",
       text: `[judge] Evaluating "${task.name}"…`,
     };
-    const verdict = await evaluateWithJudge(
-      task.name,
-      task.prompt,
-      lines.join("\n"),
-    );
+    let verdict: { pass: boolean; feedback: string };
+    try {
+      verdict = await evaluateWithJudge(task.name, task.prompt, previousOutput);
+    } catch (err) {
+      // The judge itself failed to produce a verdict — the CLI crashed, its
+      // structured output never validated, the API errored. None of that is
+      // evidence about the step, whose work is already done and on disk. So
+      // the grading is what gets skipped here, not the run: killing a workflow
+      // because the grader fell over discards a step that was very likely fine.
+      yield {
+        type: "log",
+        level: "warn",
+        text: `[judge] Could not evaluate "${task.name}" (${getErrorMessage(err)}) — accepting attempt ${attempt + 1} ungraded`,
+      };
+      return;
+    }
 
     // index: -1 here — runWorkflow patches it to the real step index
     yield {
@@ -1092,7 +1114,12 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
 
 /**
  * Runs a judge Claude invocation and parses its JSON response.
- * The judge gets no tools — it only reads what's passed in the prompt.
+ * The judge gets read-only tools. It is handed only the step's text output —
+ * never the step's tool calls or their results — so a file the step read and
+ * used correctly is invisible to it, and a judge with no way to look has
+ * failed steps over "missing" evidence that was sitting on disk the whole
+ * time. Read/Grep/Glob let it check such a claim instead of inferring it from
+ * whatever the step happened to narrate.
  */
 export async function evaluateWithJudge(
   stepName: string,
@@ -1104,7 +1131,7 @@ export async function evaluateWithJudge(
       type: "claude",
       name: `judge:${stepName}`,
       prompt: buildJudgePrompt(stepName, stepInstructions, output),
-      allowedTools: [],
+      allowedTools: ["Read", "Grep", "Glob"],
       permissionMode: "default",
       model: DEFAULT_MODEL,
       provider: "claude",

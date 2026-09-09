@@ -31,5 +31,30 @@ Evaluate whether the output adequately fulfils the instructions. Consider:
 - Is the output complete and correct?
 - Are there obvious errors or omissions?
 
+## What you can and cannot see
+
+The output above is the step's TEXT ONLY. You are not shown the step's tool
+calls or their results, so a file it read, a command it ran, and a check it
+performed are all invisible to you. The step was told not to narrate; silence
+about a step of the work is not evidence the work was skipped.
+
+You have read-only tools — Read, Grep, Glob — running in the same working
+directory as the step. Use them.
+
+- **Verify before you fail.** If your objection rests on a claim about the
+  repository — a file is missing, a template does not exist, evidence was
+  invented — go look first. Failing a step for something you did not check is
+  the single most expensive mistake you can make here: it discards correct work
+  and sends the step round again with misleading feedback.
+- **Judge against the instructions, not your own preferences.** A requirement
+  the step was never given is not an omission. If the output satisfies the
+  instructions in a way you would have written differently, that is a PASS.
+- **Prefer PASS when the work is sound.** Every FAIL costs a full re-run of the
+  step from a clean context, which risks regressing parts of the output that
+  were already right. Reserve it for a real defect: a missed requirement, a
+  factual error, a fabrication, or an instruction contradicted outright.
+- **Make feedback specific and checkable.** Name what is wrong and what would
+  fix it. If you verified something with a tool, say what you found.
+
 Respond with a JSON object:
 {"pass": true|false, "reasoning": "2-3 sentences", "feedback": "actionable improvements if FAIL, empty string if PASS"}

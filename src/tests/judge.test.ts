@@ -26,13 +26,14 @@ import {
 // Creates a mock claude binary that emits one stream-json text event with the
 // given response text, then exits 0. Uses a sidecar response file to avoid
 // shell quoting issues with embedded JSON.
-function installJudgeMock(responseText: string): void {
+function installJudgeMock(responseText: string): { argsFile: string } {
   const mockDir = join(
     tmpdir(),
     `executant-judge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
   mkdirSync(mockDir, { recursive: true });
 
+  const argsFile = join(mockDir, "args.txt");
   const responseFile = join(mockDir, "response.ndjson");
   const assistantLine = JSON.stringify({
     type: "assistant",
@@ -44,12 +45,14 @@ function installJudgeMock(responseText: string): void {
   const mockScript = join(mockDir, "claude");
   writeFileSync(
     mockScript,
-    `#!/usr/bin/env bash\ncat "${responseFile}"\nexit 0\n`,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argsFile}"\ncat "${responseFile}"\nexit 0\n`,
     "utf8",
   );
   chmodSync(mockScript, 0o755);
 
   process.env["PATH"] = `${mockDir}:${process.env["PATH"] ?? ""}`;
+
+  return { argsFile };
 }
 
 describe("evaluateWithJudge", () => {
@@ -110,6 +113,24 @@ describe("evaluateWithJudge", () => {
     const result = await evaluateWithJudge("my-step", "Do X", "Bad output");
     assert.equal(result.pass, false);
     assert.equal(result.feedback, "fix it");
+  });
+
+  test("judge runs with read-only tools so it can verify a claim it is not shown", async () => {
+    // The judge sees the step's text output only — never its tool calls or
+    // their results. Without tools of its own it has failed steps for evidence
+    // that existed on disk, so the grant is asserted rather than assumed.
+    const { argsFile } = installJudgeMock(
+      '{"pass":true,"reasoning":"ok","feedback":""}',
+    );
+    await evaluateWithJudge("my-step", "Do X", "Done X");
+
+    const args = readFileSync(argsFile, "utf8").split("\n");
+    const granted = args[args.indexOf("--allowedTools") + 1];
+    assert.equal(granted, "Read,Grep,Glob");
+    assert.ok(
+      !/Edit|Write|Bash/.test(granted ?? ""),
+      `Judge must stay read-only. Got: ${granted}`,
+    );
   });
 
   test("completely unparseable response throws (--json-schema prevents this in production)", async () => {
@@ -233,6 +254,45 @@ describe("runClaudeWithJudge — integration", () => {
     assert.ok(
       retryPrompt.includes(feedbackText),
       `Expected feedback "${feedbackText}" injected into retry prompt. Got: ${retryPrompt.slice(0, 200)}`,
+    );
+    // The rejected attempt goes in too. A retry starts from a clean context, so
+    // feedback alone leaves the model rebuilding the deliverable from nothing
+    // and regressing the parts the judge never objected to.
+    assert.ok(
+      retryPrompt.includes("first attempt output"),
+      `Expected the rejected attempt injected into retry prompt. Got: ${retryPrompt.slice(0, 400)}`,
+    );
+  });
+
+  test("a judge that cannot return a verdict accepts the attempt instead of killing the run", async () => {
+    // Call 0 is the step, call 1 is the judge — and the judge crashes, the way
+    // the CLI does when its structured output never validates. That says
+    // nothing about the step, whose work is already on disk, so the run
+    // continues ungraded rather than discarding it.
+    installSequencedMock(["step output that is probably fine", "unused"], {
+      exitCodes: { 1: 1 },
+    });
+
+    const { events, error } = await collectEventsUntilError(
+      judgeWorkflow("report"),
+    );
+
+    assert.equal(error, undefined, `Expected no error. Got: ${error?.message}`);
+    assert.ok(events.some((e) => e.type === "workflow:complete"));
+
+    const logs = logEvents(events);
+    assert.ok(
+      logs.some(
+        (e) =>
+          e.level === "warn" &&
+          e.text.includes("Could not evaluate") &&
+          e.text.includes("ungraded"),
+      ),
+      `Expected an ungraded-acceptance warning. Got: ${logs.map((e) => e.text).join(" | ")}`,
+    );
+    assert.ok(
+      !logs.some((e) => e.text.includes("[judge] FAIL")),
+      "A judge crash is not a FAIL verdict",
     );
   });
 

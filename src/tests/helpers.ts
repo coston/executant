@@ -62,18 +62,30 @@ export async function collectEventsUntilError(
  * Each invocation reads/increments a shared counter and serves the
  * corresponding pre-written NDJSON response. The prompt arg ($2) is saved to
  * promptsDir/<call_index>.txt so tests can assert on injected content.
+ *
+ * opts.exitCodes maps a call index to a non-zero exit code, so a test can make
+ * one invocation in the sequence fail the way a crashed CLI does.
  */
-export function installSequencedMock(responses: string[]): {
+export function installSequencedMock(
+  responses: string[],
+  opts?: { exitCodes?: Record<number, number> },
+): {
   promptsDir: string;
 } {
   const mockDir = tmpDir();
   const responsesDir = join(mockDir, "responses");
   const promptsDir = join(mockDir, "prompts");
+  const exitsDir = join(mockDir, "exits");
   const counterFile = join(mockDir, "counter");
 
   mkdirSync(responsesDir, { recursive: true });
   mkdirSync(promptsDir, { recursive: true });
+  mkdirSync(exitsDir, { recursive: true });
   writeFileSync(counterFile, "0", "utf8");
+
+  for (const [index, code] of Object.entries(opts?.exitCodes ?? {})) {
+    writeFileSync(join(exitsDir, index), String(code), "utf8");
+  }
 
   for (const [i, text] of responses.entries()) {
     const ndjson =
@@ -95,7 +107,9 @@ count=$(cat "${counterFile}")
 echo $((count + 1)) > "${counterFile}"
 printf '%s' "$2" > "${promptsDir}/$count.txt"
 cat "${responsesDir}/$count.ndjson"
-exit 0
+code=0
+if [ -f "${exitsDir}/$count" ]; then code=$(cat "${exitsDir}/$count"); fi
+exit $code
 `,
     "utf8",
   );
