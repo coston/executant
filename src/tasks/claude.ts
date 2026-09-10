@@ -253,7 +253,15 @@ function* parseClaudeMessage(
         getString(msg, "error") ??
         (isObject(msg["error"])
           ? getString(msg["error"], "message")
-          : undefined);
+          : undefined) ??
+        // `errors`, last, because only some refusals use it — and one of them
+        // is the only account of WHY a schema-shaped answer failed. When
+        // `--json-schema` exhausts its retries the CLI reports
+        // `error_max_structured_output_retries` with every other field empty
+        // and the reason (including the last validation failure) in here, so
+        // reading the other three alone reduced a diagnosable failure to a
+        // bare subtype and left the operator with nothing to act on.
+        errorList(msg["errors"]);
       const resultError = [subtype, detail].filter(Boolean).join(": ");
       if (resultError) state.resultError = resultError;
     }
@@ -304,6 +312,23 @@ export function getArray(
     obj,
   );
   return Array.isArray(result) ? result : [];
+}
+
+/**
+ * The strings out of a result message's `errors` array, joined.
+ *
+ * Tolerant of the array holding non-strings, or of `errors` not being an array
+ * at all: this runs on output from a CLI whose shape is not ours, at the exact
+ * moment that CLI has already failed, so anything unreadable here has to
+ * degrade to "no detail" rather than throw over a failure it is only trying to
+ * describe.
+ */
+function errorList(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parts = value.filter(
+    (v): v is string => typeof v === "string" && v !== "",
+  );
+  return parts.length > 0 ? parts.join("; ") : undefined;
 }
 
 function getString(

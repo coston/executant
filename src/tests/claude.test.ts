@@ -434,6 +434,39 @@ describe("runClaude — error result reporting", () => {
     assert.equal(err.message, "claude exited with code 1\nerror_max_turns");
   });
 
+  test("exit error carries the reason from an errors array", async () => {
+    // What `--json-schema` retry exhaustion actually looks like: no `result`,
+    // no `error`, and the only account of why in `errors` — which used to be
+    // dropped, leaving a bare subtype nobody could act on.
+    installFailingClaude({
+      type: "result",
+      subtype: "error_max_structured_output_retries",
+      is_error: true,
+      errors: [
+        "Failed to provide valid structured output after 5 attempts \u2014 last StructuredOutput error: pass must be boolean",
+      ],
+    });
+    const err = await runToError();
+    assert.equal(
+      err.message,
+      "claude exited with code 1\nerror_max_structured_output_retries: Failed to provide valid structured output after 5 attempts \u2014 last StructuredOutput error: pass must be boolean",
+    );
+  });
+
+  test("an unreadable errors array degrades to the subtype alone", async () => {
+    installFailingClaude({
+      type: "result",
+      subtype: "error_max_structured_output_retries",
+      is_error: true,
+      errors: [{ not: "a string" }],
+    });
+    const err = await runToError();
+    assert.equal(
+      err.message,
+      "claude exited with code 1\nerror_max_structured_output_retries",
+    );
+  });
+
   test("a success result contributes nothing to the exit error", async () => {
     installFailingClaude({
       type: "result",
