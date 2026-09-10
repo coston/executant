@@ -12,6 +12,7 @@ import type { ZodType } from "zod";
 import type { ClaudeTask, Event } from "../types.js";
 import { resolveAgentModel } from "./agent.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
+import { salvageStructured } from "./structured.js";
 import { extractJsonObject, getErrorMessage, stripAnsi } from "../lib/utils.js";
 import { traceparentEnv } from "../lib/trace-context.js";
 
@@ -210,7 +211,11 @@ function* parseOpenCodeMessage(msg: unknown): Generator<Event> {
 /**
  * Runs an OpenCode task and returns a schema-validated typed result.
  * Appends a JSON-only instruction since OpenCode has no native --json-schema.
- * Falls back to text parsing via extractJsonObject + schema.parse.
+ *
+ * Recovery goes through the same shared salvage the Claude path uses, so a
+ * provider swap does not quietly change how forgiving a structured step is:
+ * both take the last schema-valid object in the output, and both accept one
+ * that arrived wrapped under a single key.
  */
 export async function runOpenCodeStructured<T>(
   task: Omit<ClaudeTask, "jsonSchema">,
@@ -231,6 +236,12 @@ export async function runOpenCodeStructured<T>(
     );
   }
 
+  const salvaged = salvageStructured(combined, schema);
+  if (salvaged !== undefined) return salvaged;
+
+  // Nothing in the output validated. Reparse the best candidate so the caller
+  // gets the real reason — a JSON syntax error or the specific Zod issues —
+  // rather than a bare "could not salvage".
   const raw = extractJsonObject(combined);
   let parsed: unknown;
   try {

@@ -82,7 +82,8 @@ src/
 │   ├── claude.ts         # Claude CLI child process runner
 │   ├── command.ts        # Bash command runner
 │   ├── opencode.ts       # OpenCode CLI child process runner
-│   └── stream.ts         # Shared stream utilities (AsyncQueue, mergeStreamsToLines)
+│   ├── stream.ts         # Shared stream utilities (AsyncQueue, mergeStreamsToLines)
+│   └── structured.ts     # Provider-neutral structured-output recovery (salvageStructured)
 ├── ui/                   # Ink TUI components
 │   ├── App.tsx           # Root component; holds isInterjecting state; wires InterjectChannel
 │   ├── InterjectInput.tsx # Text input overlay shown when user presses i

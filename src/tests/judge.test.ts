@@ -26,7 +26,10 @@ import {
 // Creates a mock claude binary that emits one stream-json text event with the
 // given response text, then exits 0. Uses a sidecar response file to avoid
 // shell quoting issues with embedded JSON.
-function installJudgeMock(responseText: string): { argsFile: string } {
+function installJudgeMock(
+  responseText: string,
+  opts: { exitCode?: number; stderr?: string } = {},
+): { argsFile: string } {
   const mockDir = join(
     tmpdir(),
     `executant-judge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -45,7 +48,11 @@ function installJudgeMock(responseText: string): { argsFile: string } {
   const mockScript = join(mockDir, "claude");
   writeFileSync(
     mockScript,
-    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argsFile}"\ncat "${responseFile}"\nexit 0\n`,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argsFile}"\ncat "${responseFile}"\n` +
+      (opts.stderr
+        ? `printf '%s\\n' ${JSON.stringify(opts.stderr)} >&2\n`
+        : "") +
+      `exit ${opts.exitCode ?? 0}\n`,
     "utf8",
   );
   chmodSync(mockScript, 0o755);
@@ -113,6 +120,57 @@ describe("evaluateWithJudge", () => {
     const result = await evaluateWithJudge("my-step", "Do X", "Bad output");
     assert.equal(result.pass, false);
     assert.equal(result.feedback, "fix it");
+  });
+
+  test("a verdict survives the CLI failing its own structured-output retries", async () => {
+    // error_max_structured_output_retries means the grammar rejected the
+    // model's answer until the CLI gave up — but the answer itself was
+    // emitted as text every time, and it is a verdict about a step whose work
+    // is already done. Throwing it away turns a graded step into an ungraded
+    // one for a packaging failure.
+    installJudgeMock(
+      '{"pass":false,"reasoning":"Tests are missing","feedback":"add a test for the error path"}',
+      {
+        exitCode: 1,
+        stderr:
+          "error_max_structured_output_retries: Error: Failed to provide valid structured output after max retries",
+      },
+    );
+    const result = await evaluateWithJudge("my-step", "Do X", "Partial X");
+    assert.deepEqual(result, {
+      pass: false,
+      feedback: "add a test for the error path",
+    });
+  });
+
+  test("the last attempt wins when a failed call left several behind", async () => {
+    installJudgeMock(
+      '{"pass":true,"feedback":"first"}\n{"pass":false,"feedback":"final"}',
+      { exitCode: 1, stderr: "error_max_structured_output_retries" },
+    );
+    const result = await evaluateWithJudge("my-step", "Do X", "X");
+    assert.deepEqual(result, { pass: false, feedback: "final" });
+  });
+
+  test("a verdict wrapped under a single key is still read", async () => {
+    installJudgeMock(
+      '{"output":{"pass":true,"reasoning":"fine","feedback":""}}',
+    );
+    const result = await evaluateWithJudge("my-step", "Do X", "X");
+    assert.equal(result.pass, true);
+  });
+
+  test("a failed call with no recoverable verdict still throws the CLI error", async () => {
+    // Nothing to salvage here, so the caller must see the real reason. The
+    // runner turns this into an ungraded attempt rather than a dead workflow.
+    installJudgeMock("I was unable to evaluate this step.", {
+      exitCode: 1,
+      stderr: "error_max_structured_output_retries",
+    });
+    await assert.rejects(
+      () => evaluateWithJudge("my-step", "Do X", "X"),
+      /claude exited with code 1/,
+    );
   });
 
   test("judge runs with read-only tools so it can verify a claim it is not shown", async () => {

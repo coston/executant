@@ -12,6 +12,7 @@ import type { ZodType } from "zod";
 import type { ClaudeTask, Event, TokenUsage } from "../types.js";
 import { resolveAgentModel } from "./agent.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
+import { salvageStructured } from "./structured.js";
 import {
   extractJsonObject,
   getErrorMessage,
@@ -287,28 +288,76 @@ function getString(
 }
 
 /**
+ * Strips JSON Schema metadata the CLI has no use for.
+ *
+ * zod-to-json-schema stamps a `$schema` dialect URL on everything it emits.
+ * It describes the document rather than the shape being asked for, it is not
+ * one of the keywords structured output honours, and it rides along on every
+ * structured call — so it is dropped before the schema goes over the wire.
+ */
+export function toAgentJsonSchema(
+  schema: ZodType<unknown>,
+): Record<string, unknown> {
+  const { $schema: _dialect, ...rest } = zodToJsonSchema(schema) as Record<
+    string,
+    unknown
+  >;
+  return rest;
+}
+
+/**
  * Runs a Claude task and returns a schema-validated typed result.
  * Passes the Zod schema as --json-schema so the CLI enforces structure.
- * Falls back to text parsing for environments that don't support --json-schema
- * (e.g. mock CLIs in tests).
+ *
+ * The flag is the reliable path and stays the primary one — but it can fail,
+ * and when it does the CLI exits non-zero and `runClaude` throws. The most
+ * common way is `error_max_structured_output_retries`: the model wrote an
+ * answer, the grammar rejected it, and after the CLI's own retry budget ran
+ * out the whole call died. Every one of those attempts is sitting in the text
+ * we already collected, and the prompt asked for the same object the schema
+ * describes, so the attempts are searched for a valid one before the error is
+ * allowed to propagate. A grader that answered correctly five times in a row
+ * should not read as a grader that never answered.
+ *
+ * Text parsing also covers environments with no --json-schema support at all
+ * (mock CLIs in tests, older builds), which is why it runs on the clean path too.
  */
 export async function runClaudeStructured<T>(
   task: Omit<ClaudeTask, "jsonSchema">,
   schema: ZodType<T>,
 ): Promise<T> {
-  const jsonSchema = zodToJsonSchema(schema) as Record<string, unknown>;
+  const jsonSchema = toAgentJsonSchema(schema);
   let structuredOutput: unknown;
   const lines: string[] = [];
-  for await (const event of runClaude({ ...task, jsonSchema })) {
-    if (event.type === "output:structured") structuredOutput = event.data;
-    else if (event.type === "output:text") lines.push(event.text);
+  let runError: unknown;
+
+  try {
+    for await (const event of runClaude({ ...task, jsonSchema })) {
+      if (event.type === "output:structured") structuredOutput = event.data;
+      else if (event.type === "output:text") lines.push(event.text);
+    }
+  } catch (err) {
+    runError = err;
   }
-  if (structuredOutput === undefined && process.env["NODE_ENV"] !== "test") {
-    console.warn(
-      "[executant] runClaudeStructured: no output:structured event — falling back to text parsing",
-    );
+
+  if (structuredOutput !== undefined) return schema.parse(structuredOutput);
+
+  const salvaged = salvageStructured(lines.join(""), schema);
+  if (salvaged !== undefined) {
+    if (process.env["NODE_ENV"] !== "test") {
+      console.warn(
+        `[executant] runClaudeStructured: recovered "${task.name}" from text output` +
+          (runError === undefined
+            ? " — no output:structured event"
+            : ` after the CLI failed (${getErrorMessage(runError)})`),
+      );
+    }
+    return salvaged;
   }
-  const data =
-    structuredOutput ?? JSON.parse(extractJsonObject(lines.join("").trim()));
-  return schema.parse(data);
+
+  // Nothing usable. A non-zero exit is the more informative failure — it
+  // carries the CLI's own reason — so it wins over a parse error about text
+  // that was never going to be a verdict.
+  if (runError !== undefined) throw runError;
+  return schema.parse(JSON.parse(extractJsonObject(lines.join("").trim())));
 }
