@@ -27,11 +27,35 @@ import { runOpenCode, runOpenCodeStructured } from "./opencode.js";
 export function resolveAgentProvider(
   task: Pick<ClaudeTask, "provider">,
 ): AgentProvider {
-  const p = task.provider ?? process.env["EXECUTANT_PROVIDER"] ?? "claude";
-  if (p === "claude" || p === "opencode") return p;
+  return assertProvider(
+    task.provider ?? process.env["EXECUTANT_PROVIDER"] ?? "claude",
+    "the EXECUTANT_PROVIDER env var or the step's provider: field",
+  );
+}
+
+/**
+ * Resolves which provider grades a step, from EXECUTANT_JUDGE_PROVIDER,
+ * defaulting to "claude".
+ *
+ * Deliberately its own knob rather than following EXECUTANT_PROVIDER. Grading
+ * is a judgement about work the step already finished, so it is reasonable to
+ * want a capable model marking output that a smaller local one produced — and
+ * equally reasonable to want the whole run on one CLI. Reading the step's
+ * provider would silently take the first choice away; defaulting to "claude"
+ * keeps the long-standing behaviour for anyone who sets nothing.
+ */
+export function resolveJudgeProvider(): AgentProvider {
+  return assertProvider(
+    process.env["EXECUTANT_JUDGE_PROVIDER"] ?? "claude",
+    "the EXECUTANT_JUDGE_PROVIDER env var",
+  );
+}
+
+function assertProvider(value: string, source: string): AgentProvider {
+  if (value === "claude" || value === "opencode") return value;
   throw new Error(
-    `Unsupported provider "${p}". Expected "claude" or "opencode". ` +
-      `Check the EXECUTANT_PROVIDER env var or the step's provider: field.`,
+    `Unsupported provider "${value}". Expected "claude" or "opencode". ` +
+      `Check ${source}.`,
   );
 }
 
@@ -66,15 +90,21 @@ export async function* runAgent(task: ClaudeTask): AsyncGenerator<Event> {
  * Runs a prompt step through the resolved provider and returns a schema-validated result.
  * For claude: uses --json-schema for structured output with Zod fallback.
  * For opencode: uses prompt-and-parse fallback (no native --json-schema support).
+ *
+ * A structured call returns a value rather than streaming, so its events have
+ * nowhere to go by default and the cost of every one of them went unreported.
+ * `onEvent` is the seam back out: callers that sit inside a generator can
+ * forward what they care about — cost and token usage — into the run's stream.
  */
 export async function runAgentStructured<T>(
   task: Omit<ClaudeTask, "jsonSchema">,
   schema: ZodType<T>,
+  onEvent?: (event: Event) => void,
 ): Promise<T> {
   switch (resolveAgentProvider(task as ClaudeTask)) {
     case "claude":
-      return runClaudeStructured(task, schema);
+      return runClaudeStructured(task, schema, onEvent);
     case "opencode":
-      return runOpenCodeStructured(task, schema);
+      return runOpenCodeStructured(task, schema, onEvent);
   }
 }

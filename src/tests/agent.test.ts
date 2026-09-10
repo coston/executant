@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   resolveAgentModel,
   resolveAgentProvider,
+  resolveJudgeProvider,
   runAgentStructured,
 } from "../tasks/agent.js";
 
@@ -116,5 +117,42 @@ describe("resolveAgentModel", () => {
   test("task.model takes priority over EXECUTANT_MODEL env var", () => {
     setModel("opus");
     assert.equal(resolveAgentModel({ model: "haiku" }), "haiku");
+  });
+});
+
+describe("resolveJudgeProvider", () => {
+  const ORIGINAL_JUDGE = process.env["EXECUTANT_JUDGE_PROVIDER"];
+
+  function setJudge(value: string | undefined): void {
+    if (value === undefined) delete process.env["EXECUTANT_JUDGE_PROVIDER"];
+    else process.env["EXECUTANT_JUDGE_PROVIDER"] = value;
+  }
+
+  beforeEach(() => setJudge(undefined));
+  afterEach(() => setJudge(ORIGINAL_JUDGE));
+
+  test('defaults to "claude" when nothing is set', () => {
+    assert.equal(resolveJudgeProvider(), "claude");
+  });
+
+  test("reads EXECUTANT_JUDGE_PROVIDER", () => {
+    setJudge("opencode");
+    assert.equal(resolveJudgeProvider(), "opencode");
+  });
+
+  test("ignores EXECUTANT_PROVIDER", () => {
+    // Grading is its own choice: running every step on a small local model is
+    // not a reason to have that model mark its own work.
+    setProvider("opencode");
+    try {
+      assert.equal(resolveJudgeProvider(), "claude");
+    } finally {
+      setProvider(ORIGINAL_PROVIDER);
+    }
+  });
+
+  test("throws on an unrecognised value, naming its own env var", () => {
+    setJudge("gpt-9");
+    assert.throws(() => resolveJudgeProvider(), /EXECUTANT_JUDGE_PROVIDER/);
   });
 });

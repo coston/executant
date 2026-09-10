@@ -278,18 +278,20 @@ steps:
 | ----------------------------- | --------------------------------------------------------------------------------------------------- | --------------------- |
 | `EXECUTANT_PROVIDER`          | Agent backend: `claude` or `opencode`                                                               | `claude`              |
 | `EXECUTANT_MODEL`             | Model name. Claude: `sonnet`/`opus`. OpenCode: `llama-qwen7b/qwen2.5-coder-7b` etc.                 | per-provider default  |
+| `EXECUTANT_JUDGE_PROVIDER`    | Backend that grades [`llm_as_judge`](#quality-controls) steps. Its own knob, not `EXECUTANT_PROVIDER` | `claude`              |
 | `EXECUTANT_AGENT`             | OpenCode `--agent` name (ignored by Claude)                                                         | —                     |
 | `EXECUTANT_STATUSLINE`        | Set to `0` to hide the [context gauge](#statusline) (the test suite sets this)                      | enabled               |
 | `EXECUTANT_REPORT_SUGGESTION` | Set to `0` to skip the [run report](#run-report)'s efficiency-suggestion API call                   | enabled               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Enables [observability](#observability): exports traces + metrics to this OTLP/HTTP collector       | unset (telemetry off) |
 | `OTEL_SERVICE_NAME`           | `service.name` on exported telemetry                                                                | `executant`           |
 | `TRACEPARENT`                 | Set _by_ executant on every subprocess when telemetry is on — W3C trace context of the current step | —                     |
+| `MAX_STRUCTURED_OUTPUT_RETRIES` | Read _by_ the Claude CLI. Executant sets it to `2` on structured calls unless you set it yourself   | `2` (CLI default `5`) |
 
 Step-level `provider`, `model`, and `agent` fields take priority over env vars.
 
 ## Quality Controls
 
-- **`llm_as_judge: true`** — after a step completes, Claude evaluates the output; retries with feedback on FAIL, up to 5×
+- **`llm_as_judge: true`** — after a step completes, an agent evaluates the output; retries with feedback on FAIL, up to 5×. Grading runs on `EXECUTANT_JUDGE_PROVIDER` (default `claude`) rather than the step's own provider, so a run on a small local model can still be marked by a capable one. The judge sees the last 24,000 characters of the step's text output and says so when it had to trim; its cost is reported against the step.
   - The judge is handed the step's **text output only** — never its tool calls or their results — so it runs with read-only tools (`Read`, `Grep`, `Glob`) and is told to check a claim about the repo before failing a step over it. Without them it had failed steps for "missing" evidence that was sitting on disk.
   - A retry carries the judge's feedback **and the attempt it rejected**. Attempts start from a clean context, so feedback alone leaves the model rebuilding the deliverable from nothing — and regressing the parts the judge never objected to.
   - If the judge itself cannot return a verdict (CLI crash, structured output that never validates), the attempt is accepted ungraded with a warning. The step's work is already on disk; losing the run over the grader is worse than shipping it ungraded.

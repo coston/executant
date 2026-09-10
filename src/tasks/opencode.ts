@@ -220,11 +220,13 @@ function* parseOpenCodeMessage(msg: unknown): Generator<Event> {
 export async function runOpenCodeStructured<T>(
   task: Omit<ClaudeTask, "jsonSchema">,
   schema: ZodType<T>,
+  onEvent?: (event: Event) => void,
 ): Promise<T> {
   const prompt = `${task.prompt}\n\nReturn only one valid JSON object matching the required schema. Do not wrap it in markdown code fences.`;
 
   const lines: string[] = [];
   for await (const event of runOpenCode({ ...task, prompt })) {
+    onEvent?.(event);
     if (event.type === "output:text") lines.push(event.text);
   }
 

@@ -37,7 +37,11 @@ import type {
 } from "./types.js";
 import { traceparentEnv } from "./lib/trace-context.js";
 import { CommandError, runCommand } from "./tasks/command.js";
-import { runAgent, runAgentStructured } from "./tasks/agent.js";
+import {
+  runAgent,
+  runAgentStructured,
+  resolveJudgeProvider,
+} from "./tasks/agent.js";
 import {
   generateRetrospective,
   isRetrospectiveEnabled,
@@ -64,6 +68,32 @@ const JUDGE_EVALUATION_PROMPT = loadPrompt("judge-evaluation");
 const execPromise = promisify(exec);
 
 export const MAX_JUDGE_RETRIES = 5;
+
+/**
+ * How much of a step's output the judge is shown, in characters.
+ *
+ * The judge is handed every text event the step emitted, not its final answer,
+ * so an agentic step that narrates between tool calls buries its deliverable
+ * in commentary. That transcript is re-read on every grading attempt, and a
+ * long one both costs more and gives a structured call more room to go wrong.
+ * The tail is what survives a trim because the deliverable is what the step
+ * finished with — the earlier text is the working-out.
+ */
+export const JUDGE_OUTPUT_BUDGET = 24_000;
+
+/**
+ * Trims a step's output to {@link JUDGE_OUTPUT_BUDGET}, keeping the end and
+ * saying so. The marker matters: a judge that cannot see the start of the
+ * output should know that, rather than read the trim as the step having
+ * skipped something.
+ */
+export function trimForJudge(output: string): string {
+  if (output.length <= JUDGE_OUTPUT_BUDGET) return output;
+  return (
+    `[earlier output trimmed — showing the last ${JUDGE_OUTPUT_BUDGET} characters]\n` +
+    output.slice(-JUDGE_OUTPUT_BUDGET)
+  );
+}
 const MAX_HEALING_ATTEMPTS = 5;
 
 /**
@@ -1060,8 +1090,21 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
       text: `[judge] Evaluating "${task.name}"…`,
     };
     let verdict: { pass: boolean; feedback: string };
+    // Grading is a real API call whose cost belongs to this step. It used to
+    // vanish because a structured call returns a value instead of streaming.
+    const judgeEvents: Event[] = [];
+    const collectBillable = (event: Event) => {
+      if (event.type === "output:cost" || event.type === "output:usage") {
+        judgeEvents.push(event);
+      }
+    };
     try {
-      verdict = await evaluateWithJudge(task.name, task.prompt, previousOutput);
+      verdict = await evaluateWithJudge(
+        task.name,
+        task.prompt,
+        trimForJudge(previousOutput),
+        collectBillable,
+      );
     } catch (err) {
       // The judge itself failed to produce a verdict — the CLI crashed, its
       // structured output never validated, the API errored. None of that is
@@ -1073,8 +1116,12 @@ async function* runClaudeWithJudge(task: ClaudeTask): AsyncGenerator<Event> {
         level: "warn",
         text: `[judge] Could not evaluate "${task.name}" (${getErrorMessage(err)}) — accepting attempt ${attempt + 1} ungraded`,
       };
+      // A judge that fell over still spent whatever it spent getting there.
+      yield* judgeEvents;
       return;
     }
+
+    yield* judgeEvents;
 
     // index: -1 here — runWorkflow patches it to the real step index
     yield {
@@ -1125,7 +1172,9 @@ export async function evaluateWithJudge(
   stepName: string,
   stepInstructions: string,
   output: string,
+  onEvent?: (event: Event) => void,
 ): Promise<{ pass: boolean; feedback: string }> {
+  const provider = resolveJudgeProvider();
   const result = await runAgentStructured(
     {
       type: "claude",
@@ -1133,10 +1182,13 @@ export async function evaluateWithJudge(
       prompt: buildJudgePrompt(stepName, stepInstructions, output),
       allowedTools: ["Read", "Grep", "Glob"],
       permissionMode: "default",
-      model: DEFAULT_MODEL,
-      provider: "claude",
+      provider,
+      // DEFAULT_MODEL names a Claude model, so it is only meaningful when
+      // Claude is grading. Any other provider resolves its own model.
+      ...(provider === "claude" ? { model: DEFAULT_MODEL } : {}),
     },
     JudgeOutputSchema,
+    onEvent,
   );
   return { pass: result.pass, feedback: result.feedback };
 }

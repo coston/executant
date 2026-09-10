@@ -20,6 +20,9 @@ import {
   stripAnsi,
 } from "../lib/utils.js";
 import { traceparentEnv } from "../lib/trace-context.js";
+
+/** Structured-output retries per CLI invocation. See {@link structuredRetryEnv}. */
+const STRUCTURED_OUTPUT_RETRIES = 2;
 import { contextTokens } from "../lib/statusline.js";
 
 export const METHODOLOGY = loadPrompt("development-methodology");
@@ -73,6 +76,26 @@ export function resolveClaudePath(): string {
 }
 
 /**
+ * Caps how many times the CLI re-asks the model for output its grammar will
+ * accept, for structured calls only.
+ *
+ * The CLI's own default is five, and a call that dies with
+ * `error_max_structured_output_retries` has paid for all five. Those attempts
+ * are near-identical — the same answer rewritten after the same rejection —
+ * so the fifth rarely succeeds where the second did not, and each one costs a
+ * full generation. Since a failed structured call now has its answer salvaged
+ * from the text it already emitted, the later retries mostly buy latency and
+ * tokens. An explicit value in the environment always wins.
+ */
+export function structuredRetryEnv(
+  task: Pick<ClaudeTask, "jsonSchema">,
+): Record<string, string> {
+  if (task.jsonSchema === undefined) return {};
+  if (process.env["MAX_STRUCTURED_OUTPUT_RETRIES"] !== undefined) return {};
+  return { MAX_STRUCTURED_OUTPUT_RETRIES: String(STRUCTURED_OUTPUT_RETRIES) };
+}
+
+/**
  * Runs a Claude task via child_process.spawn.
  * Throws if Claude exits with a non-zero exit code.
  * Yields output:text, output:tool, output:cost, and log events.
@@ -91,7 +114,11 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
   try {
     proc = spawn(claudeBin, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...traceparentEnv() },
+      env: {
+        ...process.env,
+        ...traceparentEnv(),
+        ...structuredRetryEnv(task),
+      },
     });
   } catch (err) {
     throw new Error(
@@ -325,6 +352,7 @@ export function toAgentJsonSchema(
 export async function runClaudeStructured<T>(
   task: Omit<ClaudeTask, "jsonSchema">,
   schema: ZodType<T>,
+  onEvent?: (event: Event) => void,
 ): Promise<T> {
   const jsonSchema = toAgentJsonSchema(schema);
   let structuredOutput: unknown;
@@ -333,6 +361,7 @@ export async function runClaudeStructured<T>(
 
   try {
     for await (const event of runClaude({ ...task, jsonSchema })) {
+      onEvent?.(event);
       if (event.type === "output:structured") structuredOutput = event.data;
       else if (event.type === "output:text") lines.push(event.text);
     }

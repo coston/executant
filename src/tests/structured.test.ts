@@ -7,11 +7,11 @@
 // same object back to back.
 
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { describe, test, afterEach } from "node:test";
 import { z } from "zod";
 
 import { findJsonObjects, salvageStructured } from "../tasks/structured.js";
-import { toAgentJsonSchema } from "../tasks/claude.js";
+import { toAgentJsonSchema, structuredRetryEnv } from "../tasks/claude.js";
 
 const Verdict = z.object({
   pass: z.boolean(),
@@ -153,5 +153,35 @@ describe("toAgentJsonSchema", () => {
       "reasoning",
       "feedback",
     ]);
+  });
+});
+
+describe("structuredRetryEnv", () => {
+  const ORIGINAL = process.env["MAX_STRUCTURED_OUTPUT_RETRIES"];
+
+  afterEach(() => {
+    if (ORIGINAL === undefined)
+      delete process.env["MAX_STRUCTURED_OUTPUT_RETRIES"];
+    else process.env["MAX_STRUCTURED_OUTPUT_RETRIES"] = ORIGINAL;
+  });
+
+  test("sets nothing for a plain (non-structured) task", () => {
+    delete process.env["MAX_STRUCTURED_OUTPUT_RETRIES"];
+    assert.deepEqual(structuredRetryEnv({}), {});
+  });
+
+  test("caps retries for a structured task", () => {
+    delete process.env["MAX_STRUCTURED_OUTPUT_RETRIES"];
+    assert.deepEqual(structuredRetryEnv({ jsonSchema: { type: "object" } }), {
+      MAX_STRUCTURED_OUTPUT_RETRIES: "2",
+    });
+  });
+
+  test("defers to an explicit value in the environment", () => {
+    process.env["MAX_STRUCTURED_OUTPUT_RETRIES"] = "9";
+    assert.deepEqual(
+      structuredRetryEnv({ jsonSchema: { type: "object" } }),
+      {},
+    );
   });
 });

@@ -15,7 +15,11 @@ import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { evaluateWithJudge } from "../runner.js";
+import {
+  evaluateWithJudge,
+  trimForJudge,
+  JUDGE_OUTPUT_BUDGET,
+} from "../runner.js";
 import type { ClaudeTask, Event, LogEvent, Workflow } from "../types.js";
 import {
   collectEvents,
@@ -386,6 +390,91 @@ describe("runClaudeWithJudge — integration", () => {
     assert.ok(
       !logs.some((e) => e.text === "[judge] PASS"),
       "Expected no PASS log",
+    );
+  });
+});
+
+describe("trimForJudge", () => {
+  test("leaves output within budget untouched", () => {
+    const output = "a short deliverable";
+    assert.equal(trimForJudge(output), output);
+  });
+
+  test("leaves output exactly at the budget untouched", () => {
+    const output = "x".repeat(JUDGE_OUTPUT_BUDGET);
+    assert.equal(trimForJudge(output), output);
+  });
+
+  test("keeps the end of oversized output, not the start", () => {
+    // The deliverable is what the step finished with; the narration that
+    // preceded it is the working-out.
+    const output = `${"n".repeat(JUDGE_OUTPUT_BUDGET)}THE-DELIVERABLE`;
+    const trimmed = trimForJudge(output);
+    assert.ok(trimmed.endsWith("THE-DELIVERABLE"));
+    assert.ok(trimmed.includes("earlier output trimmed"));
+  });
+
+  test("says it trimmed, so the judge does not read a cut as an omission", () => {
+    const trimmed = trimForJudge("y".repeat(JUDGE_OUTPUT_BUDGET + 1));
+    assert.ok(trimmed.startsWith("[earlier output trimmed"));
+  });
+});
+
+describe("judge accounting and input size — integration", () => {
+  let originalPath: string;
+  let originalProvider: string | undefined;
+
+  beforeEach(() => {
+    originalPath = process.env["PATH"] ?? "";
+    originalProvider = process.env["EXECUTANT_PROVIDER"];
+    delete process.env["EXECUTANT_PROVIDER"];
+  });
+
+  afterEach(() => {
+    process.env["PATH"] = originalPath;
+    if (originalProvider === undefined)
+      delete process.env["EXECUTANT_PROVIDER"];
+    else process.env["EXECUTANT_PROVIDER"] = originalProvider;
+  });
+
+  test("the judge's own cost reaches the run stream", async () => {
+    // A structured call returns a value instead of streaming, so grading used
+    // to spend real money that the run report never saw. Both the step and its
+    // judge emit a cost event from the mock, so two must arrive.
+    installSequencedMock(["main step output", judgeResponse(true, "")]);
+
+    const events = await collectEvents(judgeWorkflow("report"));
+    const costs = events.filter((e) => e.type === "output:cost");
+
+    assert.equal(costs.length, 2, "expected the step's cost and the judge's");
+  });
+
+  test("an oversized step output is trimmed before the judge sees it", async () => {
+    const deliverable = "THE-DELIVERABLE";
+    const bloated = `${"narration ".repeat(4000)}${deliverable}`;
+    assert.ok(
+      bloated.length > JUDGE_OUTPUT_BUDGET,
+      "fixture must exceed budget",
+    );
+
+    const { promptsDir } = installSequencedMock([
+      bloated,
+      judgeResponse(true, ""),
+    ]);
+    await collectEvents(judgeWorkflow("report"));
+
+    const judgePrompt = readFileSync(join(promptsDir, "1.txt"), "utf8");
+    assert.ok(
+      judgePrompt.includes("earlier output trimmed"),
+      "judge prompt should say it was trimmed",
+    );
+    assert.ok(
+      judgePrompt.includes(deliverable),
+      "the deliverable at the end must survive the trim",
+    );
+    assert.ok(
+      judgePrompt.length < bloated.length,
+      "judge prompt should be smaller than the raw output",
     );
   });
 });
