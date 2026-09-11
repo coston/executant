@@ -345,6 +345,44 @@ export interface OutputContextEvent {
   tokens: number;
 }
 
+export type RateLimitStatus = "allowed" | "allowed_warning" | "rejected";
+
+export interface RateLimitWindow {
+  /** 0..1 share of the window already used. */
+  utilization: number;
+  /** Unix seconds when the window resets. */
+  resetsAt: number;
+}
+
+/**
+ * The provider's own view of the account's usage limit, forwarded from the
+ * CLI's `rate_limit_event` whenever it changes. Re-emitted as state changes;
+ * a consumer REPLACES the previous value, never accumulates.
+ *
+ * Purely a relay: executant does not act on it (no pausing, no switching),
+ * and a `rejected` run still fails the way it always has. The point is that
+ * an orchestrator learns a subscription is running dry *before* the hard
+ * stop, rather than only from the final failure.
+ */
+export interface OutputRateLimitEvent {
+  type: "output:rate-limit";
+  /**
+   * 0-based step index. Inner generators emit -1 as a sentinel;
+   * runWorkflow patches this to the real step index before yielding downstream.
+   */
+  index: number;
+  status: RateLimitStatus;
+  /** Unix seconds; the window the provider considers binding right now. */
+  resetsAt?: number;
+  rateLimitType?: string;
+  /** 0..1 for the binding window. */
+  utilization?: number;
+  windows?: {
+    five_hour?: RateLimitWindow;
+    seven_day?: RateLimitWindow;
+  };
+}
+
 /** Schema-validated JSON object from a Claude invocation that used --json-schema. */
 export interface OutputStructuredEvent {
   type: "output:structured";
@@ -511,6 +549,7 @@ export type Event =
   | OutputCostEvent
   | OutputUsageEvent
   | OutputContextEvent
+  | OutputRateLimitEvent
   | OutputStructuredEvent
   | LogEvent
   | StepInterjectionEvent
@@ -636,6 +675,8 @@ export interface ExecutionState {
   retrospective?: Retrospective;
   /** Run summary, populated once workflow:report fires on successful completion. */
   report?: RunReport;
+  /** The provider's latest usage-limit state; replaced on every output:rate-limit. */
+  rateLimit?: OutputRateLimitEvent;
 }
 
 // ----------------------------------------------------------------------------

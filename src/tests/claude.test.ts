@@ -21,7 +21,11 @@ import {
   resolveClaudePath,
   runClaude,
 } from "../tasks/claude.js";
-import type { OutputContextEvent, OutputUsageEvent } from "../types.js";
+import type {
+  OutputContextEvent,
+  OutputRateLimitEvent,
+  OutputUsageEvent,
+} from "../types.js";
 
 // ----------------------------------------------------------------------------
 // METHODOLOGY — content integrity
@@ -616,6 +620,120 @@ exit 0
     installResult({ type: "result", total_cost_usd: 0.05, usage: "oops" });
     const usageEvent = await runAndCollectUsage();
     assert.equal(usageEvent, undefined);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// rate_limit_event parsing — output:rate-limit
+// ----------------------------------------------------------------------------
+
+describe("runClaude — rate limit parsing", () => {
+  let mockDir: string;
+  let originalPath: string;
+
+  beforeEach(() => {
+    originalPath = process.env["PATH"] ?? "";
+    mockDir = join(tmpdir(), `claude-rate-limit-test-${Date.now()}`);
+    mkdirSync(mockDir, { recursive: true });
+    process.env["PATH"] = `${mockDir}:${originalPath}`;
+  });
+
+  afterEach(() => {
+    process.env["PATH"] = originalPath;
+    rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  /** Payload shape as emitted by the CLI (verified against 2.1.266). */
+  const fullInfo = {
+    status: "allowed_warning",
+    resetsAt: 1_757_600_000,
+    rateLimitType: "five_hour",
+    utilization: 0.87,
+    unifiedWindows: {
+      five_hour: { utilization: 0.87, resetsAt: 1_757_600_000 },
+      seven_day: { utilization: 0.41, resetsAt: 1_758_100_000 },
+    },
+  };
+
+  function installRateLimit(rateLimitInfo: unknown): void {
+    const line = JSON.stringify({
+      type: "rate_limit_event",
+      rate_limit_info: rateLimitInfo,
+      uuid: "u",
+      session_id: "s",
+    });
+    const script = join(mockDir, "claude");
+    writeFileSync(
+      script,
+      `#!/usr/bin/env bash
+echo '${line}'
+echo '{"type":"result","total_cost_usd":0.01}'
+exit 0
+`,
+      "utf8",
+    );
+    chmodSync(script, 0o755);
+  }
+
+  async function runAndCollect(): Promise<OutputRateLimitEvent[]> {
+    const task = { type: "claude" as const, name: "t", prompt: "do it" };
+    const events = [];
+    for await (const e of runClaude(task)) events.push(e);
+    return events.filter(
+      (e): e is OutputRateLimitEvent => e.type === "output:rate-limit",
+    );
+  }
+
+  test("forwards the full payload as one output:rate-limit event", async () => {
+    installRateLimit(fullInfo);
+    const events = await runAndCollect();
+    assert.deepEqual(events, [
+      {
+        type: "output:rate-limit",
+        index: -1,
+        status: "allowed_warning",
+        resetsAt: 1_757_600_000,
+        rateLimitType: "five_hour",
+        utilization: 0.87,
+        windows: {
+          five_hour: { utilization: 0.87, resetsAt: 1_757_600_000 },
+          seven_day: { utilization: 0.41, resetsAt: 1_758_100_000 },
+        },
+      },
+    ]);
+  });
+
+  test("a minimal payload yields an event carrying only status", async () => {
+    installRateLimit({ status: "allowed" });
+    const events = await runAndCollect();
+    assert.deepEqual(events, [
+      { type: "output:rate-limit", index: -1, status: "allowed" },
+    ]);
+  });
+
+  test("drops an unknown status rather than throwing", async () => {
+    installRateLimit({ ...fullInfo, status: "throttled" });
+    assert.deepEqual(await runAndCollect(), []);
+  });
+
+  test("omits a malformed window and keeps the others", async () => {
+    installRateLimit({
+      status: "allowed",
+      unifiedWindows: {
+        five_hour: { utilization: 0.5 },
+        seven_day: { utilization: 0.41, resetsAt: 1_758_100_000 },
+        seven_day_overage_included: { utilization: 0.1, resetsAt: 1 },
+      },
+    });
+    const [event] = await runAndCollect();
+    assert.deepEqual(event?.windows, {
+      seven_day: { utilization: 0.41, resetsAt: 1_758_100_000 },
+    });
+  });
+
+  test("emits nothing when rate_limit_info is not an object", async () => {
+    installRateLimit("oops");
+    assert.deepEqual(await runAndCollect(), []);
   });
 });
 

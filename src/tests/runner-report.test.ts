@@ -40,6 +40,8 @@ function installUsageMock(opts: {
   inputTokens: number;
   outputTokens?: number;
   cacheReadTokens?: number;
+  /** When set, the mock also emits a `rate_limit_event` before its result. */
+  rateLimitInfo?: object;
 }): void {
   const mockDir = join(
     tmpdir(),
@@ -57,11 +59,14 @@ function installUsageMock(opts: {
       cache_read_input_tokens: opts.cacheReadTokens ?? 0,
     },
   });
+  const rateLimitLine = opts.rateLimitInfo
+    ? `echo '${JSON.stringify({ type: "rate_limit_event", rate_limit_info: opts.rateLimitInfo })}'\n`
+    : "";
   writeFileSync(
     script,
     `#!/usr/bin/env bash
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
-echo '${resultLine}'
+${rateLimitLine}echo '${resultLine}'
 exit 0
 `,
     "utf8",
@@ -113,6 +118,31 @@ describe("runWorkflow — workflow:report", () => {
     assert.ok(Math.abs(report.totalCostUsd - 0.02) < 1e-9);
     assert.equal(report.totalTokens.inputTokens, 200);
     assert.equal(report.totalTokens.outputTokens, 40);
+  });
+
+  test("an output:rate-limit passes through with the step index and is not billable", async () => {
+    installUsageMock({
+      costUsd: 0.01,
+      inputTokens: 100,
+      rateLimitInfo: { status: "allowed_warning", utilization: 0.9 },
+    });
+    const wf: Workflow = { goal: "g", tasks: [claudeStep("a")] };
+    const events: Event[] = [];
+    for await (const e of runWorkflow(wf)) events.push(e);
+
+    const rateLimits = events.filter((e) => e.type === "output:rate-limit");
+    assert.deepEqual(rateLimits, [
+      {
+        type: "output:rate-limit",
+        index: 0,
+        status: "allowed_warning",
+        utilization: 0.9,
+      },
+    ]);
+    // The relay leaves the run's accounting exactly as the result message set it.
+    const report = reportEvents(events)[0]!.report;
+    assert.ok(Math.abs(report.totalCostUsd - 0.01) < 1e-9);
+    assert.equal(report.totalTokens.inputTokens, 100);
   });
 
   test("a script-only run reports zero cost and zero tokens", async () => {

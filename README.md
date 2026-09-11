@@ -556,7 +556,7 @@ executant --var KEY=VALUE wf.yaml              # override a workflow var at runt
 executant update                                # upgrade to latest version
 ```
 
-CI mode streams every runner event as one JSON object per line. The stream is additive: new event types (most recently `step:healing` and `step:judge`) and fields (a step `index` on `output:cost`) appear over time, so consumers should ignore event types and fields they don't recognise.
+CI mode streams every runner event as one JSON object per line. The stream is additive: new event types (most recently `output:rate-limit`, the provider's usage-limit state — replace on each one, don't accumulate) and fields (a step `index` on `output:cost`) appear over time, so consumers should ignore event types and fields they don't recognise.
 
 ### Exit codes
 

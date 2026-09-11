@@ -183,6 +183,11 @@ export function reducer(state: ExecutionState, event: Event): ExecutionState {
     case "output:context":
       return state; // cost/usage/context are intentionally not shown live in the TUI
 
+    case "output:rate-limit":
+      // The provider's latest limit state — replaced, never accumulated.
+      // Not rendered yet; kept so the reducer stays exhaustive.
+      return { ...state, rateLimit: event };
+
     case "output:structured":
       return state; // structured output is consumed by callers, not shown in the TUI
 

@@ -220,6 +220,7 @@ export async function* runWorkflow(
           event.type === "output:cost" ||
           event.type === "output:usage" ||
           event.type === "output:context" ||
+          event.type === "output:rate-limit" ||
           event.type === "step:healing" ||
           event.type === "step:judge"
         ) {

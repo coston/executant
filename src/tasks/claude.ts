@@ -9,7 +9,14 @@
 import { execSync, spawn } from "node:child_process";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ZodType } from "zod";
-import type { ClaudeTask, Event, TokenUsage } from "../types.js";
+import type {
+  ClaudeTask,
+  Event,
+  OutputRateLimitEvent,
+  RateLimitStatus,
+  RateLimitWindow,
+  TokenUsage,
+} from "../types.js";
 import { resolveAgentModel } from "./agent.js";
 import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
 import { salvageStructured } from "./structured.js";
@@ -265,6 +272,13 @@ function* parseClaudeMessage(
       const resultError = [subtype, detail].filter(Boolean).join(": ");
       if (resultError) state.resultError = resultError;
     }
+  } else if (msg["type"] === "rate_limit_event") {
+    // The account's usage-limit state, forwarded so an orchestrator can act
+    // before the run hard-stops with "usage limit reached". Pure relay:
+    // nothing here pauses or switches anything.
+    const rateLimit = parseRateLimit(msg["rate_limit_info"]);
+    // index: -1 here — runWorkflow patches it to the real step index
+    if (rateLimit) yield { type: "output:rate-limit", index: -1, ...rateLimit };
   }
 }
 
@@ -283,6 +297,53 @@ function parseUsage(raw: unknown): TokenUsage | undefined {
     cacheCreationTokens: num(raw["cache_creation_input_tokens"]),
     cacheReadTokens: num(raw["cache_read_input_tokens"]),
   };
+}
+
+const RATE_LIMIT_STATUSES: readonly RateLimitStatus[] = [
+  "allowed",
+  "allowed_warning",
+  "rejected",
+];
+
+/**
+ * Reads a `rate_limit_event`'s `rate_limit_info` object. Anything other than
+ * a known `status` yields undefined rather than throwing — the CLI adds
+ * statuses over time, and a limit report is never load-bearing for a step.
+ * Optional fields are copied only when well-typed, and a window only when it
+ * carries both numbers; unknown window keys are dropped.
+ */
+function parseRateLimit(
+  raw: unknown,
+): Omit<OutputRateLimitEvent, "type" | "index"> | undefined {
+  if (!isObject(raw)) return undefined;
+  const status = RATE_LIMIT_STATUSES.find((s) => s === raw["status"]);
+  if (!status) return undefined;
+  const resetsAt = getFiniteNumber(raw, "resetsAt");
+  const rateLimitType = getString(raw, "rateLimitType");
+  const utilization = getFiniteNumber(raw, "utilization");
+  const unified = isObject(raw["unifiedWindows"]) ? raw["unifiedWindows"] : {};
+  const windows = Object.fromEntries(
+    (["five_hour", "seven_day"] as const).flatMap((key) => {
+      const window = parseRateLimitWindow(unified[key]);
+      return window ? [[key, window]] : [];
+    }),
+  );
+  return {
+    status,
+    ...(resetsAt !== undefined && { resetsAt }),
+    ...(rateLimitType !== undefined && { rateLimitType }),
+    ...(utilization !== undefined && { utilization }),
+    ...(Object.keys(windows).length > 0 && { windows }),
+  };
+}
+
+function parseRateLimitWindow(raw: unknown): RateLimitWindow | undefined {
+  if (!isObject(raw)) return undefined;
+  const utilization = getFiniteNumber(raw, "utilization");
+  const resetsAt = getFiniteNumber(raw, "resetsAt");
+  return utilization !== undefined && resetsAt !== undefined
+    ? { utilization, resetsAt }
+    : undefined;
 }
 
 // ----------------------------------------------------------------------------
@@ -337,6 +398,14 @@ function getString(
 ): string | undefined {
   const v = obj[key];
   return typeof v === "string" ? v : undefined;
+}
+
+function getFiniteNumber(
+  obj: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const v = obj[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
 /**
