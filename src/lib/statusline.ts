@@ -158,6 +158,22 @@ export function fitRepoLabel(repo: RepoInfo, maxWidth: number): RepoInfo {
   };
 }
 
+/**
+ * The parent environment minus every `GIT_*` variable. git exports
+ * `GIT_DIR`, `GIT_INDEX_FILE` and friends to hooks, and a child `git -C <dir>`
+ * obeys them over `-C` — so executant launched from a hook would report the
+ * hook's repository, and a test's `git init` in a temp dir would land in the
+ * real one (it did: a bare-flagged repo, stray "init" commits, a fake
+ * user.email). Exported for the tests, which spawn git the same way.
+ */
+export function withoutGitEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !key.startsWith("GIT_")),
+  );
+}
+
 /** Runs a git subcommand in `cwd`, resolving undefined on any failure. */
 function runGit(
   args: string[],
@@ -170,6 +186,7 @@ function runGit(
       child = spawn("git", ["-C", cwd, ...args], {
         timeout: timeoutMs,
         stdio: ["ignore", "pipe", "ignore"],
+        env: withoutGitEnv(),
       });
     } catch {
       resolveResult(undefined);

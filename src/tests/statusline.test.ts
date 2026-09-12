@@ -20,6 +20,7 @@ import {
   fitRepoLabel,
   readRepoInfo,
   statusLineEnabled,
+  withoutGitEnv,
   DEFAULT_CONTEXT_WINDOW,
   EXTENDED_CONTEXT_WINDOW,
   GAUGE_CHAR,
@@ -183,12 +184,50 @@ describe("fitRepoLabel", () => {
 // readRepoInfo
 // ----------------------------------------------------------------------------
 
+describe("withoutGitEnv", () => {
+  test("drops every GIT_* variable and keeps the rest", () => {
+    const env = withoutGitEnv({
+      GIT_DIR: "/somewhere/.git",
+      GIT_INDEX_FILE: "/somewhere/.git/index.lock",
+      PATH: "/usr/bin",
+      HOME: "/home/t",
+    });
+    assert.deepEqual(env, { PATH: "/usr/bin", HOME: "/home/t" });
+  });
+
+  test("reads git from the target directory even under a hook's GIT_DIR", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "executant-statusline-hookenv-"));
+    const original = process.env["GIT_DIR"];
+    try {
+      const git = (...args: string[]) =>
+        execFileSync("git", ["-C", dir, ...args], {
+          stdio: "ignore",
+          env: withoutGitEnv(),
+        });
+      git("init", "-q", "-b", "trunk");
+      git("config", "user.email", "t@example.com");
+      git("config", "user.name", "T");
+      git("commit", "-q", "--allow-empty", "-m", "init");
+      // What a git hook exports: points at some OTHER repository.
+      process.env["GIT_DIR"] = join(dir, "does-not-exist", ".git");
+      assert.equal((await readRepoInfo(dir))?.branch, "trunk");
+    } finally {
+      if (original === undefined) delete process.env["GIT_DIR"];
+      else process.env["GIT_DIR"] = original;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("readRepoInfo", () => {
   test("reads the repo name and branch", async () => {
     const dir = mkdtempSync(join(tmpdir(), "executant-statusline-repo-"));
     try {
       const git = (...args: string[]) =>
-        execFileSync("git", ["-C", dir, ...args], { stdio: "ignore" });
+        execFileSync("git", ["-C", dir, ...args], {
+          stdio: "ignore",
+          env: withoutGitEnv(),
+        });
       git("init", "-q", "-b", "trunk");
       git("config", "user.email", "t@example.com");
       git("config", "user.name", "T");
@@ -205,18 +244,19 @@ describe("readRepoInfo", () => {
     const dir = mkdtempSync(join(tmpdir(), "executant-statusline-detached-"));
     try {
       const git = (...args: string[]) =>
-        execFileSync("git", ["-C", dir, ...args], { stdio: "ignore" });
+        execFileSync("git", ["-C", dir, ...args], {
+          stdio: "ignore",
+          env: withoutGitEnv(),
+        });
       git("init", "-q");
       git("config", "user.email", "t@example.com");
       git("config", "user.name", "T");
       git("commit", "-q", "--allow-empty", "-m", "init");
-      const sha = execFileSync("git", [
-        "-C",
-        dir,
-        "rev-parse",
-        "--short",
-        "HEAD",
-      ])
+      const sha = execFileSync(
+        "git",
+        ["-C", dir, "rev-parse", "--short", "HEAD"],
+        { env: withoutGitEnv() },
+      )
         .toString()
         .trim();
       git("checkout", "-q", "--detach");
