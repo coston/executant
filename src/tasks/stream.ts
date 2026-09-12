@@ -100,6 +100,26 @@ export function waitForExit(proc: ReturnType<typeof spawn>): Promise<number> {
 }
 
 /**
+ * Hands an agent CLI its prompt on stdin and closes the pipe, so the CLI
+ * sees EOF and starts working. The prompt never goes on argv: Linux caps one
+ * argv string at 128 KiB (MAX_ARG_STRLEN) and a prompt with `context:` files
+ * inlined can exceed that, in which case spawn fails with `E2BIG`.
+ *
+ * Writing to a child that has already died raises EPIPE on the stdin stream;
+ * that is not the failure worth reporting — the exit code and stderr are —
+ * so it is swallowed here.
+ */
+export function writePrompt(
+  proc: ReturnType<typeof spawn>,
+  prompt: string,
+): void {
+  const stdin = proc.stdin;
+  if (!stdin) throw new Error("child process has no stdin pipe");
+  stdin.on("error", () => {});
+  stdin.end(prompt);
+}
+
+/**
  * Arms a kill-on-timeout guard for a child process.
  * Call check() after waitForExit() to throw TimeoutError if the timer fired.
  * Call cancel() in a finally block to disarm the timer on normal completion.

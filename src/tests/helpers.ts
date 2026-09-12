@@ -105,7 +105,7 @@ export function installSequencedMock(
     `#!/usr/bin/env bash
 count=$(cat "${counterFile}")
 echo $((count + 1)) > "${counterFile}"
-printf '%s' "$2" > "${promptsDir}/$count.txt"
+cat > "${promptsDir}/$count.txt"
 cat "${responsesDir}/$count.ndjson"
 code=0
 if [ -f "${exitsDir}/$count" ]; then code=$(cat "${exitsDir}/$count"); fi

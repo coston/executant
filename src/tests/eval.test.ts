@@ -385,7 +385,7 @@ describe("runPrompt", () => {
     const mockScript = join(mockDir, "claude");
     writeFileSync(
       mockScript,
-      `#!/usr/bin/env bash\nprintf '%s' "$2" > "${promptCapture}"\ncat "${responseFile}"\nexit 0\n`,
+      `#!/usr/bin/env bash\ncat > "${promptCapture}"\ncat "${responseFile}"\nexit 0\n`,
     );
     chmodSync(mockScript, 0o755);
     const orig = process.env["PATH"] ?? "";

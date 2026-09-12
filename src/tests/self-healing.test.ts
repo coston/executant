@@ -498,14 +498,14 @@ steps:
       promptLogFile = join(dir, "prompts.log");
 
       // Mock that:
-      //   - on every invocation: writes its --print argument to promptLogFile
+      //   - on every invocation: writes its stdin prompt to promptLogFile
       //   - emits a tool_use block so the fix summary uses the tool call
       const mockScript = join(dir, "claude");
       writeFileSync(
         mockScript,
         `#!/usr/bin/env bash
-# $2 is the prompt (arg after --print)
-printf '%s\\n---END---\\n' "$2" >> "${promptLogFile}"
+# the prompt arrives on stdin
+printf '%s\\n---END---\\n' "$(cat)" >> "${promptLogFile}"
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/target.ts"}}]}}\\n'
 printf '{"type":"result","total_cost_usd":0.001}\\n'
 exit 0
@@ -569,7 +569,7 @@ exit 0
       writeFileSync(
         mockScript,
         `#!/usr/bin/env bash
-printf '%s\\n---END---\\n' "$2" >> "${textPromptLog}"
+printf '%s\\n---END---\\n' "$(cat)" >> "${textPromptLog}"
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Diagnosed missing dependency"}]}}\\n'
 printf '{"type":"result","total_cost_usd":0.001}\\n'
 exit 0

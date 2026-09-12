@@ -252,7 +252,9 @@ The interjection feature lets users send a correction to a running workflow by p
 
 **Delivery path for queued messages:** `runStep` (case `"claude"`) calls `channel.consumeQueue()` before building the task. If messages are present they are prepended to the prompt as `[User correction from a previous step]\n<messages>\n\n---\n<original prompt>`.
 
-**Why stdin injection doesn't work:** The Claude CLI (without `--print`) reads stdin until EOF before processing the input. Keeping stdin open while waiting for potential interjections causes Claude to hang — it never processes the prompt. Tested and confirmed: `{ printf "prompt\n"; sleep 5; } | claude` produces no response. True mid-step injection would require killing and resuming the subprocess with accumulated context, which is a future capability.
+**Why stdin injection doesn't work:** The Claude CLI reads stdin until EOF before processing the input. Keeping stdin open while waiting for potential interjections causes Claude to hang — it never processes the prompt. Tested and confirmed: `{ printf "prompt\n"; sleep 5; } | claude` produces no response. True mid-step injection would require killing and resuming the subprocess with accumulated context, which is a future capability.
+
+**The prompt itself travels on stdin, not argv.** `runClaude` (and `runOpenCode`) spawn the CLI with a bare `--print`, write the prompt to stdin and close it at once (`writePrompt` in `src/tasks/stream.ts`). Linux caps one argv string at 128 KiB (`MAX_ARG_STRLEN`); a prompt with `context:` files inlined can exceed that, and the spawn then fails with `E2BIG` before the CLI starts. stdin has no such cap. This is compatible with the point above precisely because stdin is closed immediately — the CLI sees EOF and proceeds.
 
 **`buildClaudeArgs(task, interactive?)`** accepts an `interactive` flag that omits `--print` from the returned args. This is retained for testability (the test suite validates the interactive-mode args contract) but is not used in the production code path — `runClaude` always passes `interactive=false` (the default).
 

@@ -83,12 +83,15 @@ describe("buildOpenCodeArgs", () => {
     else delete process.env["EXECUTANT_AGENT"];
   });
 
-  test("includes run --format json and the prompt", () => {
+  test("includes run --format json; the prompt goes on stdin, never argv", () => {
     const args = buildOpenCodeArgs(baseTask());
     assert.ok(args.includes("run"));
     assert.ok(args.includes("--format"));
     assert.ok(args.includes("json"));
-    assert.equal(args[args.length - 1], "Do something");
+    assert.ok(
+      !args.includes("Do something"),
+      "prompt must not be an argv element (MAX_ARG_STRLEN → E2BIG)",
+    );
   });
 
   test("includes --dangerously-skip-permissions for bypassPermissions (default)", () => {

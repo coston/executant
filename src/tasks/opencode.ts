@@ -11,7 +11,12 @@ import { execSync, spawn } from "node:child_process";
 import type { ZodType } from "zod";
 import type { ClaudeTask, Event } from "../types.js";
 import { resolveAgentModel } from "./agent.js";
-import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
+import {
+  mergeStreamsToLines,
+  waitForExit,
+  startTimeout,
+  writePrompt,
+} from "./stream.js";
 import { salvageStructured } from "./structured.js";
 import { extractJsonObject, getErrorMessage, stripAnsi } from "../lib/utils.js";
 import { traceparentEnv } from "../lib/trace-context.js";
@@ -85,7 +90,6 @@ export function buildOpenCodeArgs(task: ClaudeTask): string[] {
     ...(permissionMode === "bypassPermissions"
       ? ["--dangerously-skip-permissions"]
       : []),
-    task.prompt,
   ];
 }
 
@@ -108,7 +112,7 @@ export async function* runOpenCode(task: ClaudeTask): AsyncGenerator<Event> {
   try {
     const permissionEnv = buildOpenCodePermissionEnv(task.allowedTools);
     proc = spawn(opencodeBin, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
         ...traceparentEnv(),
@@ -120,6 +124,7 @@ export async function* runOpenCode(task: ClaudeTask): AsyncGenerator<Event> {
       `Failed to spawn opencode (${opencodeBin}): ${getErrorMessage(err)}`,
     );
   }
+  writePrompt(proc, task.prompt);
 
   const cleanup = () => {
     try {

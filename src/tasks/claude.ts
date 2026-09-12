@@ -18,7 +18,12 @@ import type {
   TokenUsage,
 } from "../types.js";
 import { resolveAgentModel } from "./agent.js";
-import { mergeStreamsToLines, waitForExit, startTimeout } from "./stream.js";
+import {
+  mergeStreamsToLines,
+  waitForExit,
+  startTimeout,
+  writePrompt,
+} from "./stream.js";
 import { salvageStructured } from "./structured.js";
 import {
   extractJsonObject,
@@ -34,7 +39,15 @@ import { contextTokens } from "../lib/statusline.js";
 
 export const METHODOLOGY = loadPrompt("development-methodology");
 
-/** Constructs the CLI args array for a Claude invocation. Exported for testing. */
+/**
+ * Constructs the CLI args array for a Claude invocation. Exported for testing.
+ *
+ * The prompt is NOT an argument. Linux caps a single argv string at 128 KiB
+ * (MAX_ARG_STRLEN), and a prompt with a few `context:` files inlined clears
+ * that easily — the spawn then dies with `E2BIG` before the CLI even starts.
+ * `--print` with no value makes the CLI read the prompt from stdin, which has
+ * no such limit; `runClaude` writes it there.
+ */
 export function buildClaudeArgs(
   task: ClaudeTask,
   interactive = false,
@@ -42,7 +55,7 @@ export function buildClaudeArgs(
   const permissionMode = task.permissionMode ?? "bypassPermissions";
   const model = resolveAgentModel(task);
   return [
-    ...(interactive ? [] : ["--print", task.prompt]),
+    ...(interactive ? [] : ["--print"]),
     "--output-format",
     "stream-json",
     "--verbose",
@@ -120,7 +133,7 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
   let proc: ReturnType<typeof spawn>;
   try {
     proc = spawn(claudeBin, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
         ...traceparentEnv(),
@@ -132,6 +145,7 @@ export async function* runClaude(task: ClaudeTask): AsyncGenerator<Event> {
       `Failed to spawn claude (${claudeBin}): ${getErrorMessage(err)}`,
     );
   }
+  writePrompt(proc, task.prompt);
 
   // Kill the subprocess if the parent process is signalled.
   const cleanup = () => {

@@ -90,14 +90,17 @@ describe("METHODOLOGY", () => {
 // ----------------------------------------------------------------------------
 
 describe("buildClaudeArgs", () => {
-  test("starts with --print followed by the prompt", () => {
+  test("starts with a bare --print; the prompt goes on stdin, never argv", () => {
     const args = buildClaudeArgs({
       type: "claude",
       name: "test",
       prompt: "hello world",
     });
     assert.equal(args[0], "--print");
-    assert.equal(args[1], "hello world");
+    assert.ok(
+      !args.includes("hello world"),
+      "prompt must not be an argv element (MAX_ARG_STRLEN → E2BIG)",
+    );
   });
 
   test("no --append-system-prompt by default (methodology is plan-only)", () => {
@@ -221,14 +224,14 @@ describe("buildClaudeArgs", () => {
     );
   });
 
-  test("interactive=false (default) includes --print and prompt", () => {
+  test("interactive=false (default) includes --print without the prompt", () => {
     const args = buildClaudeArgs({
       type: "claude",
       name: "test",
       prompt: "my prompt",
     });
     assert.equal(args[0], "--print");
-    assert.equal(args[1], "my prompt");
+    assert.ok(!args.includes("my prompt"));
   });
 
   test("interactive=true still includes --output-format stream-json", () => {

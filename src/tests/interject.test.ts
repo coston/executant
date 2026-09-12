@@ -5,7 +5,13 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, chmodSync, mkdirSync, rmSync } from "node:fs";
+import {
+  writeFileSync,
+  readFileSync,
+  chmodSync,
+  mkdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InterjectChannel } from "../types.js";
@@ -51,6 +57,34 @@ describe("runClaude — always uses --print mode", () => {
   afterEach(() => {
     process.env["PATH"] = originalPath;
     rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  test("delivers a prompt larger than MAX_ARG_STRLEN intact over stdin", async () => {
+    // Linux refuses any single argv string over 128 KiB with E2BIG. A prompt
+    // with a `context:` file inlined crossed that in the field; the prompt
+    // therefore travels on stdin, and this pins that it survives the trip.
+    const promptFile = join(mockDir, "prompt.txt");
+    const script = join(mockDir, "claude");
+    writeFileSync(
+      script,
+      `#!/usr/bin/env bash
+cat > "${promptFile}"
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
+echo '{"type":"result","total_cost_usd":0.001}'
+exit 0
+`,
+      "utf8",
+    );
+    chmodSync(script, 0o755);
+    process.env["PATH"] = `${mockDir}:${originalPath}`;
+
+    const prompt = "x".repeat(200 * 1024);
+    const task = { type: "claude" as const, name: "t", prompt };
+    for await (const _ of runClaude(task)) {
+      /* drain */
+    }
+
+    assert.equal(readFileSync(promptFile, "utf8"), prompt);
   });
 
   test("yields output:text events from the claude CLI", async () => {
@@ -109,18 +143,13 @@ describe("runWorkflow queued interjection", () => {
     );
     mkdirSync(mockDir, { recursive: true });
 
-    // Mock that echoes the --print arg back as output text
+    // Mock that echoes the stdin prompt back as output text
     const script = join(mockDir, "claude");
     writeFileSync(
       script,
       [
         "#!/usr/bin/env bash",
-        // Find the argument after --print and echo it back
-        "prompt_arg=",
-        'for i in "$@"; do',
-        '  if [ "$prev" = "--print" ]; then prompt_arg="$i"; fi',
-        '  prev="$i"',
-        "done",
+        "prompt_arg=$(cat)",
         'echo "{\\"type\\":\\"assistant\\",\\"message\\":{\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"$prompt_arg\\"}]}}"',
         'echo \'{"type":"result","total_cost_usd":0}\'',
       ].join("\n") + "\n",
@@ -132,7 +161,8 @@ describe("runWorkflow queued interjection", () => {
 
   afterEach(() => {
     process.env["PATH"] = originalPath;
-    if (originalProvider === undefined) delete process.env["EXECUTANT_PROVIDER"];
+    if (originalProvider === undefined)
+      delete process.env["EXECUTANT_PROVIDER"];
     else process.env["EXECUTANT_PROVIDER"] = originalProvider;
     rmSync(mockDir, { recursive: true, force: true });
   });
