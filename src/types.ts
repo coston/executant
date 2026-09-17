@@ -67,6 +67,15 @@ export interface ClaudeTask extends BaseTask {
   jsonSchema?: Record<string, unknown>;
   /** Text appended to the system prompt via --append-system-prompt (Claude only). */
   appendSystemPrompt?: string;
+  /** Session id the CLI starts this step under, via --session-id (Claude only). */
+  sessionId?: string;
+  /**
+   * Session id the CLI continues, via --resume (Claude only). The prompt still
+   * goes in on stdin — it is the resumed session's next turn.
+   */
+  resume?: string;
+  /** MCP config — a file path or inline JSON — passed via --mcp-config (Claude only). */
+  mcpConfig?: string;
   /** Model override. For Claude: model name like "sonnet". For OpenCode: "provider/model" like "llama-qwen7b/qwen2.5-coder-7b". */
   model?: string;
   /** OpenCode --agent flag. Ignored by the Claude runner. */
@@ -730,6 +739,12 @@ export type RawStep = {
   model?: string;
   /** Appended to the CLI's own system prompt for this step only. */
   append_system_prompt?: string;
+  /** Start the step's session under this id (`--session-id`). Exclusive with `resume`. */
+  session_id?: string;
+  /** Continue an earlier session by id (`--resume`); the prompt is its next turn. Exclusive with `session_id`. */
+  resume?: string;
+  /** MCP config — a file path or inline JSON — handed to the CLI (`--mcp-config`). */
+  mcp_config?: string;
   /** OpenCode agent name. */
   agent?: string;
   /** Local path or URL to another workflow, run as a nested sub-run. */

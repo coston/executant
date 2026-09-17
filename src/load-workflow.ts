@@ -53,6 +53,9 @@ export const RawStepSchema: z.ZodType<RawStep> = z.lazy(() =>
     provider: z.enum(["claude", "opencode"]).optional(),
     model: z.string().optional(),
     append_system_prompt: z.string().optional(),
+    session_id: z.string().optional(),
+    resume: z.string().optional(),
+    mcp_config: z.string().optional(),
     agent: z.string().optional(),
     workflow: z.string().optional(),
     vars: z.record(z.string(), z.string()).optional(),
@@ -307,6 +310,19 @@ function convertInnerStep(
       if (!step.prompt)
         throw new Error(`Step "${name}" has type prompt but no prompt field`);
       const contextFiles = resolveContextFiles(step.context, vars, name);
+      // A CLI passthrough that is empty after substitution is absent — a
+      // --var may deliberately blank one to run the step without it.
+      const passthrough = (value: string | undefined, field: string) =>
+        value
+          ? substituteVars(value, vars, name, field) || undefined
+          : undefined;
+      const sessionId = passthrough(step.session_id, "session_id");
+      const resume = passthrough(step.resume, "resume");
+      const mcpConfig = passthrough(step.mcp_config, "mcp_config");
+      if (sessionId && resume)
+        throw new Error(
+          `Step "${name}" session_id and resume are mutually exclusive`,
+        );
       return {
         type: "claude",
         name,
@@ -325,6 +341,9 @@ function convertInnerStep(
             "append_system_prompt",
           ),
         }),
+        ...(sessionId && { sessionId }),
+        ...(resume && { resume }),
+        ...(mcpConfig && { mcpConfig }),
         ...(contextFiles.length > 0 && { contextFiles }),
         ...(step.output && {
           output: resolveOutputFile(step.output, vars, name),

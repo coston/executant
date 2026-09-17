@@ -74,6 +74,9 @@ export function buildClaudeArgs(
     ...(task.appendSystemPrompt
       ? ["--append-system-prompt", task.appendSystemPrompt]
       : []),
+    ...(task.sessionId ? ["--session-id", task.sessionId] : []),
+    ...(task.resume ? ["--resume", task.resume] : []),
+    ...(task.mcpConfig ? ["--mcp-config", task.mcpConfig] : []),
     ...(task.jsonSchema
       ? ["--json-schema", JSON.stringify(task.jsonSchema)]
       : []),

@@ -772,6 +772,153 @@ steps:
     assert.equal(task.appendSystemPrompt, "You are acting as a reviewer.");
   });
 
+  test("session_id, resume and mcp_config are omitted from ClaudeTask when not set", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.sessionId, undefined);
+    assert.equal(task.resume, undefined);
+    assert.equal(task.mcpConfig, undefined);
+  });
+
+  test("session_id and mcp_config are passed through to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: implement
+    session_id: 11111111-2222-4333-8444-555555555555
+    mcp_config: ./mcp.json
+    prompt: Do the work
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.sessionId, "11111111-2222-4333-8444-555555555555");
+    assert.equal(task.mcpConfig, "./mcp.json");
+    assert.equal(task.resume, undefined);
+  });
+
+  test("resume is passed through to ClaudeTask", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: continue
+    resume: 11111111-2222-4333-8444-555555555555
+    prompt: Carry on
+`);
+    const wf = loadWorkflow(file);
+    const task = wf.tasks[0] as ClaudeTask;
+    assert.equal(task.resume, "11111111-2222-4333-8444-555555555555");
+    assert.equal(task.sessionId, undefined);
+  });
+
+  test("session_id, resume and mcp_config substitute vars like prompt does", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  session: 11111111-2222-4333-8444-555555555555
+steps:
+  - name: start
+    session_id: "{{session}}"
+    mcp_config: ./{{session}}.json
+    prompt: Start
+  - name: continue
+    resume: "{{session}}"
+    prompt: Continue
+`);
+    const wf = loadWorkflow(file);
+    const start = wf.tasks[0] as ClaudeTask;
+    const cont = wf.tasks[1] as ClaudeTask;
+    assert.equal(start.sessionId, "11111111-2222-4333-8444-555555555555");
+    assert.equal(
+      start.mcpConfig,
+      "./11111111-2222-4333-8444-555555555555.json",
+    );
+    assert.equal(cont.resume, "11111111-2222-4333-8444-555555555555");
+  });
+
+  test("session_id, resume and mcp_config that are empty after substitution are absent", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  session: 11111111-2222-4333-8444-555555555555
+  mcp: ./mcp.json
+steps:
+  - name: start
+    session_id: "{{session}}"
+    mcp_config: "{{mcp}}"
+    prompt: Start
+  - name: continue
+    resume: "{{session}}"
+    prompt: Continue
+`);
+    const wf = loadWorkflow(file, { session: "", mcp: "" });
+    const start = wf.tasks[0] as ClaudeTask;
+    const cont = wf.tasks[1] as ClaudeTask;
+    assert.equal(start.sessionId, undefined);
+    assert.equal(start.mcpConfig, undefined);
+    assert.equal(cont.resume, undefined);
+    assert.ok(!("sessionId" in start), "blank session_id must not set the key");
+    assert.ok(!("resume" in cont), "blank resume must not set the key");
+  });
+
+  test("session_id rejects an unknown placeholder like prompt does", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: start
+    session_id: "{{nope}}"
+    prompt: Start
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /Step "start" session_id contains unknown placeholder "\{\{nope\}\}"/,
+    );
+  });
+
+  test("session_id and resume on the same step is a load-time error", () => {
+    const file = tmpYaml(`
+goal: test
+steps:
+  - name: both
+    session_id: 11111111-2222-4333-8444-555555555555
+    resume: 66666666-7777-4888-8999-000000000000
+    prompt: Do the work
+`);
+    assert.throws(
+      () => loadWorkflow(file),
+      /Step "both" session_id and resume are mutually exclusive/,
+    );
+  });
+
+  test("session_id and resume may coexist when one blanks out via --var", () => {
+    const file = tmpYaml(`
+goal: test
+vars:
+  fresh: 11111111-2222-4333-8444-555555555555
+  prior: ""
+steps:
+  - name: either
+    session_id: "{{fresh}}"
+    resume: "{{prior}}"
+    prompt: Do the work
+`);
+    const started = loadWorkflow(file).tasks[0] as ClaudeTask;
+    assert.equal(started.sessionId, "11111111-2222-4333-8444-555555555555");
+    assert.equal(started.resume, undefined);
+
+    const resumed = loadWorkflow(file, {
+      fresh: "",
+      prior: "66666666-7777-4888-8999-000000000000",
+    }).tasks[0] as ClaudeTask;
+    assert.equal(resumed.sessionId, undefined);
+    assert.equal(resumed.resume, "66666666-7777-4888-8999-000000000000");
+  });
+
   test("agent field is passed through to ClaudeTask", () => {
     const file = tmpYaml(`
 goal: test

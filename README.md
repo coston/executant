@@ -306,6 +306,9 @@ Step-level `provider`, `model`, and `agent` fields take priority over env vars.
   placed here holds up far better than the same words buried in a long prompt — reach for
   it for anything the model must never trade off against the rest of the instructions
   (e.g. "never narrate outside the deliverable"). Supports `{{var}}` substitution.
+- **`session_id`** — prompt steps only; start the step's session under this id (`--session-id`) so a later step or run can pick it up. Supports `{{var}}` substitution; empty after substitution means unset.
+- **`resume`** — prompt steps only; continue an earlier session by id (`--resume`) — the step's `prompt:` is that session's next turn. Supports `{{var}}` substitution; empty after substitution means unset. Mutually exclusive with `session_id` on the same step (a load-time error when both are non-empty).
+- **`mcp_config`** — prompt steps only; an MCP server config, as a file path or inline JSON, handed to the CLI via `--mcp-config`. Supports `{{var}}` substitution; empty after substitution means unset.
 
 ```yaml
 steps:
@@ -324,6 +327,20 @@ steps:
       You are running non-interactively and unattended. Never emit narration,
       commentary, or a preamble in your text output — reason and decide silently
       via tool calls; the only text you output is the exact deliverable requested.
+```
+
+```yaml
+vars:
+  session: 11111111-2222-4333-8444-555555555555 # any UUID; pass a fresh one with --var
+steps:
+  - name: explore
+    prompt: Map the codebase and note where the auth flow lives.
+    session_id: "{{session}}" # start the session under a known id
+    mcp_config: ./mcp.json # file path or inline JSON, forwarded as --mcp-config
+
+  - name: implement
+    prompt: Now implement the change you scoped. # the resumed session's next turn
+    resume: "{{session}}" # everything `explore` learned is still in context
 ```
 
 ```yaml

@@ -132,6 +132,60 @@ describe("buildClaudeArgs", () => {
     );
   });
 
+  test("omits --session-id, --resume and --mcp-config by default", () => {
+    const args = buildClaudeArgs({
+      type: "claude",
+      name: "test",
+      prompt: "test",
+    });
+    for (const flag of ["--session-id", "--resume", "--mcp-config"]) {
+      assert.ok(!args.includes(flag), `${flag} should be absent`);
+    }
+  });
+
+  test("includes --session-id when sessionId is set", () => {
+    const args = buildClaudeArgs({
+      type: "claude",
+      name: "test",
+      prompt: "test",
+      sessionId: "11111111-2222-4333-8444-555555555555",
+    });
+    const idx = args.indexOf("--session-id");
+    assert.ok(idx !== -1, "missing --session-id flag");
+    assert.equal(args[idx + 1], "11111111-2222-4333-8444-555555555555");
+    assert.ok(!args.includes("--resume"), "--resume should be absent");
+  });
+
+  test("includes --resume when resume is set; the prompt stays on stdin", () => {
+    const args = buildClaudeArgs({
+      type: "claude",
+      name: "test",
+      prompt: "next turn",
+      resume: "11111111-2222-4333-8444-555555555555",
+    });
+    const idx = args.indexOf("--resume");
+    assert.ok(idx !== -1, "missing --resume flag");
+    assert.equal(args[idx + 1], "11111111-2222-4333-8444-555555555555");
+    assert.equal(args[0], "--print");
+    assert.ok(
+      !args.includes("next turn"),
+      "prompt must not be an argv element",
+    );
+    assert.ok(!args.includes("--session-id"), "--session-id should be absent");
+  });
+
+  test("includes --mcp-config when mcpConfig is set", () => {
+    const args = buildClaudeArgs({
+      type: "claude",
+      name: "test",
+      prompt: "test",
+      mcpConfig: "./mcp.json",
+    });
+    const idx = args.indexOf("--mcp-config");
+    assert.ok(idx !== -1, "missing --mcp-config flag");
+    assert.equal(args[idx + 1], "./mcp.json");
+  });
+
   test("omits --allowedTools when allowedTools is not specified (all tools)", () => {
     const args = buildClaudeArgs({
       type: "claude",
